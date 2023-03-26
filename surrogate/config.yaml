@@ -1,0 +1,13 @@
+shunqing:
+  n_out: 3
+  seq_len: 6
+  conv: GCNconv
+  embed_size: 128
+  activation: relu
+  n_layer: 3
+  recurrent: GRU
+  hidden_dim: 64
+  resnet: True
+  loss_function: MeanSquaredError
+  optimizer: Adam
+  learning_rate: 0.001

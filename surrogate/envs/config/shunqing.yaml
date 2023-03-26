@@ -1,0 +1,46 @@
+# Configuration file for scenario shunqing
+
+# name of scearnio
+env_name: shunqing
+# time step (min)
+control_interval: 5
+# state definitions
+# global state definitions
+global_state:
+  - !!python/tuple
+    - nodes
+    - depthN
+  - !!python/tuple
+    - nodes
+    - totalinflow
+  - !!python/tuple
+    - nodes
+    - totaloutflow
+  - !!python/tuple
+    - nodes
+    - lateral_infow_vol
+
+states:
+  - !!python/tuple
+    - jd1
+    - depthN
+  - !!python/tuple
+    - jd2
+    - depthN
+  - !!python/tuple
+    - jd3
+    - depthN
+
+# Performance Targets
+performance_targets:
+  - !!python/tuple
+    - system
+    - cumflooding
+    - 1
+
+# Rainfall scenario parameters
+rainfall:
+  suffix: bpswmm
+  filedir: ./envs/network/shunqing/
+
+
