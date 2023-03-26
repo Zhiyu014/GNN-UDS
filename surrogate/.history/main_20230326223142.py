@@ -20,23 +20,24 @@ def parser(config=None):
     parser.add_argument('--optimizer',type=str,default='Adam',help='optimizer')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
     # https://www.cnblogs.com/zxyfrank/p/15414605.html
-    given_config,_ = parser.parse_known_args()
+    given_config,remaining = parser.parse_known_args()
     if config is not None:
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
         parser.set_defaults(**hyps[given_config.env])
-    args = parser.parse_args()
+    args = parser.parse_args(remaining)
     print('Training configs: {}'.format(args))
     return args
 
 if __name__ == "__main__":
     
     args = parser('config.yaml')
-    # env = shunqing()
+    
+    env = shunqing()
 
-    # inp = read_inp_file(env.config['swmm_input'])
-    # events = generate_file(inp,env.config['rainfall'])
-    # dG = DataGenerator(env,seq_len=4)
-    # dG.generate(events,processes=1)
+    inp = read_inp_file(env.config['swmm_input'])
+    events = generate_file(inp,env.config['rainfall'])
+    dG = DataGenerator(env,seq_len=4)
+    dG.generate(events,processes=1)
 
-    # emul = Emulator(args.conv,args.edges,args.resnet,args.recurrent,args)
+    emul = Emulator(args.conv,args.edges,args.resnet,args.recurrent,args)
 

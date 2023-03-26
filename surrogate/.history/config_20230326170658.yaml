@@ -2,8 +2,8 @@ shunqing:
   n_out: 3
   conv: GCNconv
   embed_size: 128
-  n_layer: 3
   activation: relu
+  n_layer: 3
   recurrent: GRU
   hidden_dim: 64
   seq_len: 6
