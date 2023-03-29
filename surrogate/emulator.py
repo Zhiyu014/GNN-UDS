@@ -44,7 +44,7 @@ class Emulator:
         if recurrent:
             input_shape = (self.seq_len,) + input_shape
         X_in = Input(shape=input_shape)
-        x = X_in.copy()
+        # x = X_in.copy()
         
         if conv:
             A_in = Input(self.filter.shape[0],)
@@ -62,11 +62,13 @@ class Emulator:
             inp,net = X_in,Dense
         
         # (B,T,N,in) (B,T,in*N) --> (B*T,N,in) (B*T,in*N)
-        x = reshape(x,(-1,)+input_shape[1:]) if recurrent else x
-        for _ in range(self.n_layer):
+        x = reshape(X_in,(-1,)+input_shape[1:]) if recurrent else X_in
+        for i in range(self.n_layer):
             x = [x,A_in] if conv else x
             x_out = net(self.embed_size,activation=self.activation)(x)
-            x = x_out + x if resnet else x_out
+            x = x[0] if conv else x
+            x = x_out + x if resnet and i>0 else x_out
+
 
         if recurrent:
             # (B*T,N,E) (B*T,E) --> (B,T,N,E) (B,T,E)
@@ -100,6 +102,10 @@ class Emulator:
         self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss.numpy()
     
+    def evaluate(self,x,y):
+        loss = self.loss_fn(self.model(x),y)
+        return loss.numpy()
+
     def predict(self,x):
         x = expand_dims(x,0)
         return squeeze(self.model(x),0).numpy()
@@ -116,6 +122,30 @@ class Emulator:
         #     q_us[v] += q_ds[u]
         # q_us = np.array(q_us).T
         q_w = (q_us + r - q_ds).clip(0) * (h > self.hmax)
-        return (h,q_us,q_ds,q_w)
+        return q_w
         
-        
+    # TODO: settings
+    def simulate(self,ini_state,r,settings=None):
+        x = ini_state[...,:-1]
+        states,qws = [ini_state],[]
+        for ri in r:
+            x = np.stack([x,ri],axis=-1)
+            x = self.predict(x)
+            q_w = self.constrain(x,ri)
+            states.append(x)
+            qws.append(q_w)
+        return np.array(states),np.array(qws)
+    
+    def update_net(self,dat,event=None,epochs=None,batch_size=None):
+        batch_size = self.batch_size if batch_size is None else batch_size
+        epochs = self.epochs if epochs is None else epochs
+        for epoch in range(epochs):
+            x,y = dat.sample(batch_size,event)
+            loss = self.fit(x,y)
+            print("Epoch {}/{} loss: {}".format(epoch,epochs,loss))
+
+    def evaluate_net(self,dat,event=None,batch_size=None):
+        batch_size = self.batch_size if batch_size is None else batch_size
+        x,y = dat.sample(batch_size,event)
+        loss = self.evaluate(x,y)
+        print("Evaluation loss: {}".format(loss))
