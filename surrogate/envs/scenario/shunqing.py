@@ -58,7 +58,7 @@ class shunqing(scenario):
 
     def step(self, advance_seconds = None, log=True):
         # Implement the actions and take a step forward
-        if advance_seconds is None and 'control_interval' in self.config:
+        if advance_seconds is None and self.config.get('control_interval') is not None:
             advance_seconds = self.config['control_interval'] * 60
         # if actions is not None:
         #     actions = self._convert_actions(actions)
@@ -201,7 +201,7 @@ class shunqing(scenario):
         
         nodes = self.get_features('nodes')
         inp = read_inp_file(self.config['swmm_input'])
-        args['hmax'] = [inp.JUNCTIONS[node].MaxDepth for node in nodes]
+        args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth for node in nodes])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()

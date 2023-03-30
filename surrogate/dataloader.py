@@ -53,14 +53,15 @@ class DataGenerator:
         self.X,self.Y = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
     
-    def sample(self,size,event=None):
+    def sample(self,size,event=None,norm=False):
         if event is not None:
             n_rain = np.in1d(self.event_id,event)
             X,Y = self.X[n_rain],self.Y[n_rain]
         else:
             X,Y = self.X,self.Y
         idx = np.random.choice(range(X.shape[0]),size)
-        return X[idx],Y[idx]
+        return (self.normalize(X[idx]),self.normalize(Y[idx])) if norm else (X[idx],Y[idx])
+
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
@@ -74,7 +75,22 @@ class DataGenerator:
         for name in ['X','Y','event_id']:
             dat = np.load(os.path.join(data_dir,name+'.npy'))
             setattr(self,name,dat)
+        self.get_norm()
 
+    def get_norm(self):
+        if not hasattr(self,'normal'):
+            norm = self.X.copy()
+            while len(norm.shape) > 2:
+                norm = norm.max(axis=0)
+            self.normal = norm + 1e-6
+        return self.normal
+    
+    def normalize(self,dat,inverse=False):
+        norm = self.get_norm()
+        if inverse:
+            return dat * norm[...,:dat.shape[-1]]
+        else:
+            return dat/norm[...,:dat.shape[-1]]
 
 def generate_file(file,arg):
     inp = read_inp_file(file)

@@ -1,11 +1,13 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D
+from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Conv2D
 from tensorflow.keras.models import Model
 from tensorflow.keras import losses,optimizers
 import numpy as np
+import os
 from spektral.layers import GCNConv,GATConv
 from spektral.utils.convolution import gcn_filter
-
+import tensorflow as tf
+tf.config.list_physical_devices(device_type='GPU')
 # - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?
 #     - [pytorch implementation](https://github.com/LMissher/STGNN)
 #     - [original](https://github.com/VeritasYin/STGCN_IJCAI-18)
@@ -20,6 +22,7 @@ class Emulator:
         self.hidden_dim = getattr(args,"hidden_dim",64)
         self.n_layer = getattr(args,"n_layer",3)
         self.activation = getattr(args,"activation",'relu')
+        self.norm = getattr(args,"norm",'False')
 
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
         if edges is not None:
@@ -32,6 +35,14 @@ class Emulator:
         self.optimizer = optimizers.get(getattr(args,"optimizer","Adam"))
         self.optimizer.learning_rate = getattr(args,"learning_rate",1e-3)
 
+        self.ratio = getattr(args,"ratio",0.8)
+        self.batch_size = getattr(args,"batch_size",256)
+        self.epochs = getattr(args,"epochs",100)
+        self.model_dir = getattr(args,"model_dir","./model/shunqing/model.h5")
+        if args.load_model:
+            self.load()
+
+
     def get_adj(self,edges):
         A = np.zeros((edges.max()+1,edges.max()+1)) # adjacency matrix
         for u,v in edges:
@@ -39,8 +50,8 @@ class Emulator:
         return A
 
     def build_network(self,conv=None,resnet=False,recurrent=None):
-        # (T,N,in) (T,in*N) (N,in) (in*N)
-        input_shape = (self.n_node,self.n_in) if conv else (self.n_node * self.n_in,)
+        # (T,N,in) (N,in)
+        input_shape = (self.n_node,self.n_in)
         if recurrent:
             input_shape = (self.seq_len,) + input_shape
         X_in = Input(shape=input_shape)
@@ -53,22 +64,24 @@ class Emulator:
                 self.filter,net = gcn_filter(self.filter),GCNConv
             elif 'GAT' in conv:
                 net = GATConv
-            elif 'CNN' in conv:
-                # TODO: CNN
-                net 
+            # elif 'CNN' in conv:
+            #     # TODO: CNN
+            #     net = Conv2D
             else:
                 raise AssertionError("Unknown Convolution layer %s"%str(conv))
         else:
             inp,net = X_in,Dense
         
-        # (B,T,N,in) (B,T,in*N) --> (B*T,N,in) (B*T,in*N)
-        x = reshape(X_in,(-1,)+input_shape[1:]) if recurrent else X_in
+        # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
+        x = reshape(X_in,input_shape[:-2]+(-1,)) if not conv else X_in
+        # (B,T,N,in) (B,T,N*in) (B,N,in) (B,N*in) --> (B*T,N,in)
+        x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
+        x = Dense(self.embed_size,activation=self.activation)(x) # Embedding
         for i in range(self.n_layer):
             x = [x,A_in] if conv else x
             x_out = net(self.embed_size,activation=self.activation)(x)
             x = x[0] if conv else x
             x = x_out + x if resnet and i>0 else x_out
-
 
         if recurrent:
             # (B*T,N,E) (B*T,E) --> (B,T,N,E) (B,T,E)
@@ -89,63 +102,109 @@ class Emulator:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
+        # (B,N,H) (B,H) --> (B,N,n_out)
         out = Dense(out_shape,activation='linear')(x)
+        out = reshape(out,(-1,self.n_node,self.n_out)) 
         model = Model(inputs=inp, outputs=out)
         return model
     
+
+    # TODO: setting loss
     def fit(self,x,y):
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
-            pred = self.model(x)
+            pred = self.model([x,self.filter])
             loss = self.loss_fn(y,pred)
+            # if self.norm:
+            #     x = self.normalize(x,inverse=True)
+            #     pred = self.normalize(pred,inverse=True)
+            # r = x[:,-1,...,-1] if self.recurrent else x[...,-1]
+            # loss += self.balance(pred,r)
         grads = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss.numpy()
     
     def evaluate(self,x,y):
-        loss = self.loss_fn(self.model(x),y)
+        loss = self.loss_fn(self.model([x,self.filter]),y)
         return loss.numpy()
 
     def predict(self,x):
+        if self.norm:
+            x = self.normalize(x)
         x = expand_dims(x,0)
-        return squeeze(self.model(x),0).numpy()
+        y = squeeze(self.model([x,self.filter]),0).numpy()
+        if self.norm:
+            y = self.normalize(y,inverse=True)
+        return y
 
-    def constrain(self,y,r):
-        # y,r are 2-d
-        # r should be at the same step with q_ds
-        if self.conv:
-            h,q_us,q_ds = [y[:,:,i] for i in range(3)]
+    def set_norm(self,normal):
+        setattr(self,'normal',normal)
+
+    def normalize(self,dat,inverse = False):
+        if inverse:
+            return dat * self.normal[...,:dat.shape[-1]]
         else:
-            h,q_us,q_ds = y[:,:self.n_node],y[:,self.n_node:self.n_node*2],y[:,self.n_node*2:]
-        # q_us = [np.zeros((y.shape[0],)) for _ in self.n_node]
-        # for u,v in self.edges:
-        #     q_us[v] += q_ds[u]
-        # q_us = np.array(q_us).T
-        q_w = (q_us + r - q_ds).clip(0) * (h > self.hmax)
-        return q_w
-        
+            return dat/self.normal[...,:dat.shape[-1]]
+
+    # Problems: h is static at the end of the interval -- use 30s step
+    # Problems: use flooding volume at each node as label?
+    def constrain(self,y,r):
+        h,q_us,q_ds = [y[...,i] for i in range(3)]
+        q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.01)
+        h = h.clip(0,self.hmax)
+        y = np.stack([h,q_us,q_ds],axis=-1)
+        return q_w,y
+    
+    def balance(self,y,r):
+        _,q_us,q_ds = [y[...,i] for i in range(3)]
+        q_w,_ = self.constrain(y,r)
+        err = q_us + r - q_ds - q_w
+        return reduce_mean(err ** 2)
+
     # TODO: settings
     def simulate(self,ini_state,r,settings=None):
         x = ini_state[...,:-1]
         states,qws = [ini_state],[]
         for ri in r:
-            x = np.stack([x,ri],axis=-1)
+            x = np.stack([x,np.expand_dims(ri,-1)],axis=-1)
             x = self.predict(x)
-            q_w = self.constrain(x,ri)
+            ri = ri[-1,...] if self.recurrent else ri
+            q_w,x = self.constrain(x,ri)
             states.append(x)
             qws.append(q_w)
         return np.array(states),np.array(qws)
     
-    def update_net(self,dat,event=None,epochs=None,batch_size=None):
+    def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
+        ratio = self.ratio if ratio is None else ratio
         batch_size = self.batch_size if batch_size is None else batch_size
         epochs = self.epochs if epochs is None else epochs
-        for epoch in range(epochs):
-            x,y = dat.sample(batch_size,event)
-            loss = self.fit(x,y)
-            print("Epoch {}/{} loss: {}".format(epoch,epochs,loss))
 
-    def evaluate_net(self,dat,event=None,batch_size=None):
-        batch_size = self.batch_size if batch_size is None else batch_size
-        x,y = dat.sample(batch_size,event)
-        loss = self.evaluate(x,y)
-        print("Evaluation loss: {}".format(loss))
+        n_events = max(dG.event_id)+1
+        train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio))
+        test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+
+        train_losses,test_losses = [],[]
+        for epoch in range(epochs):
+            x,y = dG.sample(batch_size,train_ids,self.norm)
+            train_loss = self.fit(x,y)
+            train_losses.append(train_loss)
+            x,y = dG.sample(batch_size,test_ids,self.norm)
+            test_loss = self.evaluate(x,y)
+            test_losses.append(test_loss)
+            print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))
+        return train_losses,test_losses
+
+    def save(self,model_dir=None):
+        model_dir = model_dir if model_dir is not None else self.model_dir
+        if model_dir.endswith('.h5'):
+            self.model.save_weights(model_dir)
+        else:
+            self.model.save_weights(os.path.join(model_dir,'model.h5'))
+
+
+    def load(self,model_dir=None):
+        model_dir = model_dir if model_dir is not None else self.model_dir
+        if model_dir.endswith('.h5'):
+            self.model.load_weights(model_dir)
+        else:
+            self.model.load_weights(os.path.join(model_dir,'model.h5'))
