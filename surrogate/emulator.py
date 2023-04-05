@@ -163,14 +163,15 @@ class Emulator:
 
     # TODO: settings
     def simulate(self,ini_state,r,settings=None):
-        x = ini_state[...,:-1]
-        states,qws = [ini_state],[]
+        x = ini_state[...,:-1] # exclude runoff
+        states,qws = [x[-1,...]],[] # exclude recurrent info
         for ri in r:
-            x = np.stack([x,np.expand_dims(ri,-1)],axis=-1)
-            x = self.predict(x)
+            x = np.concatenate([x,np.expand_dims(ri,-1)],axis=-1) # T,N,n_in
+            y = self.predict(x) # N,n_out
             ri = ri[-1,...] if self.recurrent else ri
-            q_w,x = self.constrain(x,ri)
-            states.append(x)
+            q_w,y = self.constrain(y,ri)
+            x = np.concatenate([x[1:,:,:-1],np.expand_dims(y,0)],axis=0) if self.recurrent else y
+            states.append(y)
             qws.append(q_w)
         return np.array(states),np.array(qws)
     
@@ -179,7 +180,7 @@ class Emulator:
         batch_size = self.batch_size if batch_size is None else batch_size
         epochs = self.epochs if epochs is None else epochs
 
-        n_events = max(dG.event_id)+1
+        n_events = int(max(dG.event_id))+1
         train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 

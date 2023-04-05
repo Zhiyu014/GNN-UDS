@@ -4,6 +4,7 @@ import argparse,yaml,random
 from envs import get_env
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
@@ -31,6 +32,8 @@ def parser(config=None):
     parser.add_argument('--train',action="store_true",help='if train the emulator')
     parser.add_argument('--epochs',type=int,default=100,help='training epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
+    parser.add_argument('--test',action="store_true",help='if test the emulator')
+    parser.add_argument('--result_dir',type=str,default='./results/',help='the test results')
 
     # https://www.cnblogs.com/zxyfrank/p/15414605.html
     given_config,_ = parser.parse_known_args()
@@ -68,10 +71,18 @@ if __name__ == "__main__":
         emul.save(args.model_dir)
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
+        plt.plot(train_losses,label='train')
+        plt.plot(test_losses,label='test')
+        plt.legend()
+        plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
-
-    # for event_id in test_ids:
-    #     event = events[event_id]
-    #     states,settings = dG.simulate(event,act=args.act)
-    #     r = states[...,-1]
-    #     pred_states = emul.simulate(states[0],r)
+    if args.test:
+        for event in events:
+            states,settings = dG.simulate(event,act=args.act)
+            states[...,1] = states[...,1] - states[...,-1]
+            ini_state,r = states[0],states[1:,...,-1]
+            pred_states,qws = emul.simulate(ini_state,r)
+            states = states[:,-1,...] if args.recurrent else states
+            name = os.path.basename(event).strip('.inp')
+            np.save(os.path.join(args.result_dir,name + '_true.npy'),states)
+            np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred_states)

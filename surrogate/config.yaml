@@ -22,3 +22,5 @@ shunqing:
   train: False
   epochs: 100
   batch_size: 256
+  test: False
+  result_dir: ./results/shunqing/

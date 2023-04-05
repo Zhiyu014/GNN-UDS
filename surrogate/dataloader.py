@@ -30,11 +30,13 @@ class DataGenerator:
             states = states[:settings.shape[0]+1]
             # B,T,n_act
             a = np.tile(np.expand_dims(settings,axis=1),[1,self.seq_len,1])
-        h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
+        h,q_totin,q_ds,r = [states[...,i] for i in range(3)]
+        # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(4)]
         q_us = q_totin - r
         # B,T,N,in
         X = np.stack([h[:-1],q_us[:-1],q_ds[:-1],r[1:]],axis=-1)
         Y = np.stack([h[1:],q_us[1:],q_ds[1:]],axis=-1)
+        # Y = np.stack([h[1:],q_us[1:],q_ds[1:],q_w[1:]],axis=-1)
         if recurrent:
             Y = Y[:,-1,...]
         if settings is not None:
@@ -73,7 +75,7 @@ class DataGenerator:
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
         for name in ['X','Y','event_id']:
-            dat = np.load(os.path.join(data_dir,name+'.npy'))
+            dat = np.load(os.path.join(data_dir,name+'.npy')).astype(np.float32)
             setattr(self,name,dat)
         self.get_norm()
 

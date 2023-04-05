@@ -4,7 +4,7 @@ env_name: shunqing
 # if env contains actions
 act: False
 # time step (min)
-control_interval: 
+control_interval: 1
 # state definitions
 # global state definitions
 global_state:
@@ -20,7 +20,10 @@ global_state:
   - !!python/tuple
     - nodes
     - lateral_infow_vol
-
+  # - !!python/tuple
+  #   - nodes
+  #   - cumflooding
+    
 states:
   - !!python/tuple
     - jd1
