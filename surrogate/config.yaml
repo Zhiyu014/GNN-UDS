@@ -1,11 +1,22 @@
 shunqing:
+  # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
+  act: False
+  processes: 5
+
+  # train args
+  train: False
   load_model: False
   model_dir: ./model/shunqing/
   ratio: 0.8
-  processes: 5
-  act: False
+  loss_function: MeanSquaredError
+  optimizer: Adam
+  learning_rate: 0.001
+  epochs: 100
+  batch_size: 256
+
+  # network args
   norm: False
   n_out: 3
   conv: GCNconv
@@ -14,13 +25,10 @@ shunqing:
   activation: relu
   recurrent: GRU
   hidden_dim: 64
-  seq_len: 6
+  seq_in: 6
+  seq_out: 1
   resnet: False
-  loss_function: MeanSquaredError
-  optimizer: Adam
-  learning_rate: 0.001
-  train: False
-  epochs: 100
-  batch_size: 256
+  
+  # test args
   test: False
   result_dir: ./results/shunqing/

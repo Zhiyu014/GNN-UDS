@@ -17,7 +17,8 @@ class Emulator:
     def __init__(self,conv=None,edges=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
         self.n_out = getattr(args,'n_out',3)
-        self.seq_len = getattr(args,'seq_len',6)
+        self.seq_in = getattr(args,'seq_in',6)
+        self.seq_out = getattr(args,'seq_out',1)
         self.embed_size = getattr(args,'embed_size',64)
         self.hidden_dim = getattr(args,"hidden_dim",64)
         self.n_layer = getattr(args,"n_layer",3)
@@ -28,9 +29,9 @@ class Emulator:
         if edges is not None:
             self.edges = edges
             self.filter = self.get_adj(edges)
-        self.conv = conv
-        self.recurrent = recurrent
-        self.model = self.build_network(conv,resnet,recurrent)
+        self.conv = False if conv in ['None','False','NoneType'] else conv
+        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
+        self.model = self.build_network(self.conv,resnet,self.recurrent)
         self.loss_fn = losses.get(getattr(args,"loss_function","MeanSquaredError"))
         self.optimizer = optimizers.get(getattr(args,"optimizer","Adam"))
         self.optimizer.learning_rate = getattr(args,"learning_rate",1e-3)
@@ -53,7 +54,7 @@ class Emulator:
         # (T,N,in) (N,in)
         input_shape = (self.n_node,self.n_in)
         if recurrent:
-            input_shape = (self.seq_len,) + input_shape
+            input_shape = (self.seq_in,) + input_shape
         X_in = Input(shape=input_shape)
         # x = X_in.copy()
         
@@ -90,21 +91,23 @@ class Emulator:
             x = transpose(x,[0,2,1,3]) if conv else x
             if recurrent == 'Conv1D':
                 # (B,N,T,E) (B,T,E) --> (B,N,H) (B,H)
-                x = Conv1D(self.hidden_dim,self.seq_len,activation=self.activation,input_shape=x.shape[-2:])(x)
+                x = Conv1D(self.hidden_dim,self.seq_in,activation=self.activation,input_shape=x.shape[-2:])(x)
                 x = squeeze(x)
             elif recurrent == 'GRU':
                 # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
-                x = reshape(x,(-1,self.seq_len,self.embed_size)) if conv else x
-                x = GRU(self.hidden_dim)(x)
-                # (B*N,H) (B,H) --> (B,N,H) (B,H)
-                x = reshape(x,(-1,self.n_node,self.hidden_dim)) if conv else x
+                x = reshape(x,(-1,self.seq_in,self.embed_size)) if conv else x
+                x = GRU(self.hidden_dim,return_sequences=True)(x)
+                # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
+                x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
+                 # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+                x = transpose(x,[0,2,1,3]) if conv else x
             else:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
-        # (B,N,H) (B,H) --> (B,N,n_out)
+        # (B,T_out,N,H) (B,T_out,H) --> (B,T_out,N,n_out)
         out = Dense(out_shape,activation='linear')(x)
-        out = reshape(out,(-1,self.n_node,self.n_out)) 
+        out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         model = Model(inputs=inp, outputs=out)
         return model
     
