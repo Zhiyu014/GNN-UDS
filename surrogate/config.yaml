@@ -1,6 +1,7 @@
 shunqing:
   # simulate args
   simulate: False
+  load_data: False
   data_dir: ./envs/data/shunqing/
   act: False
   processes: 5
@@ -31,4 +32,5 @@ shunqing:
   
   # test args
   test: False
+  roll: False
   result_dir: ./results/shunqing/

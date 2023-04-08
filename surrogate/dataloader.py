@@ -9,19 +9,20 @@ class DataGenerator:
         self.env = env
         self.seq_in = seq_in
         self.seq_out = seq_out
-        self.recurrent = False if recurrent in ['False','None','NoneType'] else True
+        self.recurrent = recurrent
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         if act:
             self.action_table = list(env.config['action_space'].values())
     
     def simulate(self, event, act = False):
-        state = self.env.reset(event,global_state=True,seq=self.seq_in & self.recurrent)
+        seq = self.seq_in if self.recurrent else False
+        state = self.env.reset(event,global_state=True,seq=seq)
         states,settings = [state],[]
         done = False
         while not done:
             setting = [table[np.random.randint(0,len(table))] for table in self.action_table] if act else None
             done = self.env.step(setting)
-            state = self.env.state(seq=self.seq_in & self.recurrent)
+            state = self.env.state(seq=seq)
             states.append(state)
             settings.append(setting)
         return np.array(states),np.array(settings) if act else None
@@ -32,8 +33,8 @@ class DataGenerator:
             states = states[:settings.shape[0]+1]
             # B,T,n_act
             a = np.tile(np.expand_dims(settings,axis=1),[1,self.seq_in,1])
-        h,q_totin,q_ds,r = [states[...,i] for i in range(3)]
-        # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(4)]
+        h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
+        # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(5)]
         q_us = q_totin - r
         # B,T,N,in
         # TODO: seq_out
@@ -71,6 +72,8 @@ class DataGenerator:
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
+        if not os.path.exists(data_dir):
+            os.mkdir(data_dir)
         np.save(os.path.join(data_dir,'X.npy'),self.X)
         np.save(os.path.join(data_dir,'Y.npy'),self.Y)
         np.save(os.path.join(data_dir,'event_id.npy'),self.event_id)

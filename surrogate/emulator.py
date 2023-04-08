@@ -165,18 +165,35 @@ class Emulator:
         return reduce_mean(err ** 2)
 
     # TODO: settings
-    def simulate(self,ini_state,r,settings=None):
+    # deprecated
+    def simulate_roll(self,ini_state,r,settings=None):
         x = ini_state[...,:-1] # exclude runoff
-        states,qws = [x[-1,...]],[] # exclude recurrent info
+        states,qws = [x[-1,...] if self.recurrent else x],[] # exclude recurrent info
         for ri in r:
             x = np.concatenate([x,np.expand_dims(ri,-1)],axis=-1) # T,N,n_in
-            y = self.predict(x) # N,n_out
-            ri = ri[-1,...] if self.recurrent else ri
+            y = self.predict(x) # T_out,N,n_out
+            ri = ri[-self.seq_out:,...] if self.recurrent else ri
             q_w,y = self.constrain(y,ri)
-            x = np.concatenate([x[1:,:,:-1],np.expand_dims(y,0)],axis=0) if self.recurrent else y
+            x = np.concatenate([x[1:,:,:-1],y[:1,...]],axis=0) if self.recurrent else y
             states.append(y)
             qws.append(q_w)
         return np.array(states),np.array(qws)
+
+    # TODO: settings
+    def simulate(self,states,runoff,roll = False):
+        # runoff shape: T_out, T_in, N
+        x = states[0,...,:-1]
+        pred,qws = [],[]
+        for idx,ri in enumerate(runoff):
+            x = np.concatenate([x if roll else states[idx,...,:-1],np.expand_dims(ri,-1)],axis=-1)
+            y = self.predict(x)
+            ri = ri[-self.seq_out:,...] if self.recurrent else ri
+            q_w,y = self.constrain(y,ri)
+            if roll:
+                x = np.concatenate([x[1:,:,:-1],y[:1,...]],axis=0) if self.recurrent else y
+            pred.append(y)
+            qws.append(q_w)
+        return np.array(pred),np.array(qws)
     
     def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
         ratio = self.ratio if ratio is None else ratio
@@ -200,6 +217,8 @@ class Emulator:
 
     def save(self,model_dir=None):
         model_dir = model_dir if model_dir is not None else self.model_dir
+        if not os.path.exists(model_dir):
+            os.mkdir(model_dir)
         if model_dir.endswith('.h5'):
             self.model.save_weights(model_dir)
         else:
@@ -210,5 +229,7 @@ class Emulator:
         model_dir = model_dir if model_dir is not None else self.model_dir
         if model_dir.endswith('.h5'):
             self.model.load_weights(model_dir)
+            self.normal = np.load(os.path.join(os.path.dirname(model_dir),'normal.npy'))
         else:
             self.model.load_weights(os.path.join(model_dir,'model.h5'))
+            self.normal = np.load(os.path.join(model_dir,'normal.npy'))

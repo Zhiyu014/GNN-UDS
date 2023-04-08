@@ -268,12 +268,25 @@ class shunqing(scenario):
         return eval_inp_file
 
     def get_eval_file(self):
-        if self.env._isFinished:
-            print('Simulation already finished')
-            return None
-        else:
-            hsf_file = self.save_hotstart()
-            eval_file = self.create_eval_file(hsf_file)
-            return eval_file
+        assert not self.env._isFinished, 'Simulation already finished'
+        hsf_file = self.save_hotstart()
+        eval_file = self.create_eval_file(hsf_file)
+        return eval_file
 
+    # TODO: get predictive runoff & states
+    # Problems: There are runoff errors in hotstart file
+    # Possible solution: use an independent inp with only subcs to collect lateral inflow and simulate from scratch in each step
+    # def predict(self,settings=None):
+    #     eval_file = self.get_eval_file()
 
+    def get_subc_inp(self):
+        inp = read_inp_file(self.config['swmm_input'])
+        for k in LINK_SECTIONS+['XSECTIONS']:
+            if k in inp:
+                inp.pop(k)
+        file = self.config['swmm_input'].strip('.inp')+'_subc.inp'
+        inp.write_file(file)
+        return file
+
+        
+        
