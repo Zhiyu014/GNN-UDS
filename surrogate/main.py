@@ -40,10 +40,10 @@ def parser(config=None):
     # TODO: seq out
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
+    parser.add_argument('--roll',action="store_true",help='if rollout simulation')
 
     # test args
     parser.add_argument('--test',action="store_true",help='if test the emulator')
-    parser.add_argument('--roll',action="store_true",help='if rollout simulation')
     parser.add_argument('--result_dir',type=str,default='./results/',help='the test results')
 
     # https://www.cnblogs.com/zxyfrank/p/15414605.html
@@ -113,6 +113,8 @@ if __name__ == "__main__":
     if args.norm and not args.load_model:
         emul.set_norm(dG.get_norm())
     
+
+    # TODO: window method in Palmitessa 2023 to solve the unstable roll prediction
     if args.train:
         train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
 
@@ -131,12 +133,13 @@ if __name__ == "__main__":
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
         for event in events:
-            states,settings = dG.simulate(event,act=args.act)
+            states,perfs,settings = dG.simulate(event,act=args.act)
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1],states[args.seq_out:,...,:-1]
+            true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
             if args.recurrent:
                 true = true[:,-args.seq_out:,...]
-            pred,qws = emul.simulate(states,r,args.roll)
+            pred = emul.simulate(states,r,args.roll)
 
             name = os.path.basename(event).strip('.inp')
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)

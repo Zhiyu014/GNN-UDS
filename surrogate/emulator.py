@@ -1,4 +1,4 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean
+from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat
 from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Conv2D
 from tensorflow.keras.models import Model
 from tensorflow.keras import losses,optimizers
@@ -19,6 +19,10 @@ class Emulator:
         self.n_out = getattr(args,'n_out',3)
         self.seq_in = getattr(args,'seq_in',6)
         self.seq_out = getattr(args,'seq_out',1)
+        self.roll = getattr(args,"roll",False)
+        if self.roll:
+            self.seq_out = 1
+
         self.embed_size = getattr(args,'embed_size',64)
         self.hidden_dim = getattr(args,"hidden_dim",64)
         self.n_layer = getattr(args,"n_layer",3)
@@ -75,34 +79,43 @@ class Emulator:
         
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
         x = reshape(X_in,input_shape[:-2]+(-1,)) if not conv else X_in
-        # (B,T,N,in) (B,T,N*in) (B,N,in) (B,N*in) --> (B*T,N,in)
-        x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
         x = Dense(self.embed_size,activation=self.activation)(x) # Embedding
-        for i in range(self.n_layer):
+        res = [x]
+        # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
+        x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
+        for _ in range(self.n_layer):
             x = [x,A_in] if conv else x
-            x_out = net(self.embed_size,activation=self.activation)(x)
-            x = x[0] if conv else x
-            x = x_out + x if resnet and i>0 else x_out
+            x = net(self.embed_size,activation=self.activation)(x)
+
+            # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
+            x_out = reshape(x,(-1,)+input_shape[:-1]+(self.embed_size,)) if conv else reshape(x,(-1,)+input_shape[:-2]+(self.embed_size,)) 
+            # res.append(x_out)
+
+        #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> （B*R,T,N,E)
+        res += [x_out]
+        x = concat(res,axis=0) if resnet else x_out
 
         if recurrent:
-            # (B*T,N,E) (B*T,E) --> (B,T,N,E) (B,T,E)
-            x = reshape(x,(-1,)+input_shape[:-1]+(self.embed_size,))
             # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E)
             x = transpose(x,[0,2,1,3]) if conv else x
             if recurrent == 'Conv1D':
                 # (B,N,T,E) (B,T,E) --> (B,N,H) (B,H)
-                x = Conv1D(self.hidden_dim,self.seq_in,activation=self.activation,input_shape=x.shape[-2:])(x)
-                x = squeeze(x)
+                x = Conv1D(self.hidden_dim,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=x.shape[-2:])(x)
+                # x = squeeze(x)
             elif recurrent == 'GRU':
                 # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
                 x = reshape(x,(-1,self.seq_in,self.embed_size)) if conv else x
                 x = GRU(self.hidden_dim,return_sequences=True)(x)
+                x = x[...,-self.seq_out:,:] # seq_in >= seq_out
                 # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
                 x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
-                 # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+                # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
                 x = transpose(x,[0,2,1,3]) if conv else x
             else:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
+        
+        # （B*R,T_out,N,H) --> (B,T_out,N,H)
+        x = reduce_sum(reshape(x,(len(res),-1,)+tuple(x.shape[1:])),axis=0) if resnet else x
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
         # (B,T_out,N,H) (B,T_out,H) --> (B,T_out,N,n_out)
@@ -116,8 +129,19 @@ class Emulator:
     def fit(self,x,y):
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
-            pred = self.model([x,self.filter])
-            loss = self.loss_fn(y,pred)
+            # TODO: rolling and resnet exhausts GPU memory
+            if self.roll:
+                preds = []
+                x_in = x[0][...,:-1]
+                for xi in x:
+                    x_in = concat([x_in,xi[...,-1:]],axis=-1)
+                    pred = self.model([x_in,self.filter])
+                    preds.append(pred)
+                    x_in = concat([x_in[:,1:,:,:-1],pred[:,:1,...]],axis=1) if self.recurrent else pred
+                loss = self.loss_fn(y,concat(preds,axis=1))
+            else:
+                pred = self.model([x,self.filter])
+                loss = self.loss_fn(y,pred)
             # if self.norm:
             #     x = self.normalize(x,inverse=True)
             #     pred = self.normalize(pred,inverse=True)
@@ -128,7 +152,17 @@ class Emulator:
         return loss.numpy()
     
     def evaluate(self,x,y):
-        loss = self.loss_fn(self.model([x,self.filter]),y)
+        if self.roll:
+            preds = []
+            x_in = x[0][...,:-1]
+            for xi in x:
+                x_in = concat([x_in,xi[...,-1:]],axis=-1)
+                pred = self.model([x_in,self.filter])
+                preds.append(pred)
+                x_in = concat([x_in[:,1:,:,:-1],pred[:,:1,...]],axis=1) if self.recurrent else pred
+            loss = self.loss_fn(y,concat(preds,axis=1))
+        else:
+            loss = self.loss_fn(self.model([x,self.filter]),y)
         return loss.numpy()
 
     def predict(self,x):
@@ -165,35 +199,20 @@ class Emulator:
         return reduce_mean(err ** 2)
 
     # TODO: settings
-    # deprecated
-    def simulate_roll(self,ini_state,r,settings=None):
-        x = ini_state[...,:-1] # exclude runoff
-        states,qws = [x[-1,...] if self.recurrent else x],[] # exclude recurrent info
-        for ri in r:
-            x = np.concatenate([x,np.expand_dims(ri,-1)],axis=-1) # T,N,n_in
-            y = self.predict(x) # T_out,N,n_out
-            ri = ri[-self.seq_out:,...] if self.recurrent else ri
-            q_w,y = self.constrain(y,ri)
-            x = np.concatenate([x[1:,:,:-1],y[:1,...]],axis=0) if self.recurrent else y
-            states.append(y)
-            qws.append(q_w)
-        return np.array(states),np.array(qws)
-
-    # TODO: settings
-    def simulate(self,states,runoff,roll = False):
+    def simulate(self,states,runoff):
         # runoff shape: T_out, T_in, N
         x = states[0,...,:-1]
-        pred,qws = [],[]
+        pred = []
         for idx,ri in enumerate(runoff):
-            x = np.concatenate([x if roll else states[idx,...,:-1],np.expand_dims(ri,-1)],axis=-1)
+            x = np.concatenate([x if self.roll else states[idx,...,:-1],np.expand_dims(ri,-1)],axis=-1)
             y = self.predict(x)
             ri = ri[-self.seq_out:,...] if self.recurrent else ri
             q_w,y = self.constrain(y,ri)
-            if roll:
+            if self.roll:
                 x = np.concatenate([x[1:,:,:-1],y[:1,...]],axis=0) if self.recurrent else y
+            y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             pred.append(y)
-            qws.append(q_w)
-        return np.array(pred),np.array(qws)
+        return np.array(pred)
     
     def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
         ratio = self.ratio if ratio is None else ratio
@@ -206,10 +225,10 @@ class Emulator:
 
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
-            x,y = dG.sample(batch_size,train_ids,self.norm)
+            x,y = dG.sample(batch_size,train_ids,self.norm,self.roll)
             train_loss = self.fit(x,y)
             train_losses.append(train_loss)
-            x,y = dG.sample(batch_size,test_ids,self.norm)
+            x,y = dG.sample(batch_size,test_ids,self.norm,self.roll)
             test_loss = self.evaluate(x,y)
             test_losses.append(test_loss)
             print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))

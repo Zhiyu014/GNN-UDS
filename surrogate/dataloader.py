@@ -17,36 +17,40 @@ class DataGenerator:
     def simulate(self, event, act = False):
         seq = self.seq_in if self.recurrent else False
         state = self.env.reset(event,global_state=True,seq=seq)
-        states,settings = [state],[]
+        perf = self.env.performance(seq=seq)
+        states,perfs,settings = [state],[perf],[]
         done = False
         while not done:
             setting = [table[np.random.randint(0,len(table))] for table in self.action_table] if act else None
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
+            perf = self.env.performance(seq=seq)
             states.append(state)
+            perfs.append(perf)
             settings.append(setting)
-        return np.array(states),np.array(settings) if act else None
+        return np.array(states),np.array(perfs),np.array(settings) if act else None
     
-    def state_split(self,states,settings=None):
+    def state_split(self,states,perfs,settings=None):
         if settings is not None:
             # B,T,N,S
             states = states[:settings.shape[0]+1]
+            perfs = perfs[:settings.shape[0]+1]
             # B,T,n_act
             a = np.tile(np.expand_dims(settings,axis=1),[1,self.seq_in,1])
         h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
         # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(5)]
         q_us = q_totin - r
         # B,T,N,in
-        # TODO: seq_out
         n_spl = self.seq_out if self.recurrent else 1
         X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl],r[n_spl:]],axis=-1)
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
         # Y = np.stack([h[1:],q_us[1:],q_ds[1:],q_w[1:]],axis=-1)
+        perfs = perfs[n_spl:]
         if self.recurrent:
             Y = Y[:,-self.seq_out:,...]
         if settings is not None:
             X = np.concatenate([X,a],axis=-1)
-        return X,Y
+        return X,Y,perfs
 
     def generate(self,events,processes=1,act=False):
         pool = mp.Pool(processes)
@@ -60,14 +64,20 @@ class DataGenerator:
         self.X,self.Y = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
     
-    def sample(self,size,event=None,norm=False):
+    def sample(self,size,event=None,norm=False,roll=False):
         if event is not None:
             n_rain = np.in1d(self.event_id,event)
             X,Y = self.X[n_rain],self.Y[n_rain]
         else:
-            X,Y = self.X,self.Y
-        idx = np.random.choice(range(X.shape[0]),size)
-        return (self.normalize(X[idx]),self.normalize(Y[idx])) if norm else (X[idx],Y[idx])
+            X,Y = self.X,self.Y            
+        idxs = np.random.choice(range(X.shape[0]-self.seq_out),size)
+        y = self.normalize(Y[idxs]) if norm else Y[idxs]
+        if roll:
+            x = [self.normalize(X[idxs+i]) if norm else X[idxs+i] 
+                 for i in range(self.seq_out)]
+        else:
+            x = self.normalize(X[idxs]) if norm else X[idxs]
+        return x,y
 
 
     def save(self,data_dir=None):

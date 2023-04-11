@@ -29,8 +29,8 @@ shunqing:
   seq_in: 6
   seq_out: 1
   resnet: False
-  
+  roll: False
+
   # test args
   test: False
-  roll: False
   result_dir: ./results/shunqing/

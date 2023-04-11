@@ -20,6 +20,10 @@ class env_sq(env_base):
 
 
     # ------ Get necessary Parameters  ----------------------------------------------
+
+    # def _getNodeIdList(self):
+    #     return self.sim._model.getObjectIDList(tkai.ObjectType.NODE.value)
+
     def _getCumFlooding(self,ID):
         if ID == "system":
             return self.sim._model.flow_routing_stats()['flooding']

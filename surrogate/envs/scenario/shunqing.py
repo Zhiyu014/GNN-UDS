@@ -70,19 +70,16 @@ class shunqing(scenario):
             self._logger()
 
         # Log the performance
-        __performance = 0.0
-        for ID, attribute, weight in self.config["performance_targets"]:
-            __cumvolume = self.env.methods[attribute](ID)
-            # Recent volume has been logged
-            if len(self.data_log[attribute][ID]) > 1:
-                __volume = __cumvolume - self.data_log[attribute][ID][-2]
-            else:
-                __volume = __cumvolume
-            # __weight = self.penalty_weight[ID]
-            __performance += __volume * weight
+        __performance = []
+        for typ, attribute, weight in self.config["performance_targets"]:
+            features = self.get_features(typ)
+            __cumvolume = [self.env.methods[attribute](ID) for ID in features]
+            __lastvolume = [self.data_log[attribute][ID][-2] if len(self.data_log[attribute][ID])>1 else 0 for ID in features]
+            __perf = np.array(__cumvolume) - np.array(__lastvolume) * weight
+            __performance.append(__perf)
 
-        # Record the _performance
-        self.data_log["performance_measure"].append(__performance)
+        # Record the _performance  (N,1)
+        self.data_log["performance_measure"].append(np.array(__performance).T)
 
         # Terminate the simulation
         if done:
@@ -152,6 +149,15 @@ class shunqing(scenario):
         state = np.asarray(state).T if seq else np.asarray(state)
         return state
 
+    def performance(self, seq = False, metric = 'recent'):
+        if not seq:
+            return super().performance(metric)
+        else:
+            perf = self.data_log['performance_measure'][-seq:]
+            default = np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
+            perf = [default for _ in range(seq-len(perf))] + perf
+            return np.array(perf)
+
     def reset(self,swmm_file=None, global_state=False,seq=False):
         # clear the data log and reset the environment
         if swmm_file is not None:
@@ -177,7 +183,9 @@ class shunqing(scenario):
         for ID, attribute, _ in config["performance_targets"]:
             if attribute not in self.data_log.keys():
                 self.data_log[attribute] = {}
-            self.data_log[attribute][ID] =  [] if maxlen is None else deque(maxlen=maxlen)
+            if ID in ['nodes','links','subcatchments']:
+                for idx in self.get_features(ID):
+                    self.data_log[attribute][idx] =  [] if maxlen is None else deque(maxlen=maxlen)
             
         if self.global_state:
             for typ,attribute in config['global_state']:
@@ -208,7 +216,7 @@ class shunqing(scenario):
         return args
 
 
-    # getters
+    # TODO: getters Use pyswmm api
     def get_features(self,kind='nodes',no_out=True):
         inp = read_inp_file(self.config['swmm_input'])
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
