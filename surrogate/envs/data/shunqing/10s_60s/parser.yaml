@@ -1,0 +1,5 @@
+data_dir: ./envs/data/shunqing/10s_60s
+env: shunqing
+seq_in: 10
+seq_out: 10
+simulate: true

@@ -15,7 +15,7 @@ class DataGenerator:
             self.action_table = list(env.config['action_space'].values())
     
     def simulate(self, event, act = False):
-        seq = self.seq_in if self.recurrent else False
+        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
         states,perfs,settings = [state],[perf],[]
@@ -36,21 +36,23 @@ class DataGenerator:
             states = states[:settings.shape[0]+1]
             perfs = perfs[:settings.shape[0]+1]
             # B,T,n_act
-            a = np.tile(np.expand_dims(settings,axis=1),[1,self.seq_in,1])
+            a = np.tile(np.expand_dims(settings,axis=1),[1,states.shape[1],1])
         h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
         # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(5)]
         q_us = q_totin - r
         # B,T,N,in
         n_spl = self.seq_out if self.recurrent else 1
-        X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl],r[n_spl:]],axis=-1)
+        X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl]],axis=-1)
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
-        # Y = np.stack([h[1:],q_us[1:],q_ds[1:],q_w[1:]],axis=-1)
+        B = np.expand_dims(r[n_spl:],axis=-1)
         perfs = perfs[n_spl:]
         if self.recurrent:
+            X = X[:,-self.seq_in:,...]
+            B = B[:,-self.seq_out:,...]
             Y = Y[:,-self.seq_out:,...]
         if settings is not None:
-            X = np.concatenate([X,a],axis=-1)
-        return X,Y,perfs
+            B = np.concatenate([B,a],axis=-1)
+        return X,B,Y,perfs
 
     def generate(self,events,processes=1,act=False):
         pool = mp.Pool(processes)
@@ -61,23 +63,18 @@ class DataGenerator:
             res = [self.state_split(*r.get()) for r in res]
         else:
             res = [self.state_split(*self.simulate(event,act)) for event in events]
-        self.X,self.Y = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
+        self.X,self.B,self.Y,_ = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
     
-    def sample(self,size,event=None,norm=False,roll=False):
+    def sample(self,size,event=None,norm=False):
         if event is not None:
             n_rain = np.in1d(self.event_id,event)
-            X,Y = self.X[n_rain],self.Y[n_rain]
+            X,B,Y = self.X[n_rain],self.B[n_rain],self.Y[n_rain]
         else:
-            X,Y = self.X,self.Y            
+            X,B,Y = self.X,self.B,self.Y            
         idxs = np.random.choice(range(X.shape[0]-self.seq_out),size)
-        y = self.normalize(Y[idxs]) if norm else Y[idxs]
-        if roll:
-            x = [self.normalize(X[idxs+i]) if norm else X[idxs+i] 
-                 for i in range(self.seq_out)]
-        else:
-            x = self.normalize(X[idxs]) if norm else X[idxs]
-        return x,y
+        x,b,y = [self.normalize(dat[idxs]) if norm else dat[idxs] for dat in [X,B,Y]]
+        return x,b,y
 
 
     def save(self,data_dir=None):
@@ -85,13 +82,14 @@ class DataGenerator:
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
         np.save(os.path.join(data_dir,'X.npy'),self.X)
+        np.save(os.path.join(data_dir,'B.npy'),self.B)
         np.save(os.path.join(data_dir,'Y.npy'),self.Y)
         np.save(os.path.join(data_dir,'event_id.npy'),self.event_id)
 
 
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
-        for name in ['X','Y','event_id']:
+        for name in ['X','B','Y','event_id']:
             dat = np.load(os.path.join(data_dir,name+'.npy')).astype(np.float32)
             setattr(self,name,dat)
         self.get_norm()
@@ -101,15 +99,20 @@ class DataGenerator:
             norm = self.X.copy()
             while len(norm.shape) > 2:
                 norm = norm.max(axis=0)
-            self.normal = norm + 1e-6
+            norm_b = self.B.copy()
+            while len(norm_b.shape) > 2:
+                norm_b = norm_b.max(axis=0)
+            self.normal = np.concatenate([norm,norm_b],axis=-1) + 1e-6
         return self.normal
     
     def normalize(self,dat,inverse=False):
         norm = self.get_norm()
-        if inverse:
-            return dat * norm[...,:dat.shape[-1]]
+        dim = dat.shape[-1]
+        if dim == 3:
+            return dat * norm[...,:dim] if inverse else dat/norm[...,:dim]
         else:
-            return dat/norm[...,:dat.shape[-1]]
+            return dat * norm[...,-dim:] if inverse else dat/norm[...,-dim:]
+
 
 def generate_file(file,arg):
     inp = read_inp_file(file)

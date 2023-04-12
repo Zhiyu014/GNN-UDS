@@ -1055,3 +1055,6 @@ surrogate/envs/network/shunqing/bpswmm_99.out
 surrogate/envs/network/shunqing/bpswmm_99.rpt
 surrogate/envs/network/shunqing/shunqing.out
 surrogate/envs/network/shunqing/shunqing.rpt
+*.out
+*.rpt
+*.inp

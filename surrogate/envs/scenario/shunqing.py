@@ -102,12 +102,12 @@ class shunqing(scenario):
                 if len(self.data_log[attr][ID]) > seq 
                 else [0.0]*(seq-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][:-1]
                 for ID in self.get_features(typ)] 
-                if attr not in ['depthN','rainfall','setting']
+                if 'cum' in attr or 'vol' in attr
                 else [[0.0]*seq for _ in self.get_features(typ)]
                 for typ,attr in self.config['global_state']])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
-                if attr not in ['depthN','rainfall','setting'] and len(self.data_log[attr][ID]) > 1 else 0
+                if ('cum' in attr or 'vol' in attr) and len(self.data_log[attr][ID]) > 1 else 0
                 for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
         state = (__state - __last).T
         return state
@@ -131,7 +131,7 @@ class shunqing(scenario):
                 for idx,(ID,attribute) in enumerate(self.config["states"])]  
         state = []
         for idx,(ID,attribute) in enumerate(self.config["states"]):
-            if attribute in ['depthN','rainfall','setting']:
+            if 'cum' not in attribute and 'vol' not in attribute:
                 __value = __state[idx]
                 if seq:
                     # ensure length seq and fill with 0

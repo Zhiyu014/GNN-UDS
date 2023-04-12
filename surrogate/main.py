@@ -38,7 +38,7 @@ def parser(config=None):
     parser.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
     # TODO: seq out
-    parser.add_argument('--seq_out',type=int,default=1,help='out sequential length')
+    parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--roll',action="store_true",help='if rollout simulation')
 
@@ -91,8 +91,12 @@ def test(env,emul,event=None):
     return true,np.array(preds)
 
 if __name__ == "__main__":
-    # TODO: given_config save
     args,config = parser('config.yaml')
+
+    debug_dict = {'test':True,'model_dir':'./model/shunqing/5s_5k_norm_res_roll/','load_model':True,'norm':True,'resnet':True,'roll':True,'seq_in':5,'seq_out':5}
+    for k,v in debug_dict.items():
+        setattr(args,k,v)
+
     env = get_env(args.env)()
     env_args = env.get_args()
     for k,v in env_args.items():
@@ -116,11 +120,13 @@ if __name__ == "__main__":
 
     # TODO: window method in Palmitessa 2023 to solve the unstable roll prediction
     if args.train:
-        train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
+        train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
 
         # save
         emul.save(args.model_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
+        np.save(os.path.join(args.model_dir,'train_id.npy'),np.array(train_ids))
+        np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
         plt.plot(train_losses,label='train')
@@ -135,11 +141,11 @@ if __name__ == "__main__":
         for event in events:
             states,perfs,settings = dG.simulate(event,act=args.act)
             states[...,1] = states[...,1] - states[...,-1]
-            r,true = states[args.seq_out:,...,-1],states[args.seq_out:,...,:-1]
+            r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
             if args.recurrent:
-                true = true[:,-args.seq_out:,...]
-            pred = emul.simulate(states,r,args.roll)
+                true = true[:,-emul.seq_out:,...]
+            pred = emul.simulate(states,r)
 
             name = os.path.basename(event).strip('.inp')
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)

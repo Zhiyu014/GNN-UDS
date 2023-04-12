@@ -13,9 +13,9 @@ class env_sq(env_base):
 
         # for state and performance
         self.methods.update({'cumflooding':self._getCumFlooding,
-                             'totalinflow':self._getNodeTotalInflow,
+                             'cuminflow':self._getNodeCumInflow,
                              'totaloutflow':self._getNodeTotalOutflow,
-                             'lateral_infow_vol':self._getNodeLateralinflowVol,
+                             'lateral_infow_vol':self._getNodeLateralInflowVol,
                              'rainfall':self._getGageRainfall})
 
 
@@ -24,21 +24,34 @@ class env_sq(env_base):
     # def _getNodeIdList(self):
     #     return self.sim._model.getObjectIDList(tkai.ObjectType.NODE.value)
 
+    def _getFlooding(self,ID):
+        # Flooding rate
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.overflow.value)
+
     def _getCumFlooding(self,ID):
+        # Cumulative flooding volume
         if ID == "system":
             return self.sim._model.flow_routing_stats()['flooding']
         else:
             return self.sim._model.node_statistics(ID)['flooding_volume']
     
     def _getNodeTotalInflow(self,ID):
+        # Inflow rate
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value)
+    
+    def _getNodeCumInflow(self,ID):
         # Cumulative inflow volume
         return self.sim._model.node_inflow(ID)
-        
+                
     def _getNodeTotalOutflow(self,ID):
-        # Cumulative inflow volume
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value)
+        # Outflow rate * step
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['control_interval'] * 60
         
-    def _getNodeLateralinflowVol(self,ID):
+    def _getNodeLateralInflow(self,ID):
+        # Lateral inflow rate
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value)
+
+    def _getNodeLateralInflowVol(self,ID):
         # Cumulative lateral inflow volume
         return self.sim._model.node_statistics(ID)['lateral_infow_vol']
 
