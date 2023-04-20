@@ -1,0 +1,11 @@
+balance: 0.3
+data_dir: ./envs/data/shunqing/5s_60s_flood/
+env: shunqing
+epochs: 5000
+if_flood: true
+load_data: true
+model_dir: ./model/shunqing/5s_5k_res_bal_flood/
+resnet: true
+seq_in: 5
+seq_out: 5
+train: true

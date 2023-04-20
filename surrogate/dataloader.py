@@ -5,11 +5,12 @@ from swmm_api import read_inp_file
 import os
 
 class DataGenerator:
-    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,data_dir=None):
+    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,data_dir=None):
         self.env = env
         self.seq_in = seq_in
         self.seq_out = seq_out
         self.recurrent = recurrent
+        self.if_flood = if_flood
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         if act:
             self.action_table = list(env.config['action_space'].values())
@@ -44,12 +45,17 @@ class DataGenerator:
         n_spl = self.seq_out if self.recurrent else 1
         X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl]],axis=-1)
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
+        # TODO: classify flooding
+        if self.if_flood:
+            f = (perfs>0).astype(int)
+            f = np.eye(2)[f].squeeze(-2)
+            X,Y = np.concatenate([X,f[:-n_spl]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
         perfs = perfs[n_spl:]
         if self.recurrent:
             X = X[:,-self.seq_in:,...]
-            B = B[:,-self.seq_out:,...]
-            Y = Y[:,-self.seq_out:,...]
+            B = B[:,:self.seq_out,...]
+            Y = Y[:,:self.seq_out,...]
         if settings is not None:
             B = np.concatenate([B,a],axis=-1)
         return X,B,Y,perfs
@@ -108,7 +114,7 @@ class DataGenerator:
     def normalize(self,dat,inverse=False):
         norm = self.get_norm()
         dim = dat.shape[-1]
-        if dim == 3:
+        if dim >= 3:
             return dat * norm[...,:dim] if inverse else dat/norm[...,:dim]
         else:
             return dat * norm[...,-dim:] if inverse else dat/norm[...,-dim:]

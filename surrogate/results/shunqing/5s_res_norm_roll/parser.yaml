@@ -1,9 +1,8 @@
 env: shunqing
 load_model: true
-model_dir: ./model/shunqing/5s_5k_res_norm/
+model_dir: ./model/shunqing/5s_5k_norm_res_roll/
 norm: true
 resnet: true
-result_dir: ./results/shunqing/5s_res_norm_roll/
 roll: true
 seq_in: 5
 seq_out: 5

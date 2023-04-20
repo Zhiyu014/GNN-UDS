@@ -22,11 +22,11 @@ def parser(config=None):
     parser.add_argument('--load_model',action="store_true",help='if load surrogate model weights')
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
-    parser.add_argument('--loss_function',type=str,default='MeanSquaredError',help='Loss function')
-    parser.add_argument('--optimizer',type=str,default='Adam',help='optimizer')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
     parser.add_argument('--epochs',type=int,default=100,help='training epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
+    parser.add_argument('--roll',action="store_true",help='if rollout simulation')
+    parser.add_argument('--balance',type=float,default=0,help='ratio of balance loss')
 
     # network args
     parser.add_argument('--norm',action="store_true",help='if data is normalized with maximum')
@@ -40,7 +40,7 @@ def parser(config=None):
     # TODO: seq out
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
-    parser.add_argument('--roll',action="store_true",help='if rollout simulation')
+    parser.add_argument('--if_flood',action='store_true',help='if classify flooding or not')
 
     # test args
     parser.add_argument('--test',action="store_true",help='if test the emulator')
@@ -93,9 +93,17 @@ def test(env,emul,event=None):
 if __name__ == "__main__":
     args,config = parser('config.yaml')
 
-    debug_dict = {'test':True,'model_dir':'./model/shunqing/5s_5k_norm_res_roll/','load_model':True,'norm':True,'resnet':True,'roll':True,'seq_in':5,'seq_out':5}
-    for k,v in debug_dict.items():
-        setattr(args,k,v)
+    # simu_de = {'simulate':True,
+    #            'data_dir':'./envs/data/shunqing/5s_60s_flood/',
+    #            'seq_in':5,
+    #            'seq_out':5,
+    #            'if_flood':True}
+    # for k,v in simu_de.items():
+    #     setattr(args,k,v)
+
+    # train_de = {'train':True,'data_dir':'./envs/data/shunqing/5s_60s_flood/','model_dir':'./model/shunqing/5s_5k_res_loop_bal_flood/','load_data':True,'resnet':True,'seq_in':5,'seq_out':5,'if_flood':True,'balance':0.3}
+    # for k,v in train_de.items():
+    #     setattr(args,k,v)
 
     env = get_env(args.env)()
     env_args = env.get_args()
@@ -104,22 +112,20 @@ if __name__ == "__main__":
             v = v & args.act
         setattr(args,k,v)
     
-    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.data_dir)
+    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.data_dir)
     events = generate_file(env.config['swmm_input'],env.config['rainfall'])
     if args.simulate:
         dG.generate(events,processes=args.processes,act=args.act)
         dG.save(args.data_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.data_dir,'parser.yaml'),'w'))
-    elif args.load_data:
+    elif args.load_data or args.train:
         dG.load(args.data_dir)
     
     emul = Emulator(args.conv,args.edges,args.resnet,args.recurrent,args)
-    if args.norm and not args.load_model:
-        emul.set_norm(dG.get_norm())
-    
-
-    # TODO: window method in Palmitessa 2023 to solve the unstable roll prediction
+        
     if args.train:
+        if args.norm:
+            emul.set_norm(dG.get_norm())
         train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
 
         # save
@@ -135,19 +141,34 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
     if args.test:
+        emul.load(args.model_dir)
         if not os.path.exists(args.result_dir):
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
         for event in events:
-            states,perfs,settings = dG.simulate(event,act=args.act)
+            name = os.path.basename(event).strip('.inp')
+            if os.path.exists(os.path.join(args.result_dir,name + '_states.npy')):
+                states = np.load(os.path.join(args.result_dir,name + '_states.npy'))
+                perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
+            else:
+                states,perfs,settings = dG.simulate(event,act=args.act)
+                np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
+                np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
+
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
-            true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
-            if args.recurrent:
-                true = true[:,-emul.seq_out:,...]
+
+            states = states[...,:-1]
+            if args.if_flood:
+                f = (perfs>0).astype(int)
+                f = np.eye(2)[f].squeeze(-2)
+                states = np.concatenate([states,f],axis=-1)
+                true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             pred = emul.simulate(states,r)
 
-            name = os.path.basename(event).strip('.inp')
+            true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
+            if args.recurrent:
+                true = true[:,:emul.seq_out,...]
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)

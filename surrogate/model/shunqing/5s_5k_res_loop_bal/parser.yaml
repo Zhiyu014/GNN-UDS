@@ -1,0 +1,10 @@
+balance: 0.3
+data_dir: ./envs/data/shunqing/5s_60s/
+env: shunqing
+epochs: 5000
+load_data: true
+model_dir: ./model/shunqing/5s_5k_res_loop_bal/
+resnet: true
+seq_in: 5
+seq_out: 5
+train: true

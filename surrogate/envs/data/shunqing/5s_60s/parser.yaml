@@ -1,4 +1,4 @@
-data_dir: ./envs/data/shunqing/5s_60s
+data_dir: ./envs/data/shunqing/5s_60s/
 env: shunqing
 seq_in: 5
 seq_out: 5

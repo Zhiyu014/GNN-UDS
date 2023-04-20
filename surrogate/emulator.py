@@ -1,7 +1,8 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Conv2D
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax
 from tensorflow.keras.models import Model
-from tensorflow.keras import losses,optimizers
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
 import numpy as np
 import os
 from spektral.layers import GCNConv,GATConv
@@ -32,6 +33,10 @@ class Emulator:
         self.n_layer = getattr(args,"n_layer",3)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
+        self.balance_alpha = getattr(args,"balance",0)
+        self.if_flood = getattr(args,"if_flood",False)
+        if self.if_flood:
+            self.n_in += 2
 
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
         if edges is not None:
@@ -40,9 +45,9 @@ class Emulator:
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.model = self.build_network(self.conv,resnet,self.recurrent)
-        self.loss_fn = losses.get(getattr(args,"loss_function","MeanSquaredError"))
-        self.optimizer = optimizers.get(getattr(args,"optimizer","Adam"))
-        self.optimizer.learning_rate = getattr(args,"learning_rate",1e-3)
+        self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3))
+        self.mse = MeanSquaredError()
+        self.cce = CategoricalCrossentropy()
 
         self.ratio = getattr(args,"ratio",0.8)
         self.batch_size = getattr(args,"batch_size",256)
@@ -53,9 +58,12 @@ class Emulator:
 
 
     def get_adj(self,edges):
+        # self-loop
+        # TODO: if directed graph
         A = np.eye(edges.max()+1) # adjacency matrix
         for u,v in edges:
             A[u,v] += 1
+            A[v,u] += 1
         return A
 
     def build_network(self,conv=None,resnet=False,recurrent=None):
@@ -143,15 +151,28 @@ class Emulator:
         # (B,T_out,N,H) (B,T_out,H) --> (B,T_out,N,n_out)
         out = Dense(out_shape,activation='linear')(x)
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
+        if self.if_flood:
+            out_shape = 2 if conv else 2 * self.n_node
+            flood = Dense(out_shape,activation='linear')(x)
+            flood = reshape(flood,(-1,self.seq_out,self.n_node,2))
+            flood = Softmax()(flood)
+            out = concat([out,flood],axis=-1)
         model = Model(inputs=inp, outputs=out)
         return model
     
+    def loss_fn(self,true,pred):
+        if self.if_flood:
+            loss = self.mse(pred[...,:-2],true[...,:-2]) + self.cce(pred[...,-2:],true[...,-2:])
+        else:
+            loss = self.mse(pred,true)
+        return loss
+            
 
+    # TODO: classify if flooding
     # TODO: setting loss
     def fit(self,x,b,y):
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
-            # TODO: rolling and resnet exhausts GPU memory
             if self.roll:
                 preds = []
                 # TODO: what if not recurrent
@@ -159,15 +180,16 @@ class Emulator:
                     pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
-                loss = self.loss_fn(y,concat(preds,axis=1))
+                preds = concat(preds,axis=1)
+                loss = self.loss_fn(y,preds)
             else:
-                pred = self.model([x,self.filter,b])
-                loss = self.loss_fn(y,pred)
-            # if self.norm:
-            #     x = self.normalize(x,inverse=True)
-            #     pred = self.normalize(pred,inverse=True)
-            # r = x[:,-1,...,-1] if self.recurrent else x[...,-1]
-            # loss += self.balance(pred,r)
+                preds = self.model([x,self.filter,b])
+                loss = self.loss_fn(y,preds)
+            if self.norm:
+                preds = self.normalize(preds,inverse=True)
+                b = self.normalize(b,inverse=True)
+            if self.balance_alpha:
+                loss += self.balance_alpha * self.balance(preds,b)
         grads = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss.numpy()
@@ -180,9 +202,13 @@ class Emulator:
                 pred = self.model([x,self.filter,b[:,i:i+1,...]])
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
-            loss = self.loss_fn(y,concat(preds,axis=1))
+            preds = concat(preds,axis=1)
+            loss = self.loss_fn(y,preds)
         else:
-            loss = self.loss_fn(self.model([x,self.filter,b]),y)
+            preds = self.model([x,self.filter,b])
+            loss = self.loss_fn(y,preds)
+        if self.balance_alpha:
+            loss += self.balance_alpha * self.balance(preds,b)
         return loss.numpy()
 
     def predict(self,x,b):
@@ -192,7 +218,7 @@ class Emulator:
         x,b = expand_dims(x,0),expand_dims(b,0)
         y = squeeze(self.model([x,self.filter,b]),0).numpy()
         if self.norm:
-            y = self.normalize(y,inverse=True)
+            y = self.normalize(y,inverse=True).clip(0)
         return y
 
     def set_norm(self,normal):
@@ -200,43 +226,54 @@ class Emulator:
 
     def normalize(self,dat,inverse=False):
         dim = dat.shape[-1]
-        if dim == 3:
+        if dim >= 3:
             return dat * self.normal[...,:dim] if inverse else dat/self.normal[...,:dim]
         else:
             return dat * self.normal[...,-dim:] if inverse else dat/self.normal[...,-dim:]
 
 
-    # Problems: h is static at the end of the interval -- use 30s step
     # Problems: use flooding volume at each node as label?
     def constrain(self,y,r):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
-        q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.01)
         h = h.clip(0,self.hmax)
-        y = np.stack([h,q_us,q_ds],axis=-1)
+        if self.if_flood:
+            f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            q_w = (q_us + r - q_ds).clip(0) * f
+            h = self.hmax * f + h * ~f
+            y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
+        else:
+            q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.1)
+            y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
     def balance(self,y,r):
-        _,q_us,q_ds = [y[...,i] for i in range(3)]
-        q_w,_ = self.constrain(y,r)
-        err = q_us + r - q_ds - q_w
-        return reduce_mean(err ** 2)
+        h,q_us,q_ds = [y[...,i].numpy() for i in range(3)]
+        r = np.squeeze(r,axis=-1)
+        h = h.clip(0,self.hmax)
+        if self.if_flood:
+            f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            q_w = (q_us + r - q_ds).clip(0) * f
+        else:
+            q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.1)
+        # err = q_us + r - q_ds - q_w
+        return self.mse(q_us + r, q_ds + q_w)
 
     # TODO: settings
     def simulate(self,states,runoff):
         # runoff shape: T_out, T_in, N
-        x = states[0,...,:-1]
+        x = states[0]
         if self.recurrent:
             x = x[-self.seq_in:,...]
         pred = []
         for idx,ri in enumerate(runoff):
-            state = states[idx,-self.seq_in:,...,:-1] if self.recurrent else states[idx,...,:-1]
+            state = states[idx,-self.seq_in:,...] if self.recurrent else states[idx]
             x = x if self.roll else state
-            ri = ri[-self.seq_out:,...] if self.recurrent else ri
+            ri = ri[:self.seq_out] if self.recurrent else ri
             y = self.predict(x,ri)
             q_w,y = self.constrain(y,ri)
             if self.roll:
-                x = np.concatenate([x[1:,...],y[:1,...]],axis=0) if self.recurrent else y
+                x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             pred.append(y)
         return np.array(pred)
@@ -267,17 +304,21 @@ class Emulator:
             os.mkdir(model_dir)
         if model_dir.endswith('.h5'):
             self.model.save_weights(model_dir)
-            np.save(os.path.join(os.path.dirname(model_dir),'normal.npy'),self.normal)
+            if self.norm:
+                np.save(os.path.join(os.path.dirname(model_dir),'normal.npy'),self.normal)
         else:
             self.model.save_weights(os.path.join(model_dir,'model.h5'))
-            np.save(os.path.join(model_dir,'normal.npy'),self.normal)
+            if self.norm:
+                np.save(os.path.join(model_dir,'normal.npy'),self.normal)
 
 
     def load(self,model_dir=None):
         model_dir = model_dir if model_dir is not None else self.model_dir
         if model_dir.endswith('.h5'):
             self.model.load_weights(model_dir)
-            self.normal = np.load(os.path.join(os.path.dirname(model_dir),'normal.npy'))
+            if self.norm:
+                self.normal = np.load(os.path.join(os.path.dirname(model_dir),'normal.npy'))
         else:
             self.model.load_weights(os.path.join(model_dir,'model.h5'))
-            self.normal = np.load(os.path.join(model_dir,'normal.npy'))
+            if self.norm:
+                self.normal = np.load(os.path.join(model_dir,'normal.npy'))

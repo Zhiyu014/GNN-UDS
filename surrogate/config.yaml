@@ -11,12 +11,12 @@ shunqing:
   load_model: False
   model_dir: ./model/shunqing/
   ratio: 0.8
-  loss_function: MeanSquaredError
-  optimizer: Adam
   learning_rate: 0.001
   epochs: 100
   batch_size: 256
-
+  roll: False
+  balance: 0
+  
   # network args
   norm: False
   n_out: 3
@@ -29,7 +29,7 @@ shunqing:
   seq_in: 6
   seq_out: 1
   resnet: False
-  roll: False
+  if_flood: False
 
   # test args
   test: False
