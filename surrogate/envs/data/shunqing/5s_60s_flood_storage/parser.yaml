@@ -1,0 +1,6 @@
+data_dir: ./envs/data/shunqing/5s_60s_flood_storage/
+env: shunqing
+if_flood: true
+seq_in: 5
+seq_out: 5
+simulate: true

@@ -102,13 +102,15 @@ class DataGenerator:
 
     def get_norm(self):
         if not hasattr(self,'normal'):
-            norm = self.X.copy()
+            norm = self.X.copy() + 1e-6
             while len(norm.shape) > 2:
                 norm = norm.max(axis=0)
-            norm_b = self.B.copy()
+            if self.if_flood:
+                norm[:,-2:] = 1
+            norm_b = self.B.copy() + 1e-6
             while len(norm_b.shape) > 2:
                 norm_b = norm_b.max(axis=0)
-            self.normal = np.concatenate([norm,norm_b],axis=-1) + 1e-6
+            self.normal = np.concatenate([norm,norm_b],axis=-1)
         return self.normal
     
     def normalize(self,dat,inverse=False):

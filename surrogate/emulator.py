@@ -1,4 +1,4 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat
+from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt
 from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
@@ -168,7 +168,6 @@ class Emulator:
         return loss
             
 
-    # TODO: classify if flooding
     # TODO: setting loss
     def fit(self,x,b,y):
         with GradientTape() as tape:
@@ -178,6 +177,7 @@ class Emulator:
                 # TODO: what if not recurrent
                 for i in range(b.shape[1]):
                     pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
+                    _,pred = self.constrain(pred,b[:,i:i+self.seq_out,...])
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
                 preds = concat(preds,axis=1)
@@ -199,7 +199,8 @@ class Emulator:
             preds = []
             # TODO: what if not recurrent
             for i in range(b.shape[1]):
-                pred = self.model([x,self.filter,b[:,i:i+1,...]])
+                pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
+                _,pred = self.constrain(pred,b[:,i:i+self.seq_out,...])
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
             preds = concat(preds,axis=1)
@@ -207,6 +208,9 @@ class Emulator:
         else:
             preds = self.model([x,self.filter,b])
             loss = self.loss_fn(y,preds)
+        if self.norm:
+            preds = self.normalize(preds,inverse=True)
+            b = self.normalize(b,inverse=True)
         if self.balance_alpha:
             loss += self.balance_alpha * self.balance(preds,b)
         return loss.numpy()
@@ -232,32 +236,32 @@ class Emulator:
             return dat * self.normal[...,-dim:] if inverse else dat/self.normal[...,-dim:]
 
 
-    # Problems: use flooding volume at each node as label?
     def constrain(self,y,r):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
-        h = h.clip(0,self.hmax)
+        h = np.clip(h,0,self.hmax)
         if self.if_flood:
             f = np.argmax(y[...,-2:],axis=-1).astype(bool)
-            q_w = (q_us + r - q_ds).clip(0) * f
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
             h = self.hmax * f + h * ~f
             y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
         else:
-            q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.1)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1)
             y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
     def balance(self,y,r):
+        # B,T,N
         h,q_us,q_ds = [y[...,i].numpy() for i in range(3)]
         r = np.squeeze(r,axis=-1)
-        h = h.clip(0,self.hmax)
+        h = np.clip(h,0,self.hmax)
         if self.if_flood:
             f = np.argmax(y[...,-2:],axis=-1).astype(bool)
-            q_w = (q_us + r - q_ds).clip(0) * f
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
-            q_w = (q_us + r - q_ds).clip(0) * ((self.hmax - h) < 0.1)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1)
         # err = q_us + r - q_ds - q_w
-        return self.mse(q_us + r, q_ds + q_w)
+        return sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
 
     # TODO: settings
     def simulate(self,states,runoff):
@@ -265,18 +269,29 @@ class Emulator:
         x = states[0]
         if self.recurrent:
             x = x[-self.seq_in:,...]
-        pred = []
+        preds = []
         for idx,ri in enumerate(runoff):
             state = states[idx,-self.seq_in:,...] if self.recurrent else states[idx]
-            x = x if self.roll else state
-            ri = ri[:self.seq_out] if self.recurrent else ri
-            y = self.predict(x,ri)
-            q_w,y = self.constrain(y,ri)
+            # x = x if self.roll else state
             if self.roll:
-                x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
+                # TODO: What if not recurrent
+                qws,ys = []
+                for i in range(ri.shape[0]):
+                    r_i = ri[i:i+self.seq_out]
+                    y = self.predict(x,r_i)
+                    q_w,y = self.constrain(y,r_i)
+                    x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
+                    qws.append(q_w)
+                    ys.append(y)
+                q_w,y = np.concatenate(qws,axis=0),np.concatenate(ys,axis=0)
+            else:
+                x = state
+                ri = ri[:self.seq_out] if self.recurrent else ri
+                y = self.predict(x,ri)
+                q_w,y = self.constrain(y,ri)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
-            pred.append(y)
-        return np.array(pred)
+            preds.append(y)
+        return np.array(preds)
     
     def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
         ratio = self.ratio if ratio is None else ratio

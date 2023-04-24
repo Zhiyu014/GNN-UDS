@@ -12,7 +12,7 @@ shunqing:
   model_dir: ./model/shunqing/
   ratio: 0.8
   learning_rate: 0.001
-  epochs: 100
+  epochs: 5000
   batch_size: 256
   roll: False
   balance: 0

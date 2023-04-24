@@ -3,8 +3,9 @@ from dataloader import DataGenerator,generate_file
 import argparse,yaml,random
 from envs import get_env
 import numpy as np
-import os
+import os,time
 import matplotlib.pyplot as plt
+import tensorflow as tf
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
@@ -23,7 +24,7 @@ def parser(config=None):
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
-    parser.add_argument('--epochs',type=int,default=100,help='training epochs')
+    parser.add_argument('--epochs',type=int,default=5000,help='training epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
     parser.add_argument('--roll',action="store_true",help='if rollout simulation')
     parser.add_argument('--balance',type=float,default=0,help='ratio of balance loss')
@@ -105,6 +106,17 @@ if __name__ == "__main__":
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
+    # test_de = {'test':True,
+    #            'model_dir':'./model/shunqing/5s_5k_res_bal_norm_flood_storage/',
+    #            'resnet':True,
+    #            'norm':True,
+    #            'seq_in':5,
+    #            'seq_out':5,
+    #            'if_flood':True,
+    #            'result_dir':'./results/shunqing/5s_res_bal_norm_flood_storage/'}
+    # for k,v in test_de.items():
+    #     setattr(args,k,v)
+
     env = get_env(args.env)()
     env_args = env.get_args()
     for k,v in env_args.items():
@@ -112,7 +124,19 @@ if __name__ == "__main__":
             v = v & args.act
         setattr(args,k,v)
     
+    # Config physical device
+    # if args.train:
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = '/gpu:0'
+    #     tf.config.list_physical_devices(device_type='GPU')
+    # else:
+    #     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    #     tf.config.list_physical_devices(device_type='CPU')
+
     dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.data_dir)
+
+    # Storage nodes, Remember to change swmm files back!!
+    # env.config['swmm_input'] = env.config['swmm_input'].replace('%s.inp'%args.env,'%s_s.inp'%args.env)
     events = generate_file(env.config['swmm_input'],env.config['rainfall'])
     if args.simulate:
         dG.generate(events,processes=args.processes,act=args.act)
@@ -151,7 +175,9 @@ if __name__ == "__main__":
                 states = np.load(os.path.join(args.result_dir,name + '_states.npy'))
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
             else:
+                t0 = time.time()
                 states,perfs,settings = dG.simulate(event,act=args.act)
+                print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
 
@@ -164,11 +190,13 @@ if __name__ == "__main__":
                 f = np.eye(2)[f].squeeze(-2)
                 states = np.concatenate([states,f],axis=-1)
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
+            t0 = time.time()
             pred = emul.simulate(states,r)
+            print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
             if args.recurrent:
-                true = true[:,:emul.seq_out,...]
+                true = true[:,:args.seq_out,...]
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)
