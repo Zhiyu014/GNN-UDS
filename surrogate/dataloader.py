@@ -15,8 +15,7 @@ class DataGenerator:
         if act:
             self.action_table = list(env.config['action_space'].values())
     
-    def simulate(self, event, act = False):
-        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
+    def simulate(self, event, seq = False, act = False):
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
         states,perfs,settings = [state],[perf],[]
@@ -30,7 +29,20 @@ class DataGenerator:
             perfs.append(perf)
             settings.append(setting)
         return np.array(states),np.array(perfs),np.array(settings) if act else None
-    
+
+    def generate(self,events,processes=1,seq=False,act=False):
+        pool = mp.Pool(processes)
+        if processes > 1:
+            res = [pool.apply_async(func=self.simulate,args=(event,seq,act,)) for event in events]
+            pool.close()
+            pool.join()
+            res = [r.get() for r in res]
+        else:
+            res = [self.simulate(event,seq,act) for event in events]
+        self.states,self.perfs = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
+        self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
+        self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
+
     def state_split(self,states,perfs,settings=None):
         if settings is not None:
             # B,T,N,S
@@ -58,61 +70,73 @@ class DataGenerator:
             Y = Y[:,:self.seq_out,...]
         if settings is not None:
             B = np.concatenate([B,a],axis=-1)
-        return X,B,Y,perfs
+        return X,B,Y
 
-    def generate(self,events,processes=1,act=False):
-        pool = mp.Pool(processes)
-        if processes > 1:
-            res = [pool.apply_async(func=self.simulate,args=(event,act,)) for event in events]
-            pool.close()
-            pool.join()
-            res = [self.state_split(*r.get()) for r in res]
-        else:
-            res = [self.state_split(*self.simulate(event,act)) for event in events]
-        self.X,self.B,self.Y,_ = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
-        self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
-    
-    def sample(self,size,event=None,norm=False):
-        if event is not None:
-            n_rain = np.in1d(self.event_id,event)
-            X,B,Y = self.X[n_rain],self.B[n_rain],self.Y[n_rain]
-        else:
-            X,B,Y = self.X,self.B,self.Y            
-        idxs = np.random.choice(range(X.shape[0]-self.seq_out),size)
-        x,b,y = [self.normalize(dat[idxs]) if norm else dat[idxs] for dat in [X,B,Y]]
-        return x,b,y
+    def expand_seq(self,dats,seq):
+        dats = np.stack([np.concatenate([np.tile(np.zeros_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
+        return dats
+
+    def prepare(self,seq=0,event=None):
+        res = []
+        event = np.arange(int(max(self.event_id))+1) if event is None else event
+        for idx in event:
+            num = self.event_id==idx
+            if seq > 0:
+                states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
+                settings = self.expand_seq(self.settings[num],seq) if self.settings is not None else None
+            x,b,y = self.state_split(states,perfs,settings)
+            res.append((x,b,y))
+        return [np.concatenate([r[i] for r in res],axis=0) for i in range(3)]
+        # self.states,self.perfs = None,None
+
 
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
-        np.save(os.path.join(data_dir,'X.npy'),self.X)
-        np.save(os.path.join(data_dir,'B.npy'),self.B)
-        np.save(os.path.join(data_dir,'Y.npy'),self.Y)
+        np.save(os.path.join(data_dir,'states.npy'),self.states)
+        np.save(os.path.join(data_dir,'perfs.npy'),self.perfs)
+        if self.settings is not None:
+            np.save(os.path.join(data_dir,'settings.npy'),self.settings)
         np.save(os.path.join(data_dir,'event_id.npy'),self.event_id)
 
 
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
-        for name in ['X','B','Y','event_id']:
-            dat = np.load(os.path.join(data_dir,name+'.npy')).astype(np.float32)
+        for name in ['states','perfs','settings','event_id']:
+            if os.path.isfile(os.path.join(data_dir,name+'.npy')):
+                dat = np.load(os.path.join(data_dir,name+'.npy')).astype(np.float32)
+            else:
+                dat = None
             setattr(self,name,dat)
         self.get_norm()
 
+    # def get_norm(self):
+    #     if not hasattr(self,'normal'):
+    #         norm = self.X.copy() + 1e-6
+    #         while len(norm.shape) > 2:
+    #             norm = norm.max(axis=0)
+    #         if self.if_flood:
+    #             norm[:,-2:] = 1
+    #         norm_b = self.B.copy() + 1e-6
+    #         while len(norm_b.shape) > 2:
+    #             norm_b = norm_b.max(axis=0)
+    #         self.normal = np.concatenate([norm,norm_b],axis=-1)
+    #     return self.normal
+    
     def get_norm(self):
         if not hasattr(self,'normal'):
-            norm = self.X.copy() + 1e-6
+            norm = self.states.copy()
+            norm[...,1] = norm[...,1] - norm[...,-1]
             while len(norm.shape) > 2:
                 norm = norm.max(axis=0)
             if self.if_flood:
-                norm[:,-2:] = 1
-            norm_b = self.B.copy() + 1e-6
-            while len(norm_b.shape) > 2:
-                norm_b = norm_b.max(axis=0)
-            self.normal = np.concatenate([norm,norm_b],axis=-1)
+                norm = np.concatenate([norm[...,:-1] + 1e-6,np.ones((norm.shape[0],2)),norm[...,-1:] + 1e-6],axis=-1)
+            self.normal = norm
         return self.normal
-    
+            
+
     def normalize(self,dat,inverse=False):
         norm = self.get_norm()
         dim = dat.shape[-1]

@@ -7,7 +7,7 @@ Title/Notes:
 [OPTIONS]
 ;;Option             Value
 FLOW_UNITS           CMS
-INFILTRATION         GREEN_AMPT
+INFILTRATION         HORTON
 FLOW_ROUTING         DYNWAVE
 LINK_OFFSETS         DEPTH
 MIN_SLOPE            0

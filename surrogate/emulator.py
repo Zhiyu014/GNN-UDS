@@ -293,21 +293,66 @@ class Emulator:
             preds.append(y)
         return np.array(preds)
     
+    # # Parallel emulation (GPU out of memory)
+    # def simulate(self,states,runoff):
+    #     # runoff shape: T_out, T_in, N
+    #     if self.roll:
+    #         x = states[0,-self.seq_in:,...] if self.recurrent else states[0]
+    #         preds = []
+    #         for idx,ri in enumerate(runoff):
+    #             # x = x if self.roll else state
+    #             # TODO: What if not recurrent
+    #             qws,ys = []
+    #             for i in range(ri.shape[0]):
+    #                 r_i = ri[i:i+self.seq_out]
+    #                 y = self.predict(x,r_i)
+    #                 q_w,y = self.constrain(y,r_i)
+    #                 x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
+    #                 qws.append(q_w)
+    #                 ys.append(y)
+    #             q_w,y = np.concatenate(qws,axis=0),np.concatenate(ys,axis=0)
+    #             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
+    #             preds.append(y)
+    #     else:
+    #         states = states[:,-self.seq_in:,...] if self.recurrent else states
+    #         runoff = runoff[:,:self.seq_out,...] if self.recurrent else runoff
+    #         if self.norm:
+    #             x = self.normalize(states)
+    #             b = self.normalize(runoff)
+    #         y = self.model([x,self.filter,b]).numpy()
+    #         if self.norm:
+    #             y = self.normalize(y,inverse=True).clip(0)
+    #         q_w,y = self.constrain(y,runoff)
+    #         preds = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
+    #     return np.array(preds)
+    
     def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
         ratio = self.ratio if ratio is None else ratio
         batch_size = self.batch_size if batch_size is None else batch_size
         epochs = self.epochs if epochs is None else epochs
 
+        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
+
         n_events = int(max(dG.event_id))+1
         train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 
+        X_train,B_train,Y_train = dG.prepare(seq,train_ids)
+        X_test,B_test,Y_test = dG.prepare(seq,test_ids)
+
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
-            x,b,y = dG.sample(batch_size,train_ids,self.norm)
+            idxs = np.random.choice(range(X_train.shape[0]),batch_size)
+            x,b,y = [dat[idxs] for dat in [X_train,B_train,Y_train]]
+            if self.norm:
+                x,b,y = [self.normalize(dat) for dat in[x,b,y]]
             train_loss = self.fit(x,b,y)
             train_losses.append(train_loss)
-            x,b,y = dG.sample(batch_size,test_ids,self.norm)
+
+            idxs = np.random.choice(range(X_test.shape[0]),batch_size)
+            x,b,y = [dat[idxs] for dat in [X_test,B_test,Y_test]]
+            if self.norm:
+                x,b,y = [self.normalize(dat) for dat in[x,b,y]]
             test_loss = self.evaluate(x,b,y)
             test_losses.append(test_loss)
             print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))

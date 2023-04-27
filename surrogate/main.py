@@ -95,10 +95,11 @@ if __name__ == "__main__":
     args,config = parser('config.yaml')
 
     # simu_de = {'simulate':True,
-    #            'data_dir':'./envs/data/shunqing/5s_60s_flood/',
-    #            'seq_in':5,
-    #            'seq_out':5,
-    #            'if_flood':True}
+    #            'data_dir':'./envs/data/shunqing/60s/',
+    #         #    'seq_in':5,
+    #         #    'seq_out':5,
+    #         #    'if_flood':True,
+    #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
@@ -133,6 +134,7 @@ if __name__ == "__main__":
     #     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
     #     tf.config.list_physical_devices(device_type='CPU')
 
+    #TODO: split saved data into single layer
     dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.data_dir)
 
     # Storage nodes, Remember to change swmm files back!!
@@ -176,7 +178,8 @@ if __name__ == "__main__":
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
             else:
                 t0 = time.time()
-                states,perfs,settings = dG.simulate(event,act=args.act)
+                seq = max(args.seq_in,args.seq_out) if args.recurrent else False
+                states,perfs,settings = dG.simulate(event,seq,act=args.act)
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
@@ -191,6 +194,7 @@ if __name__ == "__main__":
                 states = np.concatenate([states,f],axis=-1)
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             t0 = time.time()
+            states = states[:-args.seq_out]
             pred = emul.simulate(states,r)
             print("{} Emulation time: {}".format(name,time.time()-t0))
 

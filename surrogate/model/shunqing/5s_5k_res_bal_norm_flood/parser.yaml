@@ -1,5 +1,5 @@
 balance: 0.3
-data_dir: ./envs/data/shunqing/5s_60s_flood/
+data_dir: ./envs/data/shunqing/60s/
 env: shunqing
 if_flood: true
 model_dir: ./model/shunqing/5s_5k_res_bal_norm_flood/

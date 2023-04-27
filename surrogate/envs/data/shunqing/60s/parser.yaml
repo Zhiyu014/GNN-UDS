@@ -1,0 +1,3 @@
+data_dir: ./envs/data/shunqing/60s/
+env: shunqing
+simulate: true

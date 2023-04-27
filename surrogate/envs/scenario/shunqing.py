@@ -151,7 +151,10 @@ class shunqing(scenario):
 
     def performance(self, seq = False, metric = 'recent'):
         if not seq:
-            return super().performance(metric)
+            if len(self.data_log['performance_measure']) > 0:
+                return super().performance(metric)
+            else:
+                return np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
         else:
             perf = self.data_log['performance_measure'][-seq:]
             default = np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
@@ -185,7 +188,7 @@ class shunqing(scenario):
                 self.data_log[attribute] = {}
             if ID in ['nodes','links','subcatchments']:
                 for idx in self.get_features(ID):
-                    self.data_log[attribute][idx] =  [] if maxlen is None else deque(maxlen=maxlen)
+                    self.data_log[attribute][idx] = [] if maxlen is None else deque(maxlen=maxlen)
             
         if self.global_state:
             for typ,attribute in config['global_state']:
