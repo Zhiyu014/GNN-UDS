@@ -24,10 +24,10 @@ def parser(config=None):
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
-    parser.add_argument('--epochs',type=int,default=5000,help='training epochs')
+    parser.add_argument('--epochs',type=int,default=500,help='training epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
     parser.add_argument('--roll',action="store_true",help='if rollout simulation')
-    parser.add_argument('--balance',type=float,default=0,help='ratio of balance loss')
+    parser.add_argument('--balance',action="store_true",help='ratio of balance loss')
 
     # network args
     parser.add_argument('--norm',action="store_true",help='if data is normalized with maximum')
@@ -103,18 +103,20 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,'data_dir':'./envs/data/shunqing/5s_60s_flood/','model_dir':'./model/shunqing/5s_5k_res_loop_bal_flood/','load_data':True,'resnet':True,'seq_in':5,'seq_out':5,'if_flood':True,'balance':0.3}
+    # train_de = {'train':True,'data_dir':'./envs/data/shunqing/60s/','model_dir':'./model/shunqing/10s_10k_res_norm_roll_flood/','load_data':True,'resnet':True,'norm':True,'seq_in':10,'seq_out':10,'if_flood':True,'batch_size':32,'roll':True,'recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
     # test_de = {'test':True,
-    #            'model_dir':'./model/shunqing/5s_5k_res_bal_norm_flood_storage/',
+    #            'model_dir':'./model/shunqing/10s_10k_res_norm_roll_flood/',
     #            'resnet':True,
     #            'norm':True,
-    #            'seq_in':5,
-    #            'seq_out':5,
+    #            'seq_in':10,
+    #            'seq_out':10,
     #            'if_flood':True,
-    #            'result_dir':'./results/shunqing/5s_res_bal_norm_flood_storage/'}
+    #            'roll':True,
+    #            'recurrent':'Conv1D',
+    #            'result_dir':'./results/shunqing/10s_res_norm_roll_flood/'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 

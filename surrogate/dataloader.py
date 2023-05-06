@@ -62,8 +62,8 @@ class DataGenerator:
             f = (perfs>0).astype(int)
             f = np.eye(2)[f].squeeze(-2)
             X,Y = np.concatenate([X,f[:-n_spl]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
+        Y = np.concatenate([Y,perfs[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
-        perfs = perfs[n_spl:]
         if self.recurrent:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
@@ -85,9 +85,8 @@ class DataGenerator:
                 states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
                 settings = self.expand_seq(self.settings[num],seq) if self.settings is not None else None
             x,b,y = self.state_split(states,perfs,settings)
-            res.append((x,b,y))
+            res.append((x.astype(np.float32),b.astype(np.float32),y.astype(np.float32)))
         return [np.concatenate([r[i] for r in res],axis=0) for i in range(3)]
-        # self.states,self.perfs = None,None
 
 
 
@@ -127,13 +126,20 @@ class DataGenerator:
     
     def get_norm(self):
         if not hasattr(self,'normal'):
-            norm = self.states.copy()
+            norm = np.concatenate([self.states[...,:-1],self.perfs,self.states[...,-1:]],axis=-1)
             norm[...,1] = norm[...,1] - norm[...,-1]
             while len(norm.shape) > 2:
                 norm = norm.max(axis=0)
             if self.if_flood:
-                norm = np.concatenate([norm[...,:-1] + 1e-6,np.ones((norm.shape[0],2)),norm[...,-1:] + 1e-6],axis=-1)
-            self.normal = norm
+                norm = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-2].max())+1e-6,(norm.shape[0],1)),norm[...,-1:] + 1e-6],axis=-1)
+                # norm = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:] + 1e-6],axis=-1)
+            else:
+                norm += 1e-6
+
+            # if self.if_flood:
+            #     norm = np.concatenate([norm[...,:-1] + 1e-6,np.ones((norm.shape[0],1),dtype=np.float32),norm[...,-1:] + 1e-6],axis=-1)
+            # else:
+            self.normal = norm.astype(np.float32)
         return self.normal
             
 

@@ -3,13 +3,16 @@ from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
+from tensorflow.keras import mixed_precision
 import numpy as np
 import os
 from spektral.layers import GCNConv,GATConv
 from spektral.utils.convolution import gcn_filter
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
-# - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?
+# mixed_precision.set_global_policy('mixed_float16')
+
+# - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?  TO reduce model
 #     - [pytorch implementation](https://github.com/LMissher/STGNN)
 #     - [original](https://github.com/VeritasYin/STGCN_IJCAI-18)
 # - **Predict**: *T*-times 1-step prediction OR T-step prediction?
@@ -33,7 +36,7 @@ class Emulator:
         self.n_layer = getattr(args,"n_layer",3)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
-        self.balance_alpha = getattr(args,"balance",0)
+        self.balance = getattr(args,"balance",0)
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
             self.n_in += 2
@@ -82,9 +85,6 @@ class Emulator:
                 self.filter,net = gcn_filter(self.filter),GCNConv
             elif 'GAT' in conv:
                 net = GATConv
-            # elif 'CNN' in conv:
-            #     # TODO: CNN
-            #     net = Conv2D
             else:
                 raise AssertionError("Unknown Convolution layer %s"%str(conv))
         else:
@@ -119,8 +119,8 @@ class Emulator:
             if recurrent == 'Conv1D':
                 # (B,N,T,E) (B,T,E) --> (B,N,T_out,H) (B,T_out,H)
                 x = Conv1D(self.hidden_dim,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=x.shape[-2:])(x)
-
-                b = Conv1D(self.hidden_dim//2,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=b.shape[-2:])(b)
+                if self.seq_out > 1:
+                    b = Conv1D(self.hidden_dim//2,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=b.shape[-2:])(b)
 
             elif recurrent == 'GRU':
                 # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
@@ -130,18 +130,19 @@ class Emulator:
                 # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
                 x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
 
-                # (B,N,T_out,E) --> (B*N,T_out,E) --> (B,N,T_out,E)
-                b = reshape(b,(-1,self.seq_out,self.embed_size//2))
-                b = GRU(self.hidden_dim//2,return_sequences=True)(b)
-                b = reshape(b,(-1,self.n_node,self.seq_out,self.hidden_dim//2))
-
-                # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
-                x = transpose(x,[0,2,1,3]) if conv else x
-                b = transpose(b,[0,2,1,3])
+                if self.seq_out > 1:
+                    # (B,N,T_out,E) --> (B*N,T_out,E) --> (B,N,T_out,E)
+                    b = reshape(b,(-1,self.seq_out,self.embed_size//2))
+                    b = GRU(self.hidden_dim//2,return_sequences=True)(b)
+                    b = reshape(b,(-1,self.n_node,self.seq_out,self.hidden_dim//2))
 
             else:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
-        
+            
+            # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+            x = transpose(x,[0,2,1,3]) if conv else x
+            b = transpose(b,[0,2,1,3])
+
         # （B*R,T_out,N,H) --> (B,T_out,N,H)
         x = reduce_sum(reshape(x,(len(res),-1,)+tuple(x.shape[1:])),axis=0) if resnet else x
         # boundary in
@@ -159,15 +160,7 @@ class Emulator:
             out = concat([out,flood],axis=-1)
         model = Model(inputs=inp, outputs=out)
         return model
-    
-    def loss_fn(self,true,pred):
-        if self.if_flood:
-            loss = self.mse(pred[...,:-2],true[...,:-2]) + self.cce(pred[...,-2:],true[...,-2:])
-        else:
-            loss = self.mse(pred,true)
-        return loss
             
-
     # TODO: setting loss
     def fit(self,x,b,y):
         with GradientTape() as tape:
@@ -177,19 +170,30 @@ class Emulator:
                 # TODO: what if not recurrent
                 for i in range(b.shape[1]):
                     pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
-                    _,pred = self.constrain(pred,b[:,i:i+self.seq_out,...])
+                    pred = concat([tf.clip_by_value(pred[...,0],0,1),pred[...,1:]],axis=-1)
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
                 preds = concat(preds,axis=1)
-                loss = self.loss_fn(y,preds)
             else:
                 preds = self.model([x,self.filter,b])
-                loss = self.loss_fn(y,preds)
-            if self.norm:
-                preds = self.normalize(preds,inverse=True)
-                b = self.normalize(b,inverse=True)
-            if self.balance_alpha:
-                loss += self.balance_alpha * self.balance(preds,b)
+
+            # loss = self.loss_fn(y[...,:-1],preds)
+
+            if self.balance:
+                if self.norm:
+                    preds_re_norm = self.normalize(preds,inverse=True)
+                    b = self.normalize(b,inverse=True)
+                q_w = self.get_flood(preds_re_norm,b)
+                if self.norm:
+                    q_w = q_w/self.normal[...,-2]
+                # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
+                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))
+            else:
+                loss = self.mse(y[...,:3],preds[...,:3])
+
+            if self.if_flood:
+                loss += self.cce(y[...,-3:-1],preds[...,-2:])
+
         grads = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss.numpy()
@@ -200,19 +204,26 @@ class Emulator:
             # TODO: what if not recurrent
             for i in range(b.shape[1]):
                 pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
-                _,pred = self.constrain(pred,b[:,i:i+self.seq_out,...])
+                pred = concat([tf.clip_by_value(pred[...,0],0,1),pred[...,1:]],axis=-1)
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
             preds = concat(preds,axis=1)
-            loss = self.loss_fn(y,preds)
         else:
             preds = self.model([x,self.filter,b])
-            loss = self.loss_fn(y,preds)
-        if self.norm:
-            preds = self.normalize(preds,inverse=True)
-            b = self.normalize(b,inverse=True)
-        if self.balance_alpha:
-            loss += self.balance_alpha * self.balance(preds,b)
+
+        if self.balance:
+            if self.norm:
+                preds_re_norm = self.normalize(preds,inverse=True)
+                b = self.normalize(b,inverse=True)
+            q_w = self.get_flood(preds_re_norm,b)
+            if self.norm:
+                q_w = q_w/self.normal[...,-2]
+            # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
+            loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))
+        else:
+            loss = self.mse(y[...,:3],preds[...,:3])
+        if self.if_flood:
+            loss += self.cce(y[...,-3:-1],preds[...,-2:])
         return loss.numpy()
 
     def predict(self,x,b):
@@ -250,32 +261,62 @@ class Emulator:
             y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
-    def balance(self,y,r):
+    def get_flood(self,y,r):
         # B,T,N
-        h,q_us,q_ds = [y[...,i].numpy() for i in range(3)]
+        h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
-        h = np.clip(h,0,self.hmax)
         if self.if_flood:
             f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
+            h = np.clip(h,0,self.hmax)
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1)
         # err = q_us + r - q_ds - q_w
-        return sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
+        # return tf.sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
+        return q_w
+    
+    def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
+        ratio = self.ratio if ratio is None else ratio
+        batch_size = self.batch_size if batch_size is None else batch_size
+        epochs = self.epochs if epochs is None else epochs
+
+        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
+
+        n_events = int(max(dG.event_id))+1
+        train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio),replace=False)
+        test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+
+        X_train,B_train,Y_train = dG.prepare(seq,train_ids)
+        X_test,B_test,Y_test = dG.prepare(seq,test_ids)
+
+        train_losses,test_losses = [],[]
+        for epoch in range(epochs):
+            idxs = np.random.choice(range(X_train.shape[0]),batch_size)
+            x,b,y = [dat[idxs] for dat in [X_train,B_train,Y_train]]
+            if self.norm:
+                x,b,y = [self.normalize(dat) for dat in [x,b,y]]
+            train_loss = self.fit(x,b,y)
+            train_losses.append(train_loss)
+
+            idxs = np.random.choice(range(X_test.shape[0]),batch_size)
+            x,b,y = [dat[idxs] for dat in [X_test,B_test,Y_test]]
+            if self.norm:
+                x,b,y = [self.normalize(dat) for dat in[x,b,y]]
+            test_loss = self.evaluate(x,b,y)
+            test_losses.append(test_loss)
+            print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))
+        return train_ids,test_ids,train_losses,test_losses
 
     # TODO: settings
     def simulate(self,states,runoff):
         # runoff shape: T_out, T_in, N
-        x = states[0]
-        if self.recurrent:
-            x = x[-self.seq_in:,...]
         preds = []
         for idx,ri in enumerate(runoff):
-            state = states[idx,-self.seq_in:,...] if self.recurrent else states[idx]
+            x = states[idx,-self.seq_in:,...] if self.recurrent else states[idx]
             # x = x if self.roll else state
             if self.roll:
                 # TODO: What if not recurrent
-                qws,ys = []
+                qws,ys = [],[]
                 for i in range(ri.shape[0]):
                     r_i = ri[i:i+self.seq_out]
                     y = self.predict(x,r_i)
@@ -285,7 +326,6 @@ class Emulator:
                     ys.append(y)
                 q_w,y = np.concatenate(qws,axis=0),np.concatenate(ys,axis=0)
             else:
-                x = state
                 ri = ri[:self.seq_out] if self.recurrent else ri
                 y = self.predict(x,ri)
                 q_w,y = self.constrain(y,ri)
@@ -326,38 +366,6 @@ class Emulator:
     #         preds = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
     #     return np.array(preds)
     
-    def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
-        ratio = self.ratio if ratio is None else ratio
-        batch_size = self.batch_size if batch_size is None else batch_size
-        epochs = self.epochs if epochs is None else epochs
-
-        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
-
-        n_events = int(max(dG.event_id))+1
-        train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio))
-        test_ids = [ev for ev in range(n_events) if ev not in train_ids]
-
-        X_train,B_train,Y_train = dG.prepare(seq,train_ids)
-        X_test,B_test,Y_test = dG.prepare(seq,test_ids)
-
-        train_losses,test_losses = [],[]
-        for epoch in range(epochs):
-            idxs = np.random.choice(range(X_train.shape[0]),batch_size)
-            x,b,y = [dat[idxs] for dat in [X_train,B_train,Y_train]]
-            if self.norm:
-                x,b,y = [self.normalize(dat) for dat in[x,b,y]]
-            train_loss = self.fit(x,b,y)
-            train_losses.append(train_loss)
-
-            idxs = np.random.choice(range(X_test.shape[0]),batch_size)
-            x,b,y = [dat[idxs] for dat in [X_test,B_test,Y_test]]
-            if self.norm:
-                x,b,y = [self.normalize(dat) for dat in[x,b,y]]
-            test_loss = self.evaluate(x,b,y)
-            test_losses.append(test_loss)
-            print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))
-        return train_ids,test_ids,train_losses,test_losses
-
     def save(self,model_dir=None):
         model_dir = model_dir if model_dir is not None else self.model_dir
         if not os.path.exists(model_dir):
