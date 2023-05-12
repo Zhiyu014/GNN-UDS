@@ -1,4 +1,5 @@
 batch_size: 32
+conv: GAT
 data_dir: ./envs/data/shunqing/60s/
 env: shunqing
 epochs: 10000

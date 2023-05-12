@@ -1,0 +1,12 @@
+act: true
+conv: GAT
+env: astlingen
+if_flood: true
+model_dir: 10s_10k_act_res_norm_flood
+norm: true
+recurrent: Conv1D
+resnet: true
+result_dir: 10s_act_res_norm_flood
+seq_in: 10
+seq_out: 10
+test: true

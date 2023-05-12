@@ -1,3 +1,4 @@
+conv: GAT
 env: shunqing
 if_flood: true
 model_dir: ./model/shunqing/10s_10k_res_norm_roll_flood/

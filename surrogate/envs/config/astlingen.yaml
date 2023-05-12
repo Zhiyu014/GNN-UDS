@@ -1,79 +1,11 @@
 # Configuration file for scenario astlingen
-
 # name of scearnio
 env_name: astlingen
+# if env contains actions
+act: True
 # time step (min)
-control_interval: 5
+control_interval: 1
 # state definitions
-states:
-  - !!python/tuple
-    - "RG1"
-    - rainfall
-  - !!python/tuple
-    - "RG2"
-    - rainfall
-  - !!python/tuple
-    - "RG3"
-    - rainfall
-  - !!python/tuple
-    - "RG4"
-    - rainfall
-  - !!python/tuple
-    - "T1"
-    - depthN
-  - !!python/tuple
-    - "T2"
-    - depthN
-  - !!python/tuple
-    - "T3"
-    - depthN
-  - !!python/tuple
-    - "T4"
-    - depthN
-  - !!python/tuple
-    - "T5"
-    - depthN
-  - !!python/tuple
-    - "T6"
-    - depthN
-  - !!python/tuple
-    - "V2"
-    - setting
-  - !!python/tuple
-    - "V3"
-    - setting
-  - !!python/tuple
-    - "V4"
-    - setting
-  - !!python/tuple
-    - "V6"
-    - setting
-  # inlet & outlet nodes
-  - !!python/tuple
-    - "J5"
-    - depthN
-  - !!python/tuple
-    - "J6"
-    - depthN
-  - !!python/tuple
-    - "J8"
-    - depthN
-  - !!python/tuple
-    - "J9"
-    - depthN
-  - !!python/tuple
-    - "J12"
-    - depthN
-  - !!python/tuple
-    - "J13"
-    - depthN
-  - !!python/tuple
-    - "J14"
-    - depthN
-  - !!python/tuple
-    - "J17"
-    - depthN
-  
 # global state definitions
 global_state:
   - !!python/tuple
@@ -81,10 +13,13 @@ global_state:
     - depthN
   - !!python/tuple
     - nodes
-    - totalinflow
+    - cuminflow
   - !!python/tuple
     - nodes
-    - lateral_infow_vol
+    - totaloutflow
+  - !!python/tuple
+    - nodes
+    - cum_lateral_inflow
 
 # Action space
 action_space:
@@ -140,155 +75,16 @@ action_space:
 # Performance Targets
 performance_targets:
   - !!python/tuple
-    - system
+    - nodes
     - cumflooding
     - 1
-
-# Reward normalization
-reward:
-  # CSOs to river
-  - !!python/tuple
-    - "T1"
-    - cumflooding
-    # - 1000
-    - 1
-  - !!python/tuple
-    - "T2"
-    - cumflooding
-    # - 5000
-    - 1
-  - !!python/tuple
-    - "T3"
-    - cumflooding
-    # - 5000
-    - 1
-  - !!python/tuple
-    - "T4"
-    - cumflooding
-    # - 5000
-    - 1
-  - !!python/tuple
-    - "T5"
-    - cumflooding
-    # - 5000
-    - 1
-  - !!python/tuple
-    - "T6"  # creek
-    - cumflooding
-    # - 10000
-    - 2
-  - !!python/tuple
-    - "CSO7"  #creek
-    - cumflooding
-    - 2
-  - !!python/tuple
-    - "CSO8"
-    - cumflooding
-    - 1
-  - !!python/tuple
-    - "CSO9"  # creek
-    - cumflooding
-    - 2
-  - !!python/tuple
-    - "CSO10"
-    - cumflooding
-    - 1
-  # flow to WWTP
-  - !!python/tuple # Conduit that connects upstream to "Out_to_WWTP" node
-    - "Out_to_WWTP"
-    - "totalinflow"
-    - -0.1
-  # control roughness
-  - !!python/tuple # flow out of Tank1
-    - "J19"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple # flow out of Tank2
-    - "J17"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple # flow out of Tank3
-    - "J14"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple # flow out of Tank4
-    - "J6"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple # flow out of Tank5
-    - "J2"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple # flow out of Tank6
-    - "J9"
-    - "totalinflow"
-    - 0.01
-  - !!python/tuple
-    - system
-    - totalinflow
-    - 1
-
-
-# distributed control sites
-site:
-  V2:
-    states:
-      - "RG3"
-      - "T2"
-      - "V2"
-      - J13
-      - J17
-  V3:
-    states:
-      - "RG1"
-      - "RG2"
-      - "T3"
-      - "V3"
-      - J12
-      - J14
-  V4:
-    states:
-      - "RG3"
-      - "T4"
-      - "V4"
-      - J5
-      - J6
-  V6:
-    states:
-      - "RG2"
-      - "T6"
-      - "V6"
-      - J8
-      - J9
-
-# Original settings from Sun et al. (2020)
-settings:
-  V2:
-    !!python/tuple
-    - 0.1075
-    - 0.2366
-    - 1.0
-  V3:
-    !!python/tuple
-    - 0.3159
-    - 0.6508
-    - 1.0
-  V4:
-    !!python/tuple
-    - 0.1894
-    - 0.3523
-    - 1.0
-  V6:
-    !!python/tuple
-    - 0.1687
-    - 0.4303
-    - 1.0
 
 # Rainfall scenario parameters
 rainfall:
-  rainfall_timeseries: ast_rain # rainfall timeseries data
-  rainfall_events: ast_rain_events # rainfall timeseries data
-  training_events: ast_train_events # training & evaluation data
+  func: generate_split_file
+  filedir: ./envs/network/astlingen/astlingen
+  rainfall_timeseries: ./envs/config/ast_rain.csv # rainfall timeseries data
+  rainfall_events: ./envs/config/ast_train_events.csv # rainfall timeseries data
   MIET: 120 # minimum interevent time (min)
   duration_range:  # rainfall duration sampling range (min)
     - 60
@@ -301,11 +97,3 @@ rainfall:
     - 12/31/2009
   replace_rain: False
   
-# Model predictive control parameters
-prediction:
-  control_horizon: 30  # Control horizon (min)
-  eval_horizon: 30 # Evaluation horizon (min)
-  hsf_dir: hsf # file path to save the hotstart file
-  eval_dir: eval # file path to save the evaluation file
-  suffix: mpc_eval_ # suffix of the evaluation file
-

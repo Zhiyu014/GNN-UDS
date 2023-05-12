@@ -1,5 +1,5 @@
 from pystorms.scenarios import scenario
-from envs.environment import env_sq
+from envs.environment import env_base
 import os
 import yaml
 import numpy as np
@@ -45,7 +45,7 @@ class shunqing(scenario):
         
         # Create the environment based on the physical parameters
         if initialize:
-            self.env = env_sq(self.config, ctrl=True)
+            self.env = env_base(self.config, ctrl=True)
         
         self.penalty_weight = {ID: weight
                                for ID, _, weight in \
@@ -56,14 +56,14 @@ class shunqing(scenario):
         self.initialize_logger()
 
 
-    def step(self, advance_seconds = None, log=True):
+    def step(self, settings = None, advance_seconds = None, log=True):
         # Implement the actions and take a step forward
         if advance_seconds is None and self.config.get('control_interval') is not None:
             advance_seconds = self.config['control_interval'] * 60
         # if actions is not None:
         #     actions = self._convert_actions(actions)
 
-        done = self.env.step(None, advance_seconds = advance_seconds)
+        done = self.env.step(settings, advance_seconds = advance_seconds)
         
         # Log the states, targets, and actions
         if log:
@@ -102,12 +102,12 @@ class shunqing(scenario):
                 if len(self.data_log[attr][ID]) > seq 
                 else [0.0]*(seq-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][:-1]
                 for ID in self.get_features(typ)] 
-                if 'cum' in attr or 'vol' in attr
+                if 'cum' in attr
                 else [[0.0]*seq for _ in self.get_features(typ)]
                 for typ,attr in self.config['global_state']])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
-                if ('cum' in attr or 'vol' in attr) and len(self.data_log[attr][ID]) > 1 else 0
+                if 'cum' in attr and len(self.data_log[attr][ID]) > 1 else 0
                 for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
         state = (__state - __last).T
         return state
@@ -166,7 +166,7 @@ class shunqing(scenario):
         if swmm_file is not None:
             self.config["swmm_input"] = swmm_file
         if not hasattr(self,'env') or swmm_file is not None:
-            self.env = env_sq(self.config, ctrl=True)
+            self.env = env_base(self.config, ctrl=True)
         else:
             _ = self.env.reset()
 
@@ -216,6 +216,7 @@ class shunqing(scenario):
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
+            args['adj'] = self.get_adj()
         return args
 
 
@@ -240,6 +241,14 @@ class shunqing(scenario):
                 edges += [(nodes.index(link.FromNode),nodes.index(link.ToNode))
                  for link in getattr(inp,label).values() if link.FromNode in nodes and link.ToNode in nodes]
         return np.array(edges)
+
+    def get_adj(self,edges=None):
+        edges = self.get_edge_list() if edges is None else edges
+        adj = np.eye(edges.max()+1)
+        for u,v in edges:
+            adj[u,v] += 1
+            adj[v,u] += 1
+        return adj
 
     # predictive functions
     def save_hotstart(self,hsf_file=None):

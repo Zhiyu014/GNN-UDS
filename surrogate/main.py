@@ -1,6 +1,7 @@
 from emulator import Emulator
-from dataloader import DataGenerator,generate_file
-import argparse,yaml,random
+from dataloader import DataGenerator
+from utilities import get_inp_files
+import argparse,yaml
 from envs import get_env
 import numpy as np
 import os,time
@@ -33,10 +34,12 @@ def parser(config=None):
     parser.add_argument('--norm',action="store_true",help='if data is normalized with maximum')
     parser.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
     parser.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
-    parser.add_argument('--n_layer',type=int,default=3,help='number of convolution layers')
+    parser.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
     parser.add_argument('--recurrent',type=str,default='GRU',help='recurrent type')
     parser.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')
+    parser.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
+    parser.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
     # TODO: seq out
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
@@ -47,76 +50,47 @@ def parser(config=None):
     parser.add_argument('--test',action="store_true",help='if test the emulator')
     parser.add_argument('--result_dir',type=str,default='./results/',help='the test results')
 
-    # https://www.cnblogs.com/zxyfrank/p/15414605.html
     args = parser.parse_args()
     if config is not None:
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
         parser.set_defaults(**hyps[args.env])
     args = parser.parse_args()
+    # args.env = 'RedChicoSur'
+
     config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k)}
+    for k,v in config.items():
+        if 'dir' in k:
+            setattr(args,k,os.path.join(hyps[args.env][k],v))
+
     print('Training configs: {}'.format(args))
     return args,config
-
-# TODO: prediction
-def test(env,emul,event=None):
-    seq = emul.seq_in
-
-    # Get lateral inflow 
-    lat_event = env.get_subc_inp()
-    lat_env = get_env(env.name)(swmm_file=lat_event,global_state=True)
-    # Use totalinflow instead of lateral_infow_vol
-    lat_env.config['global_state'] = [('nodes','totalinflow')]
-    state = lat_env.reset(global_state=True,seq=seq)
-    runoff,done = [state],False
-    while not done:
-        done = lat_env.step()
-        state = lat_env.state(seq=seq)
-        runoff.append(state)
-    runoff = np.squeeze(np.array(runoff),axis=-1) # B,T_in,N
-
-    state = env.reset(event,global_state=True,seq=seq)
-    true,preds = [],[]
-    done,idx = False,0
-    while not done:
-        # pred_runoff = env.predict(emul.seq_out)
-        pred_runoff = np.expand_dims(runoff[idx+emul.seq_out],axis=0)
-        pred,qws = emul.simulate(np.expand_dims(state,-1),pred_runoff,roll=False)
-
-        done = env.step()
-        state = env.state(seq=seq)
-        true.append(state)
-        preds.append(np.squeeze(pred))
-        idx += 1
-    true = np.array(true)[emul.seq_out:,...]
-    true = true[...,-emul.seq_out:,...] if emul.recurrent else true
-    return true,np.array(preds)
 
 if __name__ == "__main__":
     args,config = parser('config.yaml')
 
     # simu_de = {'simulate':True,
-    #            'data_dir':'./envs/data/shunqing/60s/',
-    #         #    'seq_in':5,
-    #         #    'seq_out':5,
-    #         #    'if_flood':True,
+    #            'data_dir':'./envs/data/RedChicoSur/act/',
+    #            'act':True,
+    #            'processes':1
     #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,'data_dir':'./envs/data/shunqing/60s/','model_dir':'./model/shunqing/10s_10k_res_norm_roll_flood/','load_data':True,'resnet':True,'norm':True,'seq_in':10,'seq_out':10,'if_flood':True,'batch_size':32,'roll':True,'recurrent':'Conv1D'}
+    # train_de = {'train':True,'env':'shunqing','data_dir':'./envs/data/shunqing/60s/','act':False,'model_dir':'./model/shunqing/5s_10k_res_norm_flood/','load_data':True,'ratio':0.5,'batch_size':128,'resnet':True,'norm':True,'seq_in':5,'seq_out':5,'if_flood':True,'conv':'GAT','recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
     # test_de = {'test':True,
-    #            'model_dir':'./model/shunqing/10s_10k_res_norm_roll_flood/',
+    #            'env':'RedChicoSur',
+    #            'act':True,
+    #            'model_dir':'./model/RedChicoSur/5s_5k_res_norm_flood/',
     #            'resnet':True,
     #            'norm':True,
-    #            'seq_in':10,
-    #            'seq_out':10,
+    #            'seq_in':5,
+    #            'seq_out':5,
     #            'if_flood':True,
-    #            'roll':True,
-    #            'recurrent':'Conv1D',
-    #            'result_dir':'./results/shunqing/10s_res_norm_roll_flood/'}
+    #            'conv':'GAT',
+    #            'result_dir':'./results/RedChicoSur/5s_res_norm_flood/'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
@@ -127,21 +101,11 @@ if __name__ == "__main__":
             v = v & args.act
         setattr(args,k,v)
     
-    # Config physical device
-    # if args.train:
-    #     os.environ['CUDA_VISIBLE_DEVICES'] = '/gpu:0'
-    #     tf.config.list_physical_devices(device_type='GPU')
-    # else:
-    #     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    #     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-    #     tf.config.list_physical_devices(device_type='CPU')
 
-    #TODO: split saved data into single layer
     dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.data_dir)
 
-    # Storage nodes, Remember to change swmm files back!!
-    # env.config['swmm_input'] = env.config['swmm_input'].replace('%s.inp'%args.env,'%s_s.inp'%args.env)
-    events = generate_file(env.config['swmm_input'],env.config['rainfall'])
+
+    events = get_inp_files(env.config['swmm_input'],env.config['rainfall'])
     if args.simulate:
         dG.generate(events,processes=args.processes,act=args.act)
         dG.save(args.data_dir)
@@ -149,7 +113,7 @@ if __name__ == "__main__":
     elif args.load_data or args.train:
         dG.load(args.data_dir)
     
-    emul = Emulator(args.conv,args.edges,args.resnet,args.recurrent,args)
+    emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         
     if args.train:
         if args.norm:
@@ -178,6 +142,8 @@ if __name__ == "__main__":
             if os.path.exists(os.path.join(args.result_dir,name + '_states.npy')):
                 states = np.load(os.path.join(args.result_dir,name + '_states.npy'))
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
+                if args.act:
+                    settings = np.load(os.path.join(args.result_dir,name + '_settings.npy'))
             else:
                 t0 = time.time()
                 seq = max(args.seq_in,args.seq_out) if args.recurrent else False
@@ -185,6 +151,8 @@ if __name__ == "__main__":
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
+                if settings is not None:
+                    np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
@@ -197,7 +165,23 @@ if __name__ == "__main__":
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             t0 = time.time()
             states = states[:-args.seq_out]
-            pred = emul.simulate(states,r)
+            if args.act:
+                # (B,T,N_act) --> (B,T,N,N)
+                def get_act(s):
+                    adj = args.adj.copy()
+                    adj[tuple(args.act_edges.T)] = s
+                    return adj
+                a = np.apply_along_axis(get_act,-1,settings)
+                seq = max(args.seq_in,args.seq_out) if args.recurrent else False
+                a = dG.expand_seq(a,seq,zeros=False)
+
+                if args.recurrent:
+                    a = a[args.seq_out:,:args.seq_out,...]
+                else:
+                    a = a[1:]
+            else:
+                a = args.adj
+            pred = emul.simulate(states,r,a)
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance

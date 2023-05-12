@@ -19,7 +19,7 @@ global_state:
     - totaloutflow
   - !!python/tuple
     - nodes
-    - lateral_infow_vol
+    - cum_lateral_inflow
 
     
 states:
@@ -42,7 +42,9 @@ performance_targets:
 
 # Rainfall scenario parameters
 rainfall:
+  func: generate_file
   suffix: bpswmm
   filedir: ./envs/network/shunqing/
-
+  MIET: 1
+  gage: RainGage
 

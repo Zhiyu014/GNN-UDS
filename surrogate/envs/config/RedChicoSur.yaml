@@ -1,0 +1,97 @@
+# Configuration file for scenario RedChicoSur
+# name of scearnio
+env_name: RedChicoSur
+# if env contains actions
+act: True
+# time step (min)
+control_interval: 1
+# state definitions
+# global state definitions
+global_state:
+  - !!python/tuple
+    - nodes
+    - depthN
+  - !!python/tuple
+    - nodes
+    - cuminflow
+  - !!python/tuple
+    - nodes
+    - totaloutflow
+  - !!python/tuple
+    - nodes
+    - cum_lateral_inflow
+
+action_space:
+  G6: &id001 !!python/tuple
+  - 0
+  - 1
+  GA1: *id001
+  GA2: *id001
+  GA3: *id001
+  GA4: *id001
+  GA5: *id001
+  GA7: *id001
+  GA8: *id001
+  GA9: *id001
+  GA10: *id001
+  GA11: *id001
+  GA12: *id001
+  GA13: *id001
+  GA14: *id001
+  GA15: *id001
+  GA16: *id001
+  GA17: *id001
+  GA18: *id001
+  GA19: *id001
+  GA20: *id001
+  GA21: *id001
+  GA22: *id001
+  GA23: *id001
+  GA24: *id001
+  GA25: *id001
+  GB1: *id001
+  GB2: *id001
+  GB3: *id001
+  GB4: *id001
+  GB5: *id001
+  GB7: *id001
+  GB8: *id001
+  GB9: *id001
+  GB10: *id001
+  GB11: *id001
+  GB12: *id001
+  GB13: *id001
+  GB14: *id001
+  GB15: *id001
+  GB16: *id001
+  GB17: *id001
+  GB18: *id001
+  GB19: *id001
+  GB20: *id001
+  GB21: *id001
+  GB22: *id001
+  GB23: *id001
+  GB24: *id001
+  GB25: *id001
+  GC3: *id001
+  GC10: *id001
+  GC20: *id001
+  GC25: *id001
+  GD3: *id001
+    
+# Performance Targets
+performance_targets:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+    - 1
+
+# Rainfall scenario parameters
+rainfall:
+  func: generate_file
+  suffix:
+  filedir: ./envs/network/RedChicoSur/
+  MIET: 4
+  gage: P-1
+
+

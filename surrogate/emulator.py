@@ -1,5 +1,5 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
@@ -18,11 +18,12 @@ tf.config.list_physical_devices(device_type='GPU')
 # - **Predict**: *T*-times 1-step prediction OR T-step prediction?
 
 class Emulator:
-    def __init__(self,conv=None,edges=None,resnet=False,recurrent=None,args=None):
+    def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
-        # Runoff and actions are boundary
-        self.b_in = 2 if getattr(args,"act",False) else 1
+        # Runoff is boundary
+        self.b_in = 1
         self.n_in -= 1
+        self.act = getattr(args,"act",False)
 
         self.n_out = self.n_in
         self.seq_in = getattr(args,'seq_in',6)
@@ -33,7 +34,9 @@ class Emulator:
 
         self.embed_size = getattr(args,'embed_size',64)
         self.hidden_dim = getattr(args,"hidden_dim",64)
-        self.n_layer = getattr(args,"n_layer",3)
+        self.kernel_size = getattr(args,"kernel_size",3)
+        self.n_sp_layer = getattr(args,"n_sp_layer",3)
+        self.n_tp_layer = getattr(args,"n_tp_layer",2)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
         self.balance = getattr(args,"balance",0)
@@ -41,10 +44,10 @@ class Emulator:
         if self.if_flood:
             self.n_in += 2
 
+        self.adj = getattr(args,"adj",np.eye(self.n_node))
+        if self.act:
+            self.act_edges = getattr(args,"act_edges")
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
-        if edges is not None:
-            self.edges = edges
-            self.filter = self.get_adj(edges)
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.model = self.build_network(self.conv,resnet,self.recurrent)
@@ -60,14 +63,6 @@ class Emulator:
             self.load()
 
 
-    def get_adj(self,edges):
-        # self-loop
-        # TODO: if directed graph
-        A = np.eye(edges.max()+1) # adjacency matrix
-        for u,v in edges:
-            A[u,v] += 1
-            A[v,u] += 1
-        return A
 
     def build_network(self,conv=None,resnet=False,recurrent=None):
         # (T,N,in) (N,in)
@@ -79,10 +74,10 @@ class Emulator:
         B_in = Input(shape=bound_input)
 
         if conv:
-            A_in = Input(self.filter.shape[0],)
+            A_in = Input(self.n_node,)
             inp = [X_in,A_in,B_in]
             if 'GCN' in conv:
-                self.filter,net = gcn_filter(self.filter),GCNConv
+                net = GCNConv
             elif 'GAT' in conv:
                 net = GATConv
             else:
@@ -91,7 +86,7 @@ class Emulator:
             inp,net = [X_in,B_in],Dense
         
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
-        x = reshape(X_in,tuple(x.shape[:-2])+(-1,)) if not conv else X_in
+        x = reshape(X_in,(-1,)+tuple(input_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
         x = Dense(self.embed_size,activation=self.activation)(x) # Embedding
         res = [x]
 
@@ -99,8 +94,10 @@ class Emulator:
 
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
         x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
-        for _ in range(self.n_layer):
-            x = [x,A_in] if conv else x
+        if conv:
+            A = reshape(A_in,(-1,) + (self.n_node,self.n_node)) if recurrent and self.act else A_in
+        for _ in range(self.n_sp_layer):
+            x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
 
             b = Dense(self.embed_size//2,activation=self.activation)(b)
@@ -108,9 +105,11 @@ class Emulator:
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         x_out = reshape(x,(-1,)+input_shape[:-1]+(self.embed_size,)) if conv else reshape(x,(-1,)+input_shape[:-2]+(self.embed_size,)) 
         # res.append(x_out)
-        #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> （B*R,T,N,E)
+
         res += [x_out]
-        x = concat(res,axis=0) if resnet else x_out
+        #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> （B*R,T,N,E)
+        # x = concat(res,axis=0) if resnet else x_out
+        x = Add()(res) if resnet else x_out
 
         if recurrent:
             # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E)
@@ -118,14 +117,20 @@ class Emulator:
             b = transpose(b,[0,2,1,3])
             if recurrent == 'Conv1D':
                 # (B,N,T,E) (B,T,E) --> (B,N,T_out,H) (B,T_out,H)
-                x = Conv1D(self.hidden_dim,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=x.shape[-2:])(x)
+                for i in range(self.n_tp_layer):
+                    x = Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:])(x)
+
+                x = x[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+
                 if self.seq_out > 1:
-                    b = Conv1D(self.hidden_dim//2,self.seq_in-self.seq_out+1,activation=self.activation,input_shape=b.shape[-2:])(b)
+                    for i in range(self.n_tp_layer):
+                        b = Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:])(b)
 
             elif recurrent == 'GRU':
                 # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
                 x = reshape(x,(-1,self.seq_in,self.embed_size)) if conv else x
-                x = GRU(self.hidden_dim,return_sequences=True)(x)
+                for i in range(self.n_tp_layer):
+                    x = GRU(self.hidden_dim,return_sequences=True)(x)
                 x = x[...,-self.seq_out:,:] # seq_in >= seq_out if roll
                 # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
                 x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
@@ -144,7 +149,7 @@ class Emulator:
             b = transpose(b,[0,2,1,3])
 
         # （B*R,T_out,N,H) --> (B,T_out,N,H)
-        x = reduce_sum(reshape(x,(len(res),-1,)+tuple(x.shape[1:])),axis=0) if resnet else x
+        # x = reduce_sum(reshape(x,(len(res),-1,)+tuple(x.shape[1:])),axis=0) if resnet else x
         # boundary in
         x = concat([x,b],axis=-1)
 
@@ -162,20 +167,21 @@ class Emulator:
         return model
             
     # TODO: setting loss
-    def fit(self,x,b,y):
+    def fit(self,x,a,b,y):
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
             if self.roll:
                 preds = []
                 # TODO: what if not recurrent
                 for i in range(b.shape[1]):
-                    pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
-                    pred = concat([tf.clip_by_value(pred[...,0],0,1),pred[...,1:]],axis=-1)
+                    ai = a[:,i:i+self.seq_out,...] if self.conv and self.act else a
+                    pred = self.model([x,ai,b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
+                    pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
                 preds = concat(preds,axis=1)
             else:
-                preds = self.model([x,self.filter,b])
+                preds = self.model([x,a,b]) if self.conv else self.model([x,b])
 
             # loss = self.loss_fn(y[...,:-1],preds)
 
@@ -198,18 +204,18 @@ class Emulator:
         self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss.numpy()
     
-    def evaluate(self,x,b,y):
+    def evaluate(self,x,a,b,y):
         if self.roll:
             preds = []
             # TODO: what if not recurrent
             for i in range(b.shape[1]):
-                pred = self.model([x,self.filter,b[:,i:i+self.seq_out,...]])
-                pred = concat([tf.clip_by_value(pred[...,0],0,1),pred[...,1:]],axis=-1)
+                pred = self.model([x,a[:,i:i+self.seq_out,...],b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
+                pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
             preds = concat(preds,axis=1)
         else:
-            preds = self.model([x,self.filter,b])
+            preds = self.model([x,a,b]) if self.conv else self.model([x,b])
 
         if self.balance:
             if self.norm:
@@ -226,14 +232,18 @@ class Emulator:
             loss += self.cce(y[...,-3:-1],preds[...,-2:])
         return loss.numpy()
 
-    def predict(self,x,b):
+    def predict(self,x,a,b):
         if self.norm:
             x = self.normalize(x)
             b = self.normalize(b)
+        if 'GCN' in self.conv:
+            a = gcn_filter(a)
+        if len(a.shape) > 2:
+            a = expand_dims(a,0)
         x,b = expand_dims(x,0),expand_dims(b,0)
-        y = squeeze(self.model([x,self.filter,b]),0).numpy()
+        y = squeeze(self.model([x,a,b]) if self.conv else self.model([x,b]),0).numpy()
         if self.norm:
-            y = self.normalize(y,inverse=True).clip(0)
+            y = self.normalize(y,inverse=True)
         return y
 
     def set_norm(self,normal):
@@ -280,14 +290,14 @@ class Emulator:
         batch_size = self.batch_size if batch_size is None else batch_size
         epochs = self.epochs if epochs is None else epochs
 
-        seq = max(self.seq_in,self.seq_out) if self.recurrent else False
+        seq = max(self.seq_in,self.seq_out) if self.recurrent else 0
 
         n_events = int(max(dG.event_id))+1
         train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio),replace=False)
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 
-        X_train,B_train,Y_train = dG.prepare(seq,train_ids)
-        X_test,B_test,Y_test = dG.prepare(seq,test_ids)
+        X_train,set_train,B_train,Y_train = dG.prepare(seq,train_ids)
+        X_test,set_test,B_test,Y_test = dG.prepare(seq,test_ids)
 
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
@@ -295,31 +305,55 @@ class Emulator:
             x,b,y = [dat[idxs] for dat in [X_train,B_train,Y_train]]
             if self.norm:
                 x,b,y = [self.normalize(dat) for dat in [x,b,y]]
-            train_loss = self.fit(x,b,y)
+            if self.act:
+                # (B,T,N_act) --> (B,T,N,N)
+                def get_act(s):
+                    adj = self.adj.copy()
+                    adj[tuple(self.act_edges.T)] = s
+                    return adj
+                a = np.apply_along_axis(get_act,-1,set_train[idxs])
+            else:
+                a = self.adj.copy()
+            if 'GCN' in self.conv:
+                a = gcn_filter(a)
+            train_loss = self.fit(x,a,b,y)
             train_losses.append(train_loss)
 
             idxs = np.random.choice(range(X_test.shape[0]),batch_size)
             x,b,y = [dat[idxs] for dat in [X_test,B_test,Y_test]]
             if self.norm:
                 x,b,y = [self.normalize(dat) for dat in[x,b,y]]
-            test_loss = self.evaluate(x,b,y)
+            if self.act:
+                # (B,T,N_act) --> (B,T,N,N)
+                def get_act(s):
+                    adj = self.adj.copy()
+                    adj[tuple(self.act_edges.T)] = s
+                    return adj
+                a = np.apply_along_axis(get_act,-1,set_test[idxs])
+            else:
+                a = self.adj.copy()
+            if 'GCN' in self.conv:
+                a = gcn_filter(a)
+            test_loss = self.evaluate(x,a,b,y)
             test_losses.append(test_loss)
             print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))
         return train_ids,test_ids,train_losses,test_losses
 
     # TODO: settings
-    def simulate(self,states,runoff):
+    def simulate(self,states,runoff,a):
         # runoff shape: T_out, T_in, N
         preds = []
         for idx,ri in enumerate(runoff):
             x = states[idx,-self.seq_in:,...] if self.recurrent else states[idx]
+            ai = a[idx] if len(a.shape)>2 else a
             # x = x if self.roll else state
             if self.roll:
                 # TODO: What if not recurrent
                 qws,ys = [],[]
                 for i in range(ri.shape[0]):
                     r_i = ri[i:i+self.seq_out]
-                    y = self.predict(x,r_i)
+                    a_i = ai[i:i+self.seq_out,...] if len(ai.shape)>2 else ai
+                    y = self.predict(x,a_i,r_i)
                     q_w,y = self.constrain(y,r_i)
                     x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
                     qws.append(q_w)
@@ -327,7 +361,7 @@ class Emulator:
                 q_w,y = np.concatenate(qws,axis=0),np.concatenate(ys,axis=0)
             else:
                 ri = ri[:self.seq_out] if self.recurrent else ri
-                y = self.predict(x,ri)
+                y = self.predict(x,ai,ri)
                 q_w,y = self.constrain(y,ri)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             preds.append(y)

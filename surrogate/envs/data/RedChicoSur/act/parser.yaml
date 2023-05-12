@@ -1,0 +1,4 @@
+act: true
+data_dir: act
+env: RedChicoSur
+simulate: true

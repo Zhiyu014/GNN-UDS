@@ -1,7 +1,5 @@
 import numpy as np
 import multiprocessing as mp
-from datetime import datetime
-from swmm_api import read_inp_file
 import os
 
 class DataGenerator:
@@ -13,15 +11,18 @@ class DataGenerator:
         self.if_flood = if_flood
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         if act:
-            self.action_table = list(env.config['action_space'].values())
+            self.action_table = env.config['action_space']
+            # self.adj = env.get_adj()
+            # self.act_edges = env.get_edge_list(list(self.action_table.keys()))
     
     def simulate(self, event, seq = False, act = False):
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
-        states,perfs,settings = [state],[perf],[]
+        states,perfs = [state],[perf]
+        settings = [[1 for _ in self.action_table]] if act else []
         done = False
         while not done:
-            setting = [table[np.random.randint(0,len(table))] for table in self.action_table] if act else None
+            setting = [table[np.random.randint(0,len(table))] for table in self.action_table.values()] if act else None
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.performance(seq=seq)
@@ -31,8 +32,8 @@ class DataGenerator:
         return np.array(states),np.array(perfs),np.array(settings) if act else None
 
     def generate(self,events,processes=1,seq=False,act=False):
-        pool = mp.Pool(processes)
         if processes > 1:
+            pool = mp.Pool(processes)
             res = [pool.apply_async(func=self.simulate,args=(event,seq,act,)) for event in events]
             pool.close()
             pool.join()
@@ -43,13 +44,7 @@ class DataGenerator:
         self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
 
-    def state_split(self,states,perfs,settings=None):
-        if settings is not None:
-            # B,T,N,S
-            states = states[:settings.shape[0]+1]
-            perfs = perfs[:settings.shape[0]+1]
-            # B,T,n_act
-            a = np.tile(np.expand_dims(settings,axis=1),[1,states.shape[1],1])
+    def state_split(self,states,perfs):
         h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
         # h,q_totin,q_ds,r,q_w = [states[...,i] for i in range(5)]
         q_us = q_totin - r
@@ -57,7 +52,7 @@ class DataGenerator:
         n_spl = self.seq_out if self.recurrent else 1
         X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl]],axis=-1)
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
-        # TODO: classify flooding
+
         if self.if_flood:
             f = (perfs>0).astype(int)
             f = np.eye(2)[f].squeeze(-2)
@@ -68,12 +63,10 @@ class DataGenerator:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
             Y = Y[:,:self.seq_out,...]
-        if settings is not None:
-            B = np.concatenate([B,a],axis=-1)
         return X,B,Y
 
-    def expand_seq(self,dats,seq):
-        dats = np.stack([np.concatenate([np.tile(np.zeros_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
+    def expand_seq(self,dats,seq,zeros=True):
+        dats = np.stack([np.concatenate([np.tile(np.zeros_like(s) if zeros else np.ones_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
         return dats
 
     def prepare(self,seq=0,event=None):
@@ -83,10 +76,13 @@ class DataGenerator:
             num = self.event_id==idx
             if seq > 0:
                 states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
-                settings = self.expand_seq(self.settings[num],seq) if self.settings is not None else None
-            x,b,y = self.state_split(states,perfs,settings)
-            res.append((x.astype(np.float32),b.astype(np.float32),y.astype(np.float32)))
-        return [np.concatenate([r[i] for r in res],axis=0) for i in range(3)]
+                settings = self.expand_seq(self.settings[num],seq,False) if self.settings is not None else None
+            x,b,y = self.state_split(states,perfs)
+            if self.settings is not None:
+                settings = settings[self.seq_out:,:self.seq_out,...] if self.recurrent else settings[1:]
+            r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y]]
+            res.append(r)
+        return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(4)]
 
 
 
@@ -151,18 +147,3 @@ class DataGenerator:
         else:
             return dat * norm[...,-dim:] if inverse else dat/norm[...,-dim:]
 
-
-def generate_file(file,arg):
-    inp = read_inp_file(file)
-    for k,v in inp.TIMESERIES.items():
-        if k.startswith(arg['suffix']):
-            dura = v.data[-1][0] - v.data[0][0]
-            st = (inp.OPTIONS['START_DATE'],inp.OPTIONS['START_TIME'])
-            st = datetime(st[0].year,st[0].month,st[0].day,st[1].hour,st[1].minute,st[1].second)
-            et = (st + dura)
-            inp.OPTIONS['END_DATE'],inp.OPTIONS['END_TIME'] = et.date(),et.time()
-            inp.RAINGAGES['RainGage'].Timeseries = k
-            if not os.path.exists(arg['filedir']+k+'.inp'):
-                inp.write_file(arg['filedir']+k+'.inp')
-    events = [arg['filedir']+k+'.inp' for k in inp.TIMESERIES if k.startswith(arg['suffix'])]
-    return events

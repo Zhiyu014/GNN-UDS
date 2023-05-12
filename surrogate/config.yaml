@@ -22,10 +22,12 @@ shunqing:
   n_out: 3
   conv: GCNconv
   embed_size: 128
-  n_layer: 3
+  n_sp_layer: 3
   activation: relu
   recurrent: GRU
   hidden_dim: 64
+  kernel_size: 3
+  n_tp_layer: 2
   seq_in: 6
   seq_out: 1
   resnet: False
@@ -34,3 +36,82 @@ shunqing:
   # test args
   test: False
   result_dir: ./results/shunqing/
+
+
+RedChicoSur:
+  # simulate args
+  simulate: False
+  load_data: False
+  data_dir: ./envs/data/RedChicoSur/
+  act: False
+  processes: 5
+
+  # train args
+  train: False
+  load_model: False
+  model_dir: ./model/RedChicoSur/
+  ratio: 0.8
+  learning_rate: 0.001
+  epochs: 500
+  batch_size: 256
+  roll: False
+  balance: 0
+  
+  # network args
+  norm: False
+  n_out: 3
+  conv: GCNconv
+  embed_size: 128
+  n_sp_layer: 3
+  activation: relu
+  recurrent: GRU
+  hidden_dim: 64
+  kernel_size: 3
+  n_tp_layer: 2
+  seq_in: 6
+  seq_out: 1
+  resnet: False
+  if_flood: False
+
+  # test args
+  test: False
+  result_dir: ./results/RedChicoSur/
+
+astlingen:
+  # simulate args
+  simulate: False
+  load_data: False
+  data_dir: ./envs/data/astlingen/
+  act: False
+  processes: 5
+
+  # train args
+  train: False
+  load_model: False
+  model_dir: ./model/astlingen/
+  ratio: 0.8
+  learning_rate: 0.001
+  epochs: 500
+  batch_size: 256
+  roll: False
+  balance: 0
+  
+  # network args
+  norm: False
+  n_out: 3
+  conv: GCNconv
+  embed_size: 128
+  n_sp_layer: 3
+  activation: relu
+  recurrent: GRU
+  hidden_dim: 64
+  kernel_size: 3
+  n_tp_layer: 2
+  seq_in: 6
+  seq_out: 1
+  resnet: False
+  if_flood: False
+
+  # test args
+  test: False
+  result_dir: ./results/astlingen/
