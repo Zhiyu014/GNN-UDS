@@ -138,7 +138,8 @@ class Emulator:
                 if self.seq_out > 1:
                     # (B,N,T_out,E) --> (B*N,T_out,E) --> (B,N,T_out,E)
                     b = reshape(b,(-1,self.seq_out,self.embed_size//2))
-                    b = GRU(self.hidden_dim//2,return_sequences=True)(b)
+                    for i in range(self.n_tp_layer):
+                        b = GRU(self.hidden_dim//2,return_sequences=True)(b)
                     b = reshape(b,(-1,self.n_node,self.seq_out,self.hidden_dim//2))
 
             else:
@@ -174,8 +175,8 @@ class Emulator:
                 preds = []
                 # TODO: what if not recurrent
                 for i in range(b.shape[1]):
-                    ai = a[:,i:i+self.seq_out,...] if self.conv and self.act else a
-                    pred = self.model([x,ai,b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
+                    # ai = a[:,i:i+self.seq_out,...] if self.conv and self.act else a
+                    pred = self.model([x,a,b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
                     pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
@@ -209,7 +210,7 @@ class Emulator:
             preds = []
             # TODO: what if not recurrent
             for i in range(b.shape[1]):
-                pred = self.model([x,a[:,i:i+self.seq_out,...],b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
+                pred = self.model([x,a,b[:,i:i+self.seq_out,...]]) if self.conv else self.model([x,b[:,i:i+self.seq_out,...]])
                 pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred

@@ -4,7 +4,9 @@ env_name: astlingen
 # if env contains actions
 act: True
 # time step (min)
-control_interval: 1
+interval: 1
+# control time step (min)
+control_interval: 5
 # state definitions
 # global state definitions
 global_state:

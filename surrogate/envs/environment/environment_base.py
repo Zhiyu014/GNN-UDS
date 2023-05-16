@@ -156,7 +156,7 @@ class env_base(environment):
                 
     def _getNodeTotalOutflow(self,ID):
         # Outflow rate * step
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['control_interval'] * 60
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['interval'] * 60
         
     def _getNodeLateralInflow(self,ID):
         # Lateral inflow rate

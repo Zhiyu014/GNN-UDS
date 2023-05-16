@@ -14,7 +14,7 @@ class env_rcs(env_base):
     # ------ Get necessary Parameters  ----------------------------------------------
     def _getNodeTotalOutflow(self,ID):
         # Outflow rate * step
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['control_interval'] * 60/1000
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['interval'] * 60/1000
 
     def _getLinkType(self,ID):
         # For control formulation

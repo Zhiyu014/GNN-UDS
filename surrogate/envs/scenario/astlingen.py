@@ -63,8 +63,8 @@ class astlingen(scenario):
 
     def step(self, actions=None, advance_seconds = None, log=True):
         # Implement the actions and take a step forward
-        if advance_seconds is None and 'control_interval' in self.config:
-            advance_seconds = self.config['control_interval'] * 60
+        if advance_seconds is None and 'interval' in self.config:
+            advance_seconds = self.config['interval'] * 60
         # if actions is not None:
         #     actions = self._convert_actions(actions)
 

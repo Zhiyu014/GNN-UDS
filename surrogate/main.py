@@ -76,7 +76,7 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,'env':'shunqing','data_dir':'./envs/data/shunqing/60s/','act':False,'model_dir':'./model/shunqing/5s_10k_res_norm_flood/','load_data':True,'ratio':0.5,'batch_size':128,'resnet':True,'norm':True,'seq_in':5,'seq_out':5,'if_flood':True,'conv':'GAT','recurrent':'Conv1D'}
+    # train_de = {'train':True,'env':'RedChicoSur','data_dir':'./envs/data/RedChicoSur/act/','act':True,'model_dir':'./model/RedChicoSur/5s_10k_act_res_norm_flood_roll/','load_data':True,'ratio':0.5,'batch_size':32,'resnet':True,'norm':True,'seq_in':5,'seq_out':5,'if_flood':True,'roll':True,'conv':'GAT','recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 

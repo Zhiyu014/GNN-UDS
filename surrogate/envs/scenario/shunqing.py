@@ -58,8 +58,8 @@ class shunqing(scenario):
 
     def step(self, settings = None, advance_seconds = None, log=True):
         # Implement the actions and take a step forward
-        if advance_seconds is None and self.config.get('control_interval') is not None:
-            advance_seconds = self.config['control_interval'] * 60
+        if advance_seconds is None and self.config.get('interval') is not None:
+            advance_seconds = self.config['interval'] * 60
         # if actions is not None:
         #     actions = self._convert_actions(actions)
 

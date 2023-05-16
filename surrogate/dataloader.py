@@ -7,7 +7,7 @@ class DataGenerator:
         self.env = env
         self.seq_in = seq_in
         self.seq_out = seq_out
-        self.recurrent = recurrent
+        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.if_flood = if_flood
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         if act:
@@ -19,16 +19,19 @@ class DataGenerator:
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
         states,perfs = [state],[perf]
-        settings = [[1 for _ in self.action_table]] if act else []
-        done = False
+        setting = [1 for _ in self.action_table] if act else None
+        settings = [setting]
+        done,i = False,0
         while not done:
-            setting = [table[np.random.randint(0,len(table))] for table in self.action_table.values()] if act else None
+            setting = [table[np.random.randint(0,len(table))] for table in self.action_table.values()] if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
+
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.performance(seq=seq)
             states.append(state)
             perfs.append(perf)
             settings.append(setting)
+            i += 1
         return np.array(states),np.array(perfs),np.array(settings) if act else None
 
     def generate(self,events,processes=1,seq=False,act=False):
