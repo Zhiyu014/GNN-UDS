@@ -14,14 +14,14 @@ def parser(config=None):
     # simulate args
     parser.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
-    parser.add_argument('--load_data',action="store_true",help='if load simulation data')
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
     parser.add_argument('--act',action="store_true",help='if the environment contains control actions')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
+    parser.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
 
     # train args
     parser.add_argument('--train',action="store_true",help='if train the emulator')
-    parser.add_argument('--load_model',action="store_true",help='if load surrogate model weights')
+    parser.add_argument('--use_adj',action="store_true",help='if use filter to act control')
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
@@ -69,30 +69,34 @@ if __name__ == "__main__":
     args,config = parser('config.yaml')
 
     # simu_de = {'simulate':True,
-    #            'data_dir':'./envs/data/RedChicoSur/act/',
+    #            'env':'RedChicoSur',
+    #            'data_dir':'./envs/data/RedChicoSur/act_edge/',
     #            'act':True,
-    #            'processes':1
+    #            'processes':1,
+    #            'edge_fusion':True
     #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,'env':'RedChicoSur','data_dir':'./envs/data/RedChicoSur/act/','act':True,'model_dir':'./model/RedChicoSur/5s_10k_act_res_norm_flood_roll/','load_data':True,'ratio':0.5,'batch_size':32,'resnet':True,'norm':True,'seq_in':5,'seq_out':5,'if_flood':True,'roll':True,'conv':'GAT','recurrent':'Conv1D'}
+    # train_de = {'train':True,'env':'RedChicoSur','data_dir':'./envs/data/RedChicoSur/act_edge/','act':True,'model_dir':'./model/RedChicoSur/5s_10k_act_edge_res_norm_flood/','ratio':0.5,'batch_size':16,'resnet':True,'norm':True,'edge_fusion':True,'seq_in':5,'seq_out':5,'if_flood':True,'conv':'GAT','recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
-    # test_de = {'test':True,
-    #            'env':'RedChicoSur',
-    #            'act':True,
-    #            'model_dir':'./model/RedChicoSur/5s_5k_res_norm_flood/',
-    #            'resnet':True,
-    #            'norm':True,
-    #            'seq_in':5,
-    #            'seq_out':5,
-    #            'if_flood':True,
-    #            'conv':'GAT',
-    #            'result_dir':'./results/RedChicoSur/5s_res_norm_flood/'}
-    # for k,v in test_de.items():
-    #     setattr(args,k,v)
+    test_de = {'test':True,
+               'env':'RedChicoSur',
+               'act':True,
+               'model_dir':'./model/RedChicoSur/5s_10k_act_edge_res_norm_flood/',
+               'resnet':True,
+               'norm':True,
+               'seq_in':5,
+               'seq_out':5,
+               'if_flood':True,
+               'edge_fusion':True,
+               'conv':'GAT',
+               'recurrent':'Conv1D',
+               'result_dir':'./results/RedChicoSur/5s_act_edge_res_norm_flood/'}
+    for k,v in test_de.items():
+        setattr(args,k,v)
 
     env = get_env(args.env)()
     env_args = env.get_args()
@@ -102,7 +106,7 @@ if __name__ == "__main__":
         setattr(args,k,v)
     
 
-    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.data_dir)
+    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.edge_fusion,args.data_dir)
 
 
     events = get_inp_files(env.config['swmm_input'],env.config['rainfall'])
@@ -110,14 +114,14 @@ if __name__ == "__main__":
         dG.generate(events,processes=args.processes,act=args.act)
         dG.save(args.data_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.data_dir,'parser.yaml'),'w'))
-    elif args.load_data or args.train:
-        dG.load(args.data_dir)
     
     emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         
     if args.train:
+        dG.load(args.data_dir)
+
         if args.norm:
-            emul.set_norm(dG.get_norm())
+            emul.set_norm(*dG.get_norm())
         train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
 
         # save
@@ -144,44 +148,52 @@ if __name__ == "__main__":
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
                 if args.act:
                     settings = np.load(os.path.join(args.result_dir,name + '_settings.npy'))
+                if args.edge_fusion:
+                    edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
                 seq = max(args.seq_in,args.seq_out) if args.recurrent else False
-                states,perfs,settings = dG.simulate(event,seq,act=args.act)
+                res = dG.simulate(event,seq,act=args.act)
+                states,perfs,settings = [r for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
+                if args.edge_fusion:
+                    edge_states = res[-1]
+                    np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
+
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
-
-            states = states[...,:-1]
+            # states = states[...,:-1]
             if args.if_flood:
                 f = (perfs>0).astype(int)
                 f = np.eye(2)[f].squeeze(-2)
                 states = np.concatenate([states,f],axis=-1)
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
-            t0 = time.time()
             states = states[:-args.seq_out]
-            if args.act:
-                # (B,T,N_act) --> (B,T,N,N)
-                def get_act(s):
-                    adj = args.adj.copy()
-                    adj[tuple(args.act_edges.T)] = s
-                    return adj
-                a = np.apply_along_axis(get_act,-1,settings)
-                seq = max(args.seq_in,args.seq_out) if args.recurrent else False
-                a = dG.expand_seq(a,seq,zeros=False)
 
+            if args.edge_fusion:
+                edge_true = edge_states[args.seq_out:,...,:-1]
+                edge_states = edge_states[:-args.seq_out]
+            else:
+                edge_states = None
+
+            if args.act:
                 if args.recurrent:
+                    a = dG.expand_seq(settings,args.seq_out,zeros=False)
                     a = a[args.seq_out:,:args.seq_out,...]
                 else:
                     a = a[1:]
             else:
-                a = args.adj
-            pred = emul.simulate(states,r,a)
+                a = None
+            
+            t0 = time.time()
+            pred = emul.simulate(states,r,a,edge_states)
+            if args.edge_fusion:
+                pred,edge_pred = pred
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
@@ -190,4 +202,9 @@ if __name__ == "__main__":
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)
-            
+            if args.edge_fusion:
+                edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
+                np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true)
+                np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred)
+
+

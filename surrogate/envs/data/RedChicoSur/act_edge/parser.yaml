@@ -1,0 +1,5 @@
+act: true
+data_dir: act_edge
+edge_fusion: true
+env: RedChicoSur
+simulate: true

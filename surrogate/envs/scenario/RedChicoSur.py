@@ -8,7 +8,7 @@ from swmm_api.input_file.sections import FilesSection,Control
 from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import datetime
 from collections import deque
-
+from itertools import combinations
 HERE = os.path.dirname(__file__)
 
 class RedChicoSur(scenario):
@@ -79,29 +79,30 @@ class RedChicoSur(scenario):
             self.env.terminate()
         return done
 
-    def state_full(self, seq = False):
+    def state_full(self, seq = False, typ='nodes'):
         # seq should be smaller than the whole event length
+        attrs = [item for item in self.config['global_state'] if item[0]==typ]
         if seq:
             __state = np.array([[self.data_log[attr][ID][-seq:]
         if self.env._isFinished else [0.0]*(seq-1-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][-seq:-1] + [self.env.methods[attr](ID)]
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         else:
             __state = np.array([[self.data_log[attr][ID][-1]
                 if self.env._isFinished else self.env.methods[attr](ID)
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
 
         if seq:
             __last = np.array([[self.data_log[attr][ID][-seq-1:-1]
                 if len(self.data_log[attr][ID]) > seq 
                 else [0.0]*(seq-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][:-1]
-                for ID in self.get_features(typ)] 
+                for ID in self.elements[typ]] 
                 if 'cum' in attr 
-                else [[0.0]*seq for _ in self.get_features(typ)]
-                for typ,attr in self.config['global_state']])
+                else [[0.0]*seq for _ in self.elements[typ]]
+                for typ,attr in attrs])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
                 if 'cum' in attr and len(self.data_log[attr][ID]) > 1 else 0
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         state = (__state - __last).T
         return state
 
@@ -147,10 +148,10 @@ class RedChicoSur(scenario):
             if len(self.data_log['performance_measure']) > 0:
                 return super().performance(metric)
             else:
-                return np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
+                return np.zeros((len(self.elements['nodes']),len(self.config['performance_targets'])))
         else:
             perf = self.data_log['performance_measure'][-seq:]
-            default = np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
+            default = np.zeros((len(self.elements['nodes']),len(self.config['performance_targets'])))
             perf = [default for _ in range(seq-len(perf))] + perf
             return np.array(perf)
 
@@ -184,10 +185,11 @@ class RedChicoSur(scenario):
                     self.data_log[attribute][idx] = [] if maxlen is None else deque(maxlen=maxlen)
             
         if self.global_state:
+            self.elements = {typ:self.get_features(typ) for typ,_ in config['global_state']}
             for typ,attribute in config['global_state']:
                 if attribute not in self.data_log.keys():
                     self.data_log[attribute] = {}
-                for ID in self.get_features(typ):
+                for ID in self.elements[typ]:
                     self.data_log[attribute][ID] =  [] if maxlen is None else deque(maxlen=maxlen)
         else:
             for ID, attribute in config["states"]:
@@ -201,7 +203,7 @@ class RedChicoSur(scenario):
     def get_args(self):
         args = self.config.copy()
         # state shape
-        args['state_shape'] = (len(self.get_features('nodes')),len(self.config['global_state'])) if self.global_state else len(args['states'])
+        args['state_shape'] = (len(self.get_features('nodes')),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
         
         nodes = self.get_features('nodes')
         inp = read_inp_file(self.config['swmm_input'])
@@ -210,6 +212,10 @@ class RedChicoSur(scenario):
         if self.global_state:
             args['edges'] = self.get_edge_list()
             args['adj'] = self.get_adj()
+            args['edge_adj'] = self.get_edge_adj()
+            args['node_edge'] = self.get_node_edge()
+            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))
+            
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
         return args
 
@@ -220,10 +226,13 @@ class RedChicoSur(scenario):
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
         features = []
         for label in labels[kind]:
-            if no_out and label == 'OUTFALLS':
-                continue
-            elif label in inp:
-                features += list(getattr(inp,label))            
+            if label not in inp or (no_out and label == 'OUTFALLS'):
+                continue                
+            if no_out and kind == 'links':
+                features += [k for k,v in getattr(inp,label).items()
+                             if getattr(v,'ToNode') not in inp['OUTFALLS']]
+            else:
+                features += list(getattr(inp,label))
         return features
     
     def get_edge_list(self,links=None):
@@ -246,6 +255,31 @@ class RedChicoSur(scenario):
             adj[u,v] += 1
             adj[v,u] += 1
         return adj
+
+    def get_node_edge(self):
+        nodes = self.get_features('nodes')
+        edges = self.get_edge_list()
+        node_edge = np.zeros((len(nodes),len(edges)))
+        for i,(u,v) in enumerate(edges):
+            node_edge[u,i] += 1
+            node_edge[v,i] += 1
+        return node_edge
+    
+    def get_edge_adj(self):
+        edges = self.get_edge_list()
+        nodes = {}
+        for i,(u,v) in enumerate(edges):
+            for n in [u,v]:
+                if n not in nodes:
+                    nodes[n] = []
+                else:
+                    nodes[n].append(i)
+        adj = np.eye(len(edges))
+        for v in nodes.values():
+            for a,b in combinations(v,2):
+                adj[a,b] += 1
+        return adj
+
 
     # predictive functions
     def save_hotstart(self,hsf_file=None):

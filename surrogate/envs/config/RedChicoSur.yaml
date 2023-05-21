@@ -22,6 +22,18 @@ global_state:
   - !!python/tuple
     - nodes
     - cum_lateral_inflow
+  - !!python/tuple
+    - links
+    - volumeL
+  - !!python/tuple
+    - links
+    - depthL
+  - !!python/tuple
+    - links
+    - flow
+  - !!python/tuple
+    - links
+    - setting
 
 action_space:
   G6: &id001 !!python/tuple

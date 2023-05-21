@@ -1,14 +1,13 @@
 shunqing:
   # simulate args
   simulate: False
-  load_data: False
   data_dir: ./envs/data/shunqing/
   act: False
   processes: 5
+  edge_fusion: False
 
   # train args
   train: False
-  load_model: False
   model_dir: ./model/shunqing/
   ratio: 0.8
   learning_rate: 0.001
@@ -41,14 +40,14 @@ shunqing:
 RedChicoSur:
   # simulate args
   simulate: False
-  load_data: False
   data_dir: ./envs/data/RedChicoSur/
   act: False
   processes: 5
+  edge_fusion: False
 
   # train args
   train: False
-  load_model: False
+  use_adj: False
   model_dir: ./model/RedChicoSur/
   ratio: 0.8
   learning_rate: 0.001
@@ -80,14 +79,14 @@ RedChicoSur:
 astlingen:
   # simulate args
   simulate: False
-  load_data: False
   data_dir: ./envs/data/astlingen/
   act: False
   processes: 5
+  edge_fusion: False
 
   # train args
   train: False
-  load_model: False
+  use_adj: False
   model_dir: ./model/astlingen/
   ratio: 0.8
   learning_rate: 0.001

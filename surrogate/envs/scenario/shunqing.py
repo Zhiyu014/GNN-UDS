@@ -91,24 +91,24 @@ class shunqing(scenario):
         if seq:
             __state = np.array([[self.data_log[attr][ID][-seq:]
         if self.env._isFinished else [0.0]*(seq-1-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][-seq:-1] + [self.env.methods[attr](ID)]
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
         else:
             __state = np.array([[self.data_log[attr][ID][-1]
                 if self.env._isFinished else self.env.methods[attr](ID)
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
 
         if seq:
             __last = np.array([[self.data_log[attr][ID][-seq-1:-1]
                 if len(self.data_log[attr][ID]) > seq 
                 else [0.0]*(seq-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][:-1]
-                for ID in self.get_features(typ)] 
+                for ID in self.elements[typ]] 
                 if 'cum' in attr
-                else [[0.0]*seq for _ in self.get_features(typ)]
+                else [[0.0]*seq for _ in self.elements[typ]]
                 for typ,attr in self.config['global_state']])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
                 if 'cum' in attr and len(self.data_log[attr][ID]) > 1 else 0
-                for ID in self.get_features(typ)] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
         state = (__state - __last).T
         return state
 
@@ -154,10 +154,10 @@ class shunqing(scenario):
             if len(self.data_log['performance_measure']) > 0:
                 return super().performance(metric)
             else:
-                return np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
+                return np.zeros((len(self.elements['nodes']),len(self.config['performance_targets'])))
         else:
             perf = self.data_log['performance_measure'][-seq:]
-            default = np.zeros((len(self.get_features('nodes')),len(self.config['performance_targets'])))
+            default = np.zeros((len(self.elements['nodes']),len(self.config['performance_targets'])))
             perf = [default for _ in range(seq-len(perf))] + perf
             return np.array(perf)
 
@@ -191,10 +191,11 @@ class shunqing(scenario):
                     self.data_log[attribute][idx] = [] if maxlen is None else deque(maxlen=maxlen)
             
         if self.global_state:
+            self.elements = {typ:self.get_features(typ) for typ,_ in config['global_state']}
             for typ,attribute in config['global_state']:
                 if attribute not in self.data_log.keys():
                     self.data_log[attribute] = {}
-                for ID in self.get_features(typ):
+                for ID in self.elements[typ]:
                     self.data_log[attribute][ID] =  [] if maxlen is None else deque(maxlen=maxlen)
         else:
             for ID, attribute in config["states"]:
@@ -226,10 +227,13 @@ class shunqing(scenario):
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
         features = []
         for label in labels[kind]:
-            if no_out and label == 'OUTFALLS':
-                continue
-            elif label in inp:
-                features += list(getattr(inp,label))            
+            if label not in inp or (no_out and label == 'OUTFALLS'):
+                continue                
+            if no_out and kind == 'links':
+                features += [k for k,v in getattr(inp,label).items()
+                             if getattr(v,'ToNode') not in inp['OUTFALLS']]
+            else:
+                features += list(getattr(inp,label))
         return features
     
     def get_edge_list(self):

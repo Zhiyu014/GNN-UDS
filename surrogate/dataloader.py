@@ -3,12 +3,13 @@ import multiprocessing as mp
 import os
 
 class DataGenerator:
-    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,data_dir=None):
+    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,edge_fusion=False,data_dir=None):
         self.env = env
         self.seq_in = seq_in
         self.seq_out = seq_out
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.if_flood = if_flood
+        self.edge_fusion = edge_fusion
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         if act:
             self.action_table = env.config['action_space']
@@ -19,21 +20,29 @@ class DataGenerator:
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
         states,perfs = [state],[perf]
+        if self.edge_fusion:
+            edge_state = self.env.state_full(seq,'links')
+            edge_states = [edge_state]
         setting = [1 for _ in self.action_table] if act else None
         settings = [setting]
         done,i = False,0
         while not done:
             setting = [table[np.random.randint(0,len(table))] for table in self.action_table.values()] if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
-
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.performance(seq=seq)
             states.append(state)
             perfs.append(perf)
             settings.append(setting)
+            if self.edge_fusion:
+                edge_state = self.env.state_full(seq,'links')
+                edge_states.append(edge_state)
             i += 1
-        return np.array(states),np.array(perfs),np.array(settings) if act else None
-
+        if self.edge_fusion:
+            return np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(edge_states)
+        else:
+            return np.array(states),np.array(perfs),np.array(settings) if act else None
+        
     def generate(self,events,processes=1,seq=False,act=False):
         if processes > 1:
             pool = mp.Pool(processes)
@@ -45,6 +54,8 @@ class DataGenerator:
             res = [self.simulate(event,seq,act) for event in events]
         self.states,self.perfs = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
+        if self.edge_fusion:
+            self.edge_states = np.concatenate([r[-1] for r in res],axis=0) if self.edge_fusion else None
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
 
     def state_split(self,states,perfs):
@@ -53,7 +64,8 @@ class DataGenerator:
         q_us = q_totin - r
         # B,T,N,in
         n_spl = self.seq_out if self.recurrent else 1
-        X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl]],axis=-1)
+        # TODO: debugging   r added to X
+        X = np.stack([h[:-n_spl],q_us[:-n_spl],q_ds[:-n_spl],r[:-n_spl]],axis=-1)
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
 
         if self.if_flood:
@@ -68,6 +80,13 @@ class DataGenerator:
             Y = Y[:,:self.seq_out,...]
         return X,B,Y
 
+    def edge_state_split(self,edge_states):
+        n_spl = self.seq_out if self.recurrent else 1
+        ex,ey = edge_states[:-n_spl],edge_states[n_spl:,...,:-1]
+        if self.recurrent:
+            ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
+        return ex,ey
+
     def expand_seq(self,dats,seq,zeros=True):
         dats = np.stack([np.concatenate([np.tile(np.zeros_like(s) if zeros else np.ones_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
         return dats
@@ -79,13 +98,16 @@ class DataGenerator:
             num = self.event_id==idx
             if seq > 0:
                 states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
+                edge_states = self.expand_seq(self.edge_states[num],seq) if self.edge_fusion else None
                 settings = self.expand_seq(self.settings[num],seq,False) if self.settings is not None else None
             x,b,y = self.state_split(states,perfs)
+            ex,ey = self.edge_state_split(edge_states) if self.edge_fusion else (None,None)
             if self.settings is not None:
                 settings = settings[self.seq_out:,:self.seq_out,...] if self.recurrent else settings[1:]
-            r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y]]
+            # r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y]]
+            r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
             res.append(r)
-        return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(4)]
+        return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
 
 
@@ -95,6 +117,8 @@ class DataGenerator:
             os.mkdir(data_dir)
         np.save(os.path.join(data_dir,'states.npy'),self.states)
         np.save(os.path.join(data_dir,'perfs.npy'),self.perfs)
+        if self.edge_fusion:
+            np.save(os.path.join(data_dir,'edge_states.npy'),self.edge_states)
         if self.settings is not None:
             np.save(os.path.join(data_dir,'settings.npy'),self.settings)
         np.save(os.path.join(data_dir,'event_id.npy'),self.event_id)
@@ -108,45 +132,38 @@ class DataGenerator:
             else:
                 dat = None
             setattr(self,name,dat)
+        if self.edge_fusion:
+            self.edge_states = np.load(os.path.join(data_dir,'edge_states.npy')).astype(np.float32)
         self.get_norm()
 
-    # def get_norm(self):
-    #     if not hasattr(self,'normal'):
-    #         norm = self.X.copy() + 1e-6
-    #         while len(norm.shape) > 2:
-    #             norm = norm.max(axis=0)
-    #         if self.if_flood:
-    #             norm[:,-2:] = 1
-    #         norm_b = self.B.copy() + 1e-6
-    #         while len(norm_b.shape) > 2:
-    #             norm_b = norm_b.max(axis=0)
-    #         self.normal = np.concatenate([norm,norm_b],axis=-1)
-    #     return self.normal
-    
     def get_norm(self):
-        if not hasattr(self,'normal'):
-            norm = np.concatenate([self.states[...,:-1],self.perfs,self.states[...,-1:]],axis=-1)
-            norm[...,1] = norm[...,1] - norm[...,-1]
-            while len(norm.shape) > 2:
-                norm = norm.max(axis=0)
-            if self.if_flood:
-                norm = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-2].max())+1e-6,(norm.shape[0],1)),norm[...,-1:] + 1e-6],axis=-1)
-                # norm = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:] + 1e-6],axis=-1)
-            else:
-                norm += 1e-6
-
-            # if self.if_flood:
-            #     norm = np.concatenate([norm[...,:-1] + 1e-6,np.ones((norm.shape[0],1),dtype=np.float32),norm[...,-1:] + 1e-6],axis=-1)
-            # else:
-            self.normal = norm.astype(np.float32)
-        return self.normal
+        norm = np.concatenate([self.states,self.perfs],axis=-1)
+        norm[...,1] = norm[...,1] - norm[...,3]
+        while len(norm.shape) > 2:
+            norm = norm.max(axis=0)
+        norm_b = (norm[...,-2:-1] + 1e-6).astype(np.float32)
+        
+        if self.if_flood:
+            norm_x = np.concatenate([norm[...,:-1] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32)],axis=-1)
+            norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+        else:
+            norm_x = norm[...,:-1]
+            norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+        norm_x = norm_x.astype(np.float32)
+        norm_y = norm_y.astype(np.float32)
+        if self.edge_fusion:
+            norm_e = self.edge_states.copy()
+            while len(norm_e.shape) > 2:
+                norm_e = norm_e.max(axis=0)
+            norm_e += 1e-6
+            norm_e = norm_e.astype(np.float32)
+            return norm_x,norm_b,norm_y,norm_e
+        else:
+            return norm_x,norm_b,norm_y
             
 
-    def normalize(self,dat,inverse=False):
-        norm = self.get_norm()
-        dim = dat.shape[-1]
-        if dim >= 3:
-            return dat * norm[...,:dim] if inverse else dat/norm[...,:dim]
-        else:
-            return dat * norm[...,-dim:] if inverse else dat/norm[...,-dim:]
+    # def normalize(self,dat,inverse=False):
+    #     norm = self.get_norm()
+    #     dim = dat.shape[-1]
+    #     return dat * norm[...,:dim] if inverse else dat/norm[...,:dim]
 
