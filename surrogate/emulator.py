@@ -17,6 +17,20 @@ tf.config.list_physical_devices(device_type='GPU')
 #     - [original](https://github.com/VeritasYin/STGCN_IJCAI-18)
 # - **Predict**: *T*-times 1-step prediction OR T-step prediction?
 
+class NodeEdge(tf.keras.layers.Layer):
+    def __init__(self, shape1, shape2):
+        super(NodeEdge,self).__init__()
+        self.w = self.add_weight(
+            shape=(shape1,shape2),initializer='random_normal',trainable=True,
+        )
+        self.b = self.add_weight(
+            shape=(shape1,shape2),initializer='zeros',trainable=True,
+        )
+
+    def call(self,inputs):
+        return self.w * inputs + self.b
+
+
 class Emulator:
     def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
@@ -48,8 +62,10 @@ class Emulator:
         if self.edge_fusion:
             self.edges = getattr(args,"edges")
             self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
+            self.n_out -= 2 # exclude q_in, q_out
             self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
             self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
+            self.ehmax = getattr(args,"ehmax",np.array([0.5 for _ in range(self.n_edge)]))
 
         self.adj = getattr(args,"adj",np.eye(self.n_node))
         if self.act:
@@ -68,7 +84,7 @@ class Emulator:
         self.ratio = getattr(args,"ratio",0.8)
         self.batch_size = getattr(args,"batch_size",256)
         self.epochs = getattr(args,"epochs",100)
-        self.model_dir = getattr(args,"model_dir","./model/shunqing/model.h5")
+        self.model_dir = getattr(args,"model_dir")
 
 
 
@@ -137,8 +153,10 @@ class Emulator:
             if self.edge_fusion:
                 x_e = Dense(self.embed_size//2,activation=self.activation)(e)
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                x = concat([x,tf.matmul(self.node_edge,x_e)],axis=-1)
-                e = concat([e,tf.matmul(transpose(self.node_edge),e_x)],axis=-1)
+                x = concat([x,tf.matmul(NodeEdge(self.n_node,self.n_edge)(tf.abs(self.node_edge)),x_e)],axis=-1)
+                e = concat([e,tf.matmul(NodeEdge(self.n_edge,self.n_node)(transpose(tf.abs(self.node_edge))),e_x)],axis=-1)
+                # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
+                # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             # b = Dense(self.embed_size//2,activation=self.activation)(b)
@@ -218,7 +236,7 @@ class Emulator:
 
         # boundary in
         x = concat([x,b],axis=-1)
-        if self.edge_fusion:
+        if self.edge_fusion and self.act:
             e = concat([e,ae],axis=-1)
 
         # Spatial block 2
@@ -231,17 +249,20 @@ class Emulator:
             else:
                 A = Adj_in
         for _ in range(self.n_sp_layer):
+            if self.edge_fusion:
+                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
+                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
+                x = concat([x,tf.matmul(NodeEdge(self.n_node,self.n_edge)(tf.abs(self.node_edge)),x_e)],axis=-1)
+                e = concat([e,tf.matmul(NodeEdge(self.n_edge,self.n_node)(transpose(tf.abs(self.node_edge))),e_x)],axis=-1)
+                # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
+                # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
             x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             if self.edge_fusion:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
 
-                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
-                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                
-                x = concat([x,tf.matmul(self.node_edge,x_e)],axis=-1)
-                e = concat([e,tf.matmul(transpose(self.node_edge),e_x)],axis=-1)
+
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         x = reshape(x,(-1,)+input_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+input_shape[:-2]+(x.shape[-1],)) 
@@ -310,7 +331,7 @@ class Emulator:
         if self.act:
             if self.use_adj:
                 adj = self.get_adj_action(a)
-            elif self.edge_fusion:
+            if self.edge_fusion:
                 ae = self.get_edge_action(a)
             else:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
@@ -326,22 +347,40 @@ class Emulator:
                     inp = [x,b[:,i:i+self.seq_out,...]]
                     if self.conv:
                         inp += [self.filter]
-                        inp += [adj[:,i:i+self.seq_out,...]] if self.act and self.use_adj else []
+                        inp += [adj[:,i:i+self.seq_out,...] if self.recurrent else adj] if self.act and self.use_adj else []
                     if self.edge_fusion:
                         inp += [ex]
                         inp += [self.edge_filter] if self.conv else []
-                        inp += [ae[:,i:i+self.seq_out,...]] if self.act else []
+                        inp += [ae[:,i:i+self.seq_out,...] if self.recurrent else ae] if self.act else []
                     pred = self.model(inp)
                     if self.edge_fusion:
                         pred,edge_pred = pred
-                        edge_preds.append(edge_pred)
-                        ex = concat([ex[:,1:,...],edge_pred[:,:1,...]],axis=1) if self.recurrent else edge_pred
-                    if self.act and not self.use_adj and not self.edge_fusion:
-                        pred = concat([tf.stack([tf.clip_by_value(pred[...,0],0,1),tf.multiply(pred[...,1],a_in),tf.multiply(pred[...,2],a_out)],axis=-1),pred[...,3:]],axis=-1)
-                    else:
-                        pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
+
+                    if self.act:
+                        if self.edge_fusion:
+                            edge_pred = concat(tf.stack(edge_pred[...,:2],tf.multiply(edge_pred[...,2:],ae[:,i:i+self.seq_out,...] if self.recurrent else ae)),axis=-1)
+                        else:
+                            pred = concat([tf.stack([pred[...,0],
+                            tf.multiply(pred[...,1],a_in[:,i:i+self.seq_out,...] if self.recurrent else a_in),
+                            tf.multiply(pred[...,2],a_out[:,i:i+self.seq_out,...] if self.recurrent else a_out)],axis=-1),
+                            pred[...,3:]],axis=-1)
+
+
+                    if self.edge_fusion:
+                        if self.norm:
+                            edge_pred_renorm = self.normalize(edge_pred,'e',True)
+                            node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_pred_renorm[...,-1:])/self.norm_y[...,2:3]
+                            node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_pred_renorm[...,-1:])/self.norm_y[...,1:2]
+                        else:
+                            node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_pred[...,-1:])
+                            node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_pred[...,-1:])
+                        pred = concat([pred[...,:1],node_inflow,node_outflow,pred[...,1:]],axis=-1)
+
                     preds.append(pred)
                     x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
+                    if self.edge_fusion:
+                        edge_preds.append(edge_pred)
+                        ex = concat([ex[:,1:,...],edge_pred[:,:1,...]],axis=1) if self.recurrent else edge_pred
                 preds = concat(preds,axis=1)
                 if self.edge_fusion:
                     edge_preds = concat(edge_preds,axis=1)
@@ -357,18 +396,41 @@ class Emulator:
                 preds = self.model(inp)
                 if self.edge_fusion:
                     preds,edge_preds = preds
-                if self.act and not self.use_adj and not self.edge_fusion:
-                    preds = concat([tf.stack([tf.clip_by_value(preds[...,0],0,1),tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+                if self.act:
+                    if self.edge_fusion:
+                        edge_preds = concat(tf.stack(edge_preds[...,:2],tf.multiply(edge_preds[...,2:],ae)),axis=-1)
+                    else:
+                        preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+
+                if self.edge_fusion:
+                    if self.norm:
+                        edge_preds_renorm = self.normalize(edge_preds,'e',True)
+                        node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds_renorm[...,-1:])/self.norm_y[...,2:3]
+                        node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds_renorm[...,-1:])/self.norm_y[...,1:2]
+                    else:
+                        node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds[...,-1:])
+                        node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds[...,-1:])
+                    preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
 
             if self.balance:
                 if self.norm:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
-                q_w = self.get_flood(preds_re_norm,b)
-                if self.norm:
-                    q_w = q_w/self.normal[...,-2]
+                    q_w = self.get_flood(preds_re_norm,b)
+                    q_w = q_w/self.norm_y[...,-1]
+                else:
+                    q_w = self.get_flood(preds,b)
                 # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
                 loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))
+                # if self.edge_fusion:
+                #     if self.norm:
+                #         edge_preds_renorm = self.normalize(edge_preds,'e',True)
+                #         node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds_renorm[...,-1:])/self.norm_y[...,2:3]
+                #         node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds_renorm[...,-1:])/self.norm_y[...,1:2]
+                #     else:
+                #         node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds[...,-1:])
+                #         node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds[...,-1:])
+                #     loss += self.mse(preds[...,1:2],node_inflow)+self.mse(preds[...,2:3],node_outflow)
             else:
                 loss = self.mse(y[...,:3],preds[...,:3])
 
@@ -386,7 +448,7 @@ class Emulator:
         if self.act:
             if self.use_adj:
                 adj = self.get_adj_action(a)
-            elif self.edge_fusion:
+            if self.edge_fusion:
                 ae = self.get_edge_action(a)
             else:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
@@ -407,14 +469,33 @@ class Emulator:
                 pred = self.model(inp)
                 if self.edge_fusion:
                     pred,edge_pred = pred
-                    edge_preds.append(edge_pred)
-                    ex = concat([ex[:,1:,...],edge_pred[:,:1,...]],axis=1) if self.recurrent else edge_pred
-                if self.act and not self.use_adj and not self.edge_fusion:
-                    pred = concat([tf.stack([tf.clip_by_value(pred[...,0],0,1),tf.multiply(pred[...,1],a_in),tf.multiply(pred[...,2],a_out)],axis=-1),pred[...,3:]],axis=-1)
-                else:
-                    pred = concat([tf.clip_by_value(pred[...,:1],0,1),pred[...,1:]],axis=-1)
+
+                if self.act:
+                    if self.edge_fusion:
+                        edge_pred = concat(tf.stack(edge_pred[...,:-1],tf.multiply(edge_pred[...,-1:],ae[:,i:i+self.seq_out,...] if self.recurrent else ae)),axis=-1)
+                    else:
+                        pred = concat([tf.stack([tf.clip_by_value(pred[...,0],0,1),
+                        tf.multiply(pred[...,1],a_in[:,i:i+self.seq_out,...] if self.recurrent else a_in),
+                        tf.multiply(pred[...,2],a_out[:,i:i+self.seq_out,...] if self.recurrent else a_out)],axis=-1),
+                        pred[...,3:]],axis=-1)
+
+
+                if self.edge_fusion:
+                    if self.norm:
+                        edge_pred_renorm = self.normalize(edge_pred,'e',True)
+                        node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_pred_renorm[...,-1:])/self.norm_y[...,2:3]
+                        node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_pred_renorm[...,-1:])/self.norm_y[...,1:2]
+                    else:
+                        node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_pred[...,-1:])
+                        node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_pred[...,-1:])
+                    pred = concat([pred[...,:1],node_inflow,node_outflow,pred[...,1:]],axis=-1)
+
                 preds.append(pred)
                 x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
+                if self.edge_fusion:
+                    edge_preds.append(edge_pred)
+                    ex = concat([ex[:,1:,...],edge_pred[:,:1,...]],axis=1) if self.recurrent else edge_pred
+
             preds = concat(preds,axis=1)
             if self.edge_fusion:
                 edge_preds = concat(edge_preds,axis=1)
@@ -430,37 +511,62 @@ class Emulator:
             preds = self.model(inp)
             if self.edge_fusion:
                 preds,edge_preds = preds
-            if self.act and not self.use_adj and not self.edge_fusion:
-                preds = concat([tf.stack([tf.clip_by_value(preds[...,0],0,1),tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
-                
+            if self.act:
+                if self.edge_fusion:
+                    edge_preds = concat(tf.stack(edge_preds[...,:2],tf.multiply(edge_preds[...,2:],ae)),axis=-1)
+                else:
+                    preds = concat([tf.stack([tf.clip_by_value(preds[...,0],0,1),tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+
+            if self.edge_fusion:
+                if self.norm:
+                    edge_preds_renorm = self.normalize(edge_preds,'e',True)
+                    node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds_renorm[...,-1:])/self.norm_y[...,2:3]
+                    node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds_renorm[...,-1:])/self.norm_y[...,1:2]
+                else:
+                    node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds[...,-1:])
+                    node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds[...,-1:])
+                preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
+
         if self.balance:
             if self.norm:
                 preds_re_norm = self.normalize(preds,'y',inverse=True)
                 b = self.normalize(b,'b',inverse=True)
-            q_w = self.get_flood(preds_re_norm,b)
-            if self.norm:
-                q_w = q_w/self.normal[...,-2]
-            # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
-            loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))
+                q_w = self.get_flood(preds_re_norm,b)
+                q_w = q_w/self.norm_y[...,-1]
+            else:
+                q_w = self.get_flood(preds,b)
+            loss = [self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))]
+            # if self.edge_fusion:
+            #     if self.norm:
+            #         edge_preds_renorm = self.normalize(edge_preds,'e',True)
+            #         node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds_renorm[...,-1:])/self.norm_y[...,2:3]
+            #         node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds_renorm[...,-1:])/self.norm_y[...,1:2]
+            #     else:
+            #         node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),edge_preds[...,-1:])
+            #         node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),edge_preds[...,-1:])
+            #     loss += [self.mse(preds[...,1:2],node_inflow)+self.mse(preds[...,2:3],node_outflow)]
         else:
-            loss = self.mse(y[...,:3],preds[...,:3])
+            loss = [self.mse(y[...,:3],preds[...,:3])]
         if self.if_flood:
-            loss += self.cce(y[...,-3:-1],preds[...,-2:])
+            loss += [self.cce(y[...,-3:-1],preds[...,-2:])]
         if self.edge_fusion:
-            loss += self.mse(edge_preds,ey)
-        return loss.numpy()
+            loss += [self.mse(edge_preds,ey)]
+        return [los.numpy() for los in loss]
 
 
-    def update_net(self,dG,ratio=None,epochs=None,batch_size=None):
-        ratio = self.ratio if ratio is None else ratio
+    def update_net(self,dG,ratio=None,epochs=None,batch_size=None,train_ids=None):
         batch_size = self.batch_size if batch_size is None else batch_size
         epochs = self.epochs if epochs is None else epochs
 
         seq = max(self.seq_in,self.seq_out) if self.recurrent else 0
-
         n_events = int(max(dG.event_id))+1
-        train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio),replace=False)
-        test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+
+        if train_ids is None:
+            ratio = self.ratio if ratio is None else ratio
+            train_ids = np.random.choice(np.arange(n_events),int(n_events*ratio),replace=False)
+            test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+        else:
+            test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 
         train_dats = dG.prepare(seq,train_ids)
         test_dats = dG.prepare(seq,test_ids)
@@ -494,7 +600,24 @@ class Emulator:
                 ex,ey = None,None
             test_loss = self.evaluate(x,a,b,y,ex,ey)
             test_losses.append(test_loss)
-            print("Epoch {}/{} Train loss: {} Test loss: {}".format(epoch,epochs,train_loss,test_loss))
+            log = "Epoch {}/{} Train loss: {:.4f} Test loss: {:.4f}".format(epoch,epochs,train_loss,sum(test_loss))
+            i = 0
+            log += " ("
+            if self.balance:
+                log += "Node bal: {:.4f}".format(test_loss[i])
+                # if self.edge_fusion:
+                #     i += 1
+                #     log += " Edge bal: {:.4f}".format(test_loss[i])
+            else:
+                log += "Node: {:.4f}".format(test_loss[i])
+            i += 1
+            if self.if_flood:
+                log += " if_flood: {:.4f}".format(test_loss[i])
+                i += 1
+            if self.edge_fusion:
+                log += " Edge: {:.4f}".format(test_loss[i])
+            log += ")"
+            print(log)
         return train_ids,test_ids,train_losses,test_losses
 
     # TODO: settings
@@ -505,8 +628,7 @@ class Emulator:
                 adj = self.get_adj_action(a)
             elif self.edge_fusion:
                 ae = self.get_edge_action(a)
-            else:
-                a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
+            a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
         preds = []
         if self.edge_fusion:
             edge_preds = []
@@ -524,28 +646,44 @@ class Emulator:
                     inp = [expand_dims(dat,0) for dat in inp]
                     if self.conv:
                         inp += [self.filter]
-                        inp += [adj[idx:idx+1,i:i+self.seq_out,...]] if self.act and self.use_adj else []
+                        inp += [adj[idx:idx+1,i:i+self.seq_out,...] if self.recurrent else adj[idx]] if self.act and self.use_adj else []
                     if self.edge_fusion:
                         inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
                         inp += [self.edge_filter] if self.conv else []
-                        inp += [ae[idx:idx+1,i:i+self.seq_out,...]] if self.act else []
+                        inp += [ae[idx:idx+1,i:i+self.seq_out,...] if self.recurrent else ae[idx]] if self.act else []
                     y = self.model(inp)
                     if self.edge_fusion:
                         y,ey = y
+                        ey = squeeze(ey,0).numpy()
                         if self.norm:
                             ey = self.normalize(ey,'e',True)
-                        ex = np.concatenate([ex[1:],ey[:1]],axis=0) if self.recurrent else ey
-                        eys.append(ey)
+                        ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
                     y = squeeze(y,0).numpy()
+                    if self.act:
+                        if self.edge_fusion:
+                            ey[...,-1] *= ae[idx,i:i+self.seq_out,...] if self.recurrent else ae[idx]
+                        else:
+                            y[...,2] *= a_out[idx,i:i+self.seq_out,...] if self.recurrent else a_out[idx]
+                            y[...,1] *= a_in[idx,i:i+self.seq_out,...] if self.recurrent else a_in[idx]
+
+                    if self.edge_fusion:
+                        node_outflow = np.matmul(np.clip(self.node_edge,0,1),ey[...,-1:])
+                        node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),ey[...,-1:])
+                        if self.norm:
+                            node_outflow /= self.norm_y[...,2:3]
+                            node_inflow /= self.norm_y[...,1:2]
+                        y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
+
                     if self.norm:
                         y = self.normalize(y,'y',True)
-                    if self.act and not self.use_adj and not self.edge_fusion:
-                        y[...,2] *= a_out[idx]
-                        y[...,1] *= a_in[idx]
+
                     q_w,y = self.constrain(y,b_i)
                     x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
                     qws.append(q_w)
                     ys.append(y)
+                    if self.edge_fusion:
+                        ex = np.concatenate([ex[1:],ey[:1]],axis=0) if self.recurrent else ey
+                        eys.append(ey)
                 q_w,y = np.concatenate(qws,axis=0),np.concatenate(ys,axis=0)
                 if self.edge_fusion:
                     ey = np.concatenate(eys,axis=0)
@@ -567,12 +705,25 @@ class Emulator:
                     ey = squeeze(ey,0).numpy()
                     if self.norm:
                         ey = self.normalize(ey,'e',True)
+                    ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
                 y = squeeze(y,0).numpy()
+                if self.act:
+                    if self.edge_fusion:
+                        ey[...,-1] *= ae[idx]
+                    else:
+                        y[...,2] *= a_out[idx]
+                        y[...,1] *= a_in[idx]
+
+                if self.edge_fusion:
+                    node_outflow = np.matmul(np.clip(self.node_edge,0,1),ey[...,-1:])
+                    node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),ey[...,-1:])
+                    if self.norm:
+                        node_outflow /= self.norm_y[...,2:3]
+                        node_inflow /= self.norm_y[...,1:2]
+                    y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
+
                 if self.norm:
                     y = self.normalize(y,'y',True)
-                if self.act and not self.use_adj and not self.edge_fusion:
-                    y[...,2] *= a_out[idx]
-                    y[...,1] *= a_in[idx]
                 q_w,y = self.constrain(y,bi)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             preds.append(y)
@@ -628,7 +779,7 @@ class Emulator:
             h = self.hmax * f + h * ~f
             y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
         else:
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1) * (self.hmax > 0)
             y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
@@ -641,7 +792,7 @@ class Emulator:
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
             h = np.clip(h,0,self.hmax)
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1) * (self.hmax > 0)
         # err = q_us + r - q_ds - q_w
         # return tf.sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
         return q_w

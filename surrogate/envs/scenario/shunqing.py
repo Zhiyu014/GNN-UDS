@@ -8,6 +8,7 @@ from swmm_api.input_file.sections import FilesSection,Control
 from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import datetime
 from collections import deque
+from itertools import combinations
 
 HERE = os.path.dirname(__file__)
 
@@ -86,16 +87,17 @@ class shunqing(scenario):
             self.env.terminate()
         return done
 
-    def state_full(self, seq = False):
+    def state_full(self, seq = False, typ = 'nodes'):
         # seq should be smaller than the whole event length
+        attrs = [item for item in self.config['global_state'] if item[0]==typ]
         if seq:
             __state = np.array([[self.data_log[attr][ID][-seq:]
         if self.env._isFinished else [0.0]*(seq-1-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][-seq:-1] + [self.env.methods[attr](ID)]
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         else:
             __state = np.array([[self.data_log[attr][ID][-1]
                 if self.env._isFinished else self.env.methods[attr](ID)
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
 
         if seq:
             __last = np.array([[self.data_log[attr][ID][-seq-1:-1]
@@ -104,11 +106,11 @@ class shunqing(scenario):
                 for ID in self.elements[typ]] 
                 if 'cum' in attr
                 else [[0.0]*seq for _ in self.elements[typ]]
-                for typ,attr in self.config['global_state']])
+                for typ,attr in attrs])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
                 if 'cum' in attr and len(self.data_log[attr][ID]) > 1 else 0
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         state = (__state - __last).T
         return state
 
@@ -212,17 +214,29 @@ class shunqing(scenario):
         args['state_shape'] = (len(self.get_features('nodes')),len(self.config['global_state'])) if self.global_state else len(args['states'])
         
         nodes = self.get_features('nodes')
-        inp = read_inp_file(self.config['swmm_input'])
-        args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth for node in nodes])
+        if not hasattr(self,'env') or self.env._isFinished:
+            inp = read_inp_file(self.config['swmm_input'])
+            args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth if node in inp.JUNCTIONS else 0 for node in nodes])
+        else:
+            args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
+            links = self.get_features('links')
+            inp = read_inp_file(self.config['swmm_input'])
+            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 for link in links])
+
             args['adj'] = self.get_adj()
+            args['edge_adj'] = self.get_edge_adj()
+            args['node_edge'] = self.get_node_edge()
+            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))
+            
+            args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
         return args
 
 
     # TODO: getters Use pyswmm api
-    def get_features(self,kind='nodes',no_out=True):
+    def get_features(self,kind='nodes',no_out=False):
         inp = read_inp_file(self.config['swmm_input'])
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
         features = []
@@ -236,14 +250,17 @@ class shunqing(scenario):
                 features += list(getattr(inp,label))
         return features
     
-    def get_edge_list(self):
+    def get_edge_list(self,links=None):
         inp = read_inp_file(self.config['swmm_input'])
         nodes = self.get_features('nodes')
+        if links is not None:
+            links = [link for label in LINK_SECTIONS if label in inp for k,link in getattr(inp,label).items() if k in links]
+        else:
+            links = [link for label in LINK_SECTIONS if label in inp for link in getattr(inp,label).values()]
         edges = []
-        for label in LINK_SECTIONS:
-            if label in inp:
-                edges += [(nodes.index(link.FromNode),nodes.index(link.ToNode))
-                 for link in getattr(inp,label).values() if link.FromNode in nodes and link.ToNode in nodes]
+        for link in links:
+            if link.FromNode in nodes and link.ToNode in nodes:
+                edges.append((nodes.index(link.FromNode),nodes.index(link.ToNode)))
         return np.array(edges)
 
     def get_adj(self,edges=None):
@@ -252,6 +269,30 @@ class shunqing(scenario):
         for u,v in edges:
             adj[u,v] += 1
             adj[v,u] += 1
+        return adj
+
+    def get_node_edge(self):
+        nodes = self.get_features('nodes')
+        edges = self.get_edge_list()
+        node_edge = np.zeros((len(nodes),len(edges)))
+        for i,(u,v) in enumerate(edges):
+            node_edge[u,i] += 1
+            node_edge[v,i] += -1
+        return node_edge
+    
+    def get_edge_adj(self):
+        edges = self.get_edge_list()
+        nodes = {}
+        for i,(u,v) in enumerate(edges):
+            for n in [u,v]:
+                if n not in nodes:
+                    nodes[n] = []
+                else:
+                    nodes[n].append(i)
+        adj = np.eye(len(edges))
+        for v in nodes.values():
+            for a,b in combinations(v,2):
+                adj[a,b] += 1
         return adj
 
     # predictive functions

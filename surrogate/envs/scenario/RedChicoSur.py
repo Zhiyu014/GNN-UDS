@@ -202,15 +202,23 @@ class RedChicoSur(scenario):
 
     def get_args(self):
         args = self.config.copy()
-        # state shape
-        args['state_shape'] = (len(self.get_features('nodes')),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
         
         nodes = self.get_features('nodes')
-        inp = read_inp_file(self.config['swmm_input'])
-        args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth for node in nodes])
+        if not hasattr(self,'env') or self.env._isFinished:
+            inp = read_inp_file(self.config['swmm_input'])
+            args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth if node in inp.JUNCTIONS else 0 for node in nodes])
+        else:
+            args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
+        
+        # state shape
+        args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
+            links = self.get_features('links')
+            inp = read_inp_file(self.config['swmm_input'])
+            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 for link in links])
+
             args['adj'] = self.get_adj()
             args['edge_adj'] = self.get_edge_adj()
             args['node_edge'] = self.get_node_edge()
@@ -221,7 +229,7 @@ class RedChicoSur(scenario):
 
 
     # TODO: getters Use pyswmm api
-    def get_features(self,kind='nodes',no_out=True):
+    def get_features(self,kind='nodes',no_out=False):
         inp = read_inp_file(self.config['swmm_input'])
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
         features = []
@@ -262,7 +270,7 @@ class RedChicoSur(scenario):
         node_edge = np.zeros((len(nodes),len(edges)))
         for i,(u,v) in enumerate(edges):
             node_edge[u,i] += 1
-            node_edge[v,i] += 1
+            node_edge[v,i] += -1
         return node_edge
     
     def get_edge_adj(self):

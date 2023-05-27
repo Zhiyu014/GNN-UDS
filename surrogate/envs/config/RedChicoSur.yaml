@@ -24,10 +24,10 @@ global_state:
     - cum_lateral_inflow
   - !!python/tuple
     - links
-    - volumeL
+    - depthL
   - !!python/tuple
     - links
-    - depthL
+    - volumeL
   - !!python/tuple
     - links
     - flow

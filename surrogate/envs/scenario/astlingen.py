@@ -10,6 +10,7 @@ import datetime
 from functools import reduce
 from itertools import product
 from collections import deque
+from itertools import combinations
 
 HERE = os.path.dirname(__file__)
 
@@ -92,16 +93,17 @@ class astlingen(scenario):
             self.env.terminate()
         return done
 
-    def state_full(self, seq = False):
+    def state_full(self, seq = False, typ='nodes'):
         # seq should be smaller than the whole event length
+        attrs = [item for item in self.config['global_state'] if item[0]==typ]
         if seq:
             __state = np.array([[self.data_log[attr][ID][-seq:]
         if self.env._isFinished else [0.0]*(seq-1-len(self.data_log[attr][ID][:-1])) + self.data_log[attr][ID][-seq:-1] + [self.env.methods[attr](ID)]
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         else:
             __state = np.array([[self.data_log[attr][ID][-1]
                 if self.env._isFinished else self.env.methods[attr](ID)
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
 
         if seq:
             __last = np.array([[self.data_log[attr][ID][-seq-1:-1]
@@ -110,11 +112,11 @@ class astlingen(scenario):
                 for ID in self.elements[typ]] 
                 if 'cum' in attr 
                 else [[0.0]*seq for _ in self.elements[typ]]
-                for typ,attr in self.config['global_state']])
+                for typ,attr in attrs])
         else:
             __last = np.array([[self.data_log[attr][ID][-2]
                 if 'cum' in attr and len(self.data_log[attr][ID]) > 1 else 0
-                for ID in self.elements[typ]] for typ,attr in self.config['global_state']])
+                for ID in self.elements[typ]] for typ,attr in attrs])
         state = (__state - __last).T
         return state
 
@@ -270,7 +272,7 @@ class astlingen(scenario):
                     for i,v in enumerate(self.config['action_space'].values())]
         return action_table
 
-    def get_args(self,if_mac = False):
+    def get_args(self):
         args = self.config.copy()
         # Rainfall timeseries & events files
         if not os.path.isfile(args['rainfall']['rainfall_timeseries']):
@@ -283,37 +285,30 @@ class astlingen(scenario):
         # state shape
         args['state_shape'] = (len(self.get_features('nodes')),len(self.config['global_state'])) if self.global_state else len(args['states'])
 
-        inp = read_inp_file(self.config['swmm_input'])
-        args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
+        
+        if not hasattr(self,'env') or self.env._isFinished:
+            inp = read_inp_file(self.config['swmm_input'])
+            args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
+        else:
+            nodes = self.get_features('nodes')
+            args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
+            links = self.get_features('links')
+            inp = read_inp_file(self.config['swmm_input'])
+            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 for link in links])
+
             args['adj'] = self.get_adj()
+            args['edge_adj'] = self.get_edge_adj()
+            args['node_edge'] = self.get_node_edge()
+            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
-        if if_mac:
-            # multi-agent controller structure
-            args["n_agents"] = len(args['site'])
-
-            # Specify the observe data for each site
-            state = [s[0] for s in args['states']]
-            args['observ_space'] = [[state.index(o) for o in v['states']]
-            for v in args['site'].values()]
-
-            args['action_shape'] = [len(args['action_space'][k]) for k in args['site']]
-
-        else:
-            args['n_agents'] = 1
-
-            args['observ_space'] = args['state_shape']  # int value
-            
-            actions = [len(v) for v in args['action_space'].values()]
-            args['action_shape'] = reduce(lambda x,y:x*y,actions)
-        args['action_table'] = self.get_action_table(if_mac)
         return args
 
 
     # getters
-    def get_features(self,kind='nodes',no_out=True):
+    def get_features(self,kind='nodes',no_out=False):
         inp = read_inp_file(self.config['swmm_input'])
         labels = {'nodes':NODE_SECTIONS,'links':LINK_SECTIONS}
         features = []
@@ -347,7 +342,31 @@ class astlingen(scenario):
             adj[u,v] += 1
             adj[v,u] += 1
         return adj
+
+    def get_node_edge(self):
+        nodes = self.get_features('nodes')
+        edges = self.get_edge_list()
+        node_edge = np.zeros((len(nodes),len(edges)))
+        for i,(u,v) in enumerate(edges):
+            node_edge[u,i] += 1
+            node_edge[v,i] += -1
+        return node_edge
     
+    def get_edge_adj(self):
+        edges = self.get_edge_list()
+        nodes = {}
+        for i,(u,v) in enumerate(edges):
+            for n in [u,v]:
+                if n not in nodes:
+                    nodes[n] = []
+                else:
+                    nodes[n].append(i)
+        adj = np.eye(len(edges))
+        for v in nodes.values():
+            for a,b in combinations(v,2):
+                adj[a,b] += 1
+        return adj
+        
     # predictive functions
     def save_hotstart(self,hsf_file=None):
         # Save the current state in a .hsf file.

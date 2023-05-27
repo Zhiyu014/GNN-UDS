@@ -8,6 +8,7 @@ shunqing:
 
   # train args
   train: False
+  load_model: False
   model_dir: ./model/shunqing/
   ratio: 0.8
   learning_rate: 0.001
@@ -21,7 +22,7 @@ shunqing:
   n_out: 3
   conv: GCNconv
   embed_size: 128
-  n_sp_layer: 3
+  n_sp_layer: 2
   activation: relu
   recurrent: GRU
   hidden_dim: 64
@@ -47,6 +48,7 @@ RedChicoSur:
 
   # train args
   train: False
+  load_model: False
   use_adj: False
   model_dir: ./model/RedChicoSur/
   ratio: 0.8
@@ -86,6 +88,7 @@ astlingen:
 
   # train args
   train: False
+  load_model: False
   use_adj: False
   model_dir: ./model/astlingen/
   ratio: 0.8

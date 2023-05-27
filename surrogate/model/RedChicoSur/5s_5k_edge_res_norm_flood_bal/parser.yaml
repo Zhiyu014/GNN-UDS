@@ -1,0 +1,13 @@
+balance: true
+batch_size: 32
+data_dir: edge
+edge_fusion: true
+env: RedChicoSur
+epochs: 5000
+if_flood: true
+model_dir: 5s_5k_edge_res_norm_flood_bal
+norm: true
+resnet: true
+seq_in: 5
+seq_out: 5
+train: true

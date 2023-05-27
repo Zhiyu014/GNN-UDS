@@ -21,6 +21,7 @@ def parser(config=None):
 
     # train args
     parser.add_argument('--train',action="store_true",help='if train the emulator')
+    parser.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
     parser.add_argument('--use_adj',action="store_true",help='if use filter to act control')
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
@@ -78,25 +79,39 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,'env':'RedChicoSur','data_dir':'./envs/data/RedChicoSur/act_edge/','act':True,'model_dir':'./model/RedChicoSur/5s_10k_act_edge_res_norm_flood/','ratio':0.5,'batch_size':16,'resnet':True,'norm':True,'edge_fusion':True,'seq_in':5,'seq_out':5,'if_flood':True,'conv':'GAT','recurrent':'Conv1D'}
+    # train_de = {'train':True,
+    #             'env':'RedChicoSur',
+    #             'data_dir':'./envs/data/RedChicoSur/edge/',
+    #             'act':False,
+    #             'model_dir':'./model/RedChicoSur/5s_10k_edge_res_norm_flood/',
+    #             'batch_size':16,
+    #             'resnet':True,
+    #             'norm':True,
+    #             'edge_fusion':True,
+    #             'balance':False,
+    #             'seq_in':5,'seq_out':5,
+    #             'if_flood':True,
+    #             'conv':'GAT',
+    #             'recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
-    test_de = {'test':True,
-               'env':'RedChicoSur',
-               'act':True,
-               'model_dir':'./model/RedChicoSur/5s_10k_act_edge_res_norm_flood/',
-               'resnet':True,
-               'norm':True,
-               'seq_in':5,
-               'seq_out':5,
-               'if_flood':True,
-               'edge_fusion':True,
-               'conv':'GAT',
-               'recurrent':'Conv1D',
-               'result_dir':'./results/RedChicoSur/5s_act_edge_res_norm_flood/'}
-    for k,v in test_de.items():
-        setattr(args,k,v)
+    # test_de = {'test':True,
+    #            'env':'RedChicoSur',
+    #            'act':False,
+    #            'model_dir':'./model/RedChicoSur/5s_10k_edge_res_norm_flood_bal/',
+    #            'resnet':True,
+    #            'norm':True,
+    #            'seq_in':5,
+    #            'seq_out':5,
+    #            'if_flood':True,
+    #            'edge_fusion':True,
+    #            'balance':True,
+    #            'conv':'GAT',
+    #            'recurrent':'Conv1D',
+    #            'result_dir':'./results/RedChicoSur/5s_act_edge_res_norm_flood/'}
+    # for k,v in test_de.items():
+    #     setattr(args,k,v)
 
     env = get_env(args.env)()
     env_args = env.get_args()
@@ -119,10 +134,14 @@ if __name__ == "__main__":
         
     if args.train:
         dG.load(args.data_dir)
-
+        if args.load_model:
+            emul.load(args.model_dir)
+            train_ids = np.load(os.path.join(args.model_dir,'train_id.npy'))
+        else:
+            train_ids = None
         if args.norm:
             emul.set_norm(*dG.get_norm())
-        train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size)
+        train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size,train_ids)
 
         # save
         emul.save(args.model_dir)
@@ -132,7 +151,7 @@ if __name__ == "__main__":
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
         plt.plot(train_losses,label='train')
-        plt.plot(test_losses,label='test')
+        plt.plot(np.array(test_losses).sum(axis=1),label='test')
         plt.legend()
         plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 

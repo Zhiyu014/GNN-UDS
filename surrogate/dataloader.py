@@ -155,7 +155,7 @@ class DataGenerator:
             norm_e = self.edge_states.copy()
             while len(norm_e.shape) > 2:
                 norm_e = norm_e.max(axis=0)
-            norm_e += 1e-6
+            norm_e = np.concatenate([norm_e[:,:-1]+1e-6,norm_e[:,-1:]],axis=-1)
             norm_e = norm_e.astype(np.float32)
             return norm_x,norm_b,norm_y,norm_e
         else:

@@ -49,7 +49,8 @@ class env_base(environment):
         self._advance_seconds = None
         
         # for state and performance
-        self.methods.update({'cumflooding':self._getCumFlooding,
+        self.methods.update({'fulldepth':self._getNodefullDepth,
+                             'cumflooding':self._getCumFlooding,
                              'cuminflow':self._getNodeCumInflow,
                              'totaloutflow':self._getNodeTotalOutflow,
                              'cum_lateral_inflow':self._getNodeLateralInflowVol,
@@ -128,9 +129,12 @@ class env_base(environment):
         self._isFinished = False
         return state
 
+    # ------ Get necessary Params  ----------------------------------------------
 
+    def _getNodefullDepth(self,ID):
+        return self.sim._model.getNodeParam(ID,tkai.NodeParams.fullDepth.value)
 
-    # ------ Get necessary Parameters  ----------------------------------------------
+    # ------ Get necessary results  ----------------------------------------------
 
     # def _getNodeIdList(self):
     #     return self.sim._model.getObjectIDList(tkai.ObjectType.NODE.value)
