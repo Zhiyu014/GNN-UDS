@@ -1,0 +1,13 @@
+conv: GAT
+data_dir: 5s_edge_res_norm_flood
+edge_fusion: true
+env: shunqing
+if_flood: true
+model_dir: 5s_10k_edge_res_norm_flood
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 5
+seq_out: 5
+test: true
+use_adj: false

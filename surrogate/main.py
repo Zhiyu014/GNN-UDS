@@ -80,11 +80,12 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'RedChicoSur',
-    #             'data_dir':'./envs/data/RedChicoSur/edge/',
+    #             'env':'shunqing',
+    #             'data_dir':'./envs/data/shunqing/edge/',
     #             'act':False,
-    #             'model_dir':'./model/RedChicoSur/5s_10k_edge_res_norm_flood/',
-    #             'batch_size':16,
+    #             'model_dir':'./model/shunqing/5s_10k_edge_res_norm_flood/',
+    #             'batch_size':32,
+    #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
     #             'edge_fusion':True,
@@ -195,7 +196,7 @@ if __name__ == "__main__":
             states = states[:-args.seq_out]
 
             if args.edge_fusion:
-                edge_true = edge_states[args.seq_out:,...,:-1]
+                edge_true = edge_states[args.seq_out:,...,:-1] if args.act else edge_states[args.seq_out:]
                 edge_states = edge_states[:-args.seq_out]
             else:
                 edge_states = None

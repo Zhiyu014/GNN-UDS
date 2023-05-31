@@ -11,6 +11,7 @@ class DataGenerator:
         self.if_flood = if_flood
         self.edge_fusion = edge_fusion
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
+        self.act = act
         if act:
             self.action_table = env.config['action_space']
             # self.adj = env.get_adj()
@@ -82,7 +83,8 @@ class DataGenerator:
 
     def edge_state_split(self,edge_states):
         n_spl = self.seq_out if self.recurrent else 1
-        ex,ey = edge_states[:-n_spl],edge_states[n_spl:,...,:-1]
+        ex = edge_states[:-n_spl]
+        ey = edge_states[n_spl:,...,:-1] if self.act else edge_states[n_spl:]
         if self.recurrent:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
@@ -147,15 +149,20 @@ class DataGenerator:
             norm_x = np.concatenate([norm[...,:-1] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32)],axis=-1)
             norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         else:
-            norm_x = norm[...,:-1]
+            norm_x = norm[...,:-1]+1e-6
             norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
         if self.edge_fusion:
-            norm_e = self.edge_states.copy()
+            norm_e = np.abs(self.edge_states.copy())
             while len(norm_e.shape) > 2:
                 norm_e = norm_e.max(axis=0)
-            norm_e = np.concatenate([norm_e[:,:-1]+1e-6,norm_e[:,-1:]],axis=-1)
+            norm_e = np.concatenate([norm_e[:,:-1]+1e-6,norm_e[:,-1:]],axis=-1) if self.act else norm_e+1e-6
+            
+            # norm_e_min = self.edge_states.copy()
+            # while len(norm_e_min.shape) > 2:
+            #     norm_e_min = norm_e_min.min(axis=0)
+            # norm_e = np.stack([norm_e,norm_e_min],axis=-1)
             norm_e = norm_e.astype(np.float32)
             return norm_x,norm_b,norm_y,norm_e
         else:

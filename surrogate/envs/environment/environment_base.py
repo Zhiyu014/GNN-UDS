@@ -54,6 +54,7 @@ class env_base(environment):
                              'cuminflow':self._getNodeCumInflow,
                              'totaloutflow':self._getNodeTotalOutflow,
                              'cum_lateral_inflow':self._getNodeLateralInflowVol,
+                             'flow':self._getLinkFlow,
                              'rainfall':self._getGageRainfall})
 
     def step(self, actions=None, advance_seconds = None):
@@ -169,7 +170,11 @@ class env_base(environment):
     def _getNodeLateralInflowVol(self,ID):
         # Cumulative lateral inflow volume
         return self.sim._model.node_statistics(ID)['lateral_infow_vol']
-
+    
+    def _getLinkFlow(self,_linkid):
+        return self.sim._model.getLinkResult(_linkid,
+                                            tkai.LinkResults.newFlow.value) * self.config['interval'] * 60
+    
     def _getGageRainfall(self,ID):
         # For Cumrainfall state
         return self.sim._model.getGagePrecip(ID,

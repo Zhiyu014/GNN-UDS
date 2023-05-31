@@ -1,11 +1,14 @@
+
+
+;;____________________________________________________________________________________________________
 [TITLE]
 ;;Project Title/Notes
 INP file created by DSDAConvertToSwmmTools
 version 0.0.1 EcoVista
 Title/Notes:
 
+;;____________________________________________________________________________________________________
 [OPTIONS]
-;;Option             Value
 FLOW_UNITS           CMS
 INFILTRATION         HORTON
 FLOW_ROUTING         DYNWAVE
@@ -13,7 +16,6 @@ LINK_OFFSETS         DEPTH
 MIN_SLOPE            0
 ALLOW_PONDING        NO
 SKIP_STEADY_STATE    NO
-
 START_DATE           07/15/2020
 START_TIME           00:00:00
 REPORT_START_DATE    07/15/2020
@@ -26,9 +28,8 @@ DRY_DAYS             0
 REPORT_STEP          00:30:00
 WET_STEP             00:05:00
 DRY_STEP             01:00:00
-ROUTING_STEP         0:01:00 
+ROUTING_STEP         0:01:00
 RULE_STEP            00:00:00
-
 INERTIAL_DAMPING     PARTIAL
 NORMAL_FLOW_LIMITED  BOTH
 FORCE_MAIN_EQUATION  H-W
@@ -42,17 +43,21 @@ LAT_FLOW_TOL         5
 MINIMUM_STEP         0.5
 THREADS              1
 
+
+;;____________________________________________________________________________________________________
 [EVAPORATION]
 ;;Data Source    Parameters
 ;;-------------- ----------------
 CONSTANT         3.1
 DRY_ONLY         NO
 
+;;____________________________________________________________________________________________________
 [RAINGAGES]
 ;;Name           Format    Interval SCF      Source    
 ;;-------------- --------- ------ ------ ----------
-RainGage         INTENSITY 1:00     1.0      TIMESERIES bpswmm_2413     
+RainGage         INTENSITY 1:00     1.0      TIMESERIES bpswmm_2413
 
+;;____________________________________________________________________________________________________
 [SUBCATCHMENTS]
 ;;Name           Rain Gage        Outlet           Area     %Imperv  Width    %Slope   CurbLen  SnowPack        
 ;;-------------- ---------------- ---------------- -------- -------- -------- -------- -------- ----------------
@@ -161,8 +166,9 @@ RainGage         INTENSITY 1:00     1.0      TIMESERIES bpswmm_2413
 103              RainGage         jd113            36.3600770625811 24.928   595.900  19.667   0                        
 104              RainGage         jd96             96.8986153125249 16.863   818.029  17.056   0                        
 105              RainGage         jd56             13.0790430530474 82.242   415.130  7.154    0                        
-106              RainGage         jd108            24.3991505337618 44.550   349.076  10.618   0                        
+106              RainGage         jd108            24.3991505337618 44.550   349.076  10.618   0
 
+;;____________________________________________________________________________________________________
 [SUBAREAS]
 ;;Subcatchment   N-Imperv   N-Perv     S-Imperv   S-Perv     PctZero    RouteTo    PctRouted 
 ;;-------------- ---------- ---------- ---------- ---------- ---------- ---------- ----------
@@ -271,8 +277,9 @@ RainGage         INTENSITY 1:00     1.0      TIMESERIES bpswmm_2413
 103              0.013      0.253      2.234      6.935      25         OUTLET    
 104              0.013      0.235      2.225      7.000      25         OUTLET    
 105              0.0146     0.556      2.785      5.792      25         OUTLET    
-106              0.0142     0.505      2.385      6.285      25         OUTLET    
+106              0.0142     0.505      2.385      6.285      25         OUTLET
 
+;;____________________________________________________________________________________________________
 [INFILTRATION]
 ;;Subcatchment   Param1     Param2     Param3     Param4     Param5    
 ;;-------------- ---------- ---------- ---------- ---------- ----------
@@ -381,8 +388,9 @@ RainGage         INTENSITY 1:00     1.0      TIMESERIES bpswmm_2413
 103              36         10         4          7          0         
 104              36         10         4          7          0         
 105              36         10         4          7          0         
-106              36         10         4          7          0         
+106              36         10         4          7          0
 
+;;____________________________________________________________________________________________________
 [JUNCTIONS]
 ;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded   
 ;;-------------- ---------- ---------- ---------- ---------- ----------
@@ -490,8 +498,9 @@ jd124            268        3.0        0          0          0
 jd125            275        3.0        0          0          0         
 jd126            272        3.0        0          0          0         
 jd135            289        3.0        0          0          0         
-jd136            341        3.0        0          0          0         
+jd136            341        3.0        0          0          0
 
+;;____________________________________________________________________________________________________
 [OUTFALLS]
 ;;Name           Elevation  Type       Stage Data       Gated    Route To        
 ;;-------------- ---------- ---------- ---------------- -------- ----------------
@@ -502,278 +511,277 @@ psk4             280        FREE                        NO
 psk5             263        FREE                        NO                       
 psk6             259        FREE                        NO                       
 psk7             262        FREE                        NO                       
-psk8             317        FREE                        NO                       
+psk8             317        FREE                        NO
 
+;;____________________________________________________________________________________________________
 [CONDUITS]
-;;Name           From Node        To Node          Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow   
-;;-------------- ---------------- ---------------- ---------- ---------- ---------- ---------- ---------- ----------
-GQ1              jd15             jd1              2200.43    0.01       0          0          0          0         
-GQ2              jd16             jd15             875.39     0.01       0          0          0          0         
-GQ3              jd112            psk1             670.40     0.01       0          0          0          0         
-GQ4              jd4              jd3              979.76     0.01       0          0          0          0         
-GQ5              jd3              jd2              809.70     0.01       0          0          0          0         
-GQ6              jd2              jd1              362.28     0.01       0          0          0          0         
-GQ7              jd44             jd125            842.83     0.01       0          0          0          0         
-GQ8              jd49             jd44             1624.10    0.01       0          0          0          0         
-GQ9              jd50             jd49             514.10     0.01       0          0          0          0         
-GQ10             jd65             jd50             1546.77    0.01       0          0          0          0         
-GQ11             jd48             jd42             1462.17    0.01       0          0          0          0         
-GQ12             jd17             jd13             993.98     0.01       0          0          0          0         
-GQ13             jd5              jd4              467.52     0.01       0          0          0          0         
-GQ14             jd6              jd5              591.80     0.01       0          0          0          0         
-GQ15             jd13             jd5              385.43     0.01       0          0          0          0         
-GQ16             jd38             jd30             1586.73    0.01       0          0          0          0         
-GQ17             jd7              jd6              321.39     0.01       0          0          0          0         
-GQ18             jd8              jd7              600.55     0.01       0          0          0          0         
-GQ19             jd11             jd7              240.52     0.01       0          0          0          0         
-GQ20             jd18             jd11             836.17     0.01       0          0          0          0         
-GQ21             jd24             jd18             562.35     0.01       0          0          0          0         
-GQ22             jd25             jd24             547.75     0.01       0          0          0          0         
-GQ23             jd23             jd25             233.44     0.01       0          0          0          0         
-GQ24             jd32             jd23             434.70     0.01       0          0          0          0         
-GQ25             jd34             jd33             400.23     0.01       0          0          0          0         
-GQ26             jd33             jd23             960.33     0.01       0          0          0          0         
-GQ27             jd22             jd23             384.99     0.01       0          0          0          0         
-GQ28             jd21             jd20             1020.02    0.01       0          0          0          0         
-GQ29             jd31             jd21             128.84     0.01       0          0          0          0         
-GQ30             jd22             jd21             187.91     0.01       0          0          0          0         
-GQ31             jd34             jd35             570.52     0.01       0          0          0          0         
-GQ32             jd36             jd27             1313.66    0.01       0          0          0          0         
-GQ33             jd35             jd36             310.11     0.01       0          0          0          0         
-GQ34             jd42             jd36             940.14     0.01       0          0          0          0         
-GQ35             jd37             jd36             875.46     0.01       0          0          0          0         
-GQ36             jd37             jd38             587.09     0.01       0          0          0          0         
-GQ37             jd28             jd27             522.37     0.01       0          0          0          0         
-GQ38             jd28             jd30             387.88     0.01       0          0          0          0         
-GQ39             jd26             jd17             959.91     0.01       0          0          0          0         
-GQ40             jd27             jd26             591.84     0.01       0          0          0          0         
-GQ41             jd39             jd38             624.86     0.01       0          0          0          0         
-GQ42             jd40             jd39             800.16     0.01       0          0          0          0         
-GQ43             jd52             jd40             1418.30    0.01       0          0          0          0         
-GQ44             jd9              jd8              330.44     0.01       0          0          0          0         
-GQ45             jd20             jd19             290.996    0.01       0          0          0          0         
-GQ46             jd19             jd9              518.72     0.01       0          0          0          0         
-GQ47             jd10             jd11             689.96     0.01       0          0          0          0         
-GQ48             jd12             jd11             756.55     0.01       0          0          0          0         
-GQ49             jd12             jd13             181.80     0.01       0          0          0          0         
-GQ50             jd14             jd13             982.75     0.01       0          0          0          0         
-GQ51             jd14             jd15             296.38     0.01       0          0          0          0         
-GQ52             jd46             jd31             1572.68    0.01       0          0          0          0         
-GQ53             jd45             jd44             784.995    0.01       0          0          0          0         
-GQ54             jd61             jd60             608.14     0.01       0          0          0          0         
-GQ55             jd60             jd48             263.91     0.01       0          0          0          0         
-GQ56             jd43             jd44             1234.03    0.01       0          0          0          0         
-GQ57             jd42             jd43             1008.56    0.01       0          0          0          0         
-GQ58             jd41             jd42             348.95     0.01       0          0          0          0         
-GQ59             jd40             jd41             1226.42    0.01       0          0          0          0         
-GQ60             jd55             jd52             491.22     0.01       0          0          0          0         
-GQ61             jd59             jd101            423.22     0.01       0          0          0          0         
-GQ62             jd51             jd47             704.95     0.01       0          0          0          0         
-GQ63             jd47             jd41             746.94     0.01       0          0          0          0         
-GQ64             jd62             jd61             230.72     0.01       0          0          0          0         
-GQ65             jd69             jd62             413.30     0.01       0          0          0          0         
-GQ66             jd63             jd64             158.05     0.01       0          0          0          0         
-GQ67             jd64             jd59             246.99     0.01       0          0          0          0         
-GQ68             jd56             jd55             490.59     0.01       0          0          0          0         
-GQ69             jd66             jd69             1204.35    0.01       0          0          0          0         
-GQ70             jd5              psk6             92.38      0.01       0          0          0          0         
-GQ71             jd1              psk5             175.92     0.01       0          0          0          0         
-GQ72             jd7              psk7             116.48     0.01       0          0          0          0         
-GQ73             jd30             psk2             83.34      0.01       0          0          0          0         
-GQ74             jd29             jd16             798.09     0.01       0          0          0          0         
-GQ75             jd30             jd106            497.07     0.01       0          0          0          0         
-GQ76             jd16             psk3             136.42     0.01       0          0          0          0         
-GQ77             jd15             psk4             174.33     0.01       0          0          0          0         
-GQ78             jd79             jd18             607.57     0.01       0          0          0          0         
-GQ79             jd79             jd20             589.30     0.01       0          0          0          0         
-GQ80             jd80             jd18             517.65     0.01       0          0          0          0         
-GQ81             jd80             jd17             511.95     0.01       0          0          0          0         
-GQ82             jd81             jd17             369.96     0.01       0          0          0          0         
-GQ83             jd81             jd16             364.83     0.01       0          0          0          0         
-GQ84             jd84             jd43             1041.62    0.01       0          0          0          0         
-GQ85             jd83             jd84             571.20     0.01       0          0          0          0         
-GQ86             jd85             jd62             165.51     0.01       0          0          0          0         
-GQ87             jd85             jd63             412.28     0.01       0          0          0          0         
-GQ88             jd87             jd61             502.20     0.01       0          0          0          0         
-GQ89             jd89             jd59             685.57     0.01       0          0          0          0         
-GQ90             jd90             jd64             645.16     0.01       0          0          0          0         
-GQ91             jd92             jd55             381.32     0.01       0          0          0          0         
-GQ92             jd95             jd94             490.55     0.01       0          0          0          0         
-GQ93             jd94             jd93             479.39     0.01       0          0          0          0         
-GQ94             jd93             jd52             415.87     0.01       0          0          0          0         
-GQ95             jd96             jd63             370.35     0.01       0          0          0          0         
-GQ96             jd97             jd95             172.37     0.01       0          0          0          0         
-GQ97             jd98             jd56             414.91     0.01       0          0          0          0         
-GQ98             jd99             jd56             384.15     0.01       0          0          0          0         
-GQ99             jd101            jd51             283.41     0.01       0          0          0          0         
-GQ100            jd102            jd101            563.69     0.01       0          0          0          0         
-GQ101            jd103            jd51             285.84     0.01       0          0          0          0         
-GQ102            jd33             jd122            436.33     0.01       0          0          0          0         
-GQ103            jd122            jd25             903.94     0.01       0          0          0          0         
-GQ104            jd122            jd27             605.84     0.01       0          0          0          0         
-GQ105            jd122            jd123            596.97     0.01       0          0          0          0         
-GQ106            jd123            jd24             750.994    0.01       0          0          0          0         
-GQ107            jd123            jd26             605.75     0.01       0          0          0          0         
-GQ108            jd123            jd17             1118.17    0.01       0          0          0          0         
-GQ109            jd135            jd26             468.30     0.01       0          0          0          0         
-GQ110            jd106            jd29             309.48     0.01       0          0          0          0         
-GQ111            jd135            jd106            264.60     0.01       0          0          0          0         
-GQ112            jd107            jd54             489.997    0.01       0          0          0          0         
-GQ113            jd109            jd107            402.02     0.01       0          0          0          0         
-GQ114            jd108            jd56             162.78     0.01       0          0          0          0         
-GQ115            jd111            jd107            577.43     0.01       0          0          0          0         
-GQ116            jd110            jd111            376.92     0.01       0          0          0          0         
-GQ117            jd136            jd112            807.40     0.01       0          0          0          0         
-GQ118            jd113            jd136            239.25     0.01       0          0          0          0         
-GQ119            jd53             jd114            446.22     0.01       0          0          0          0         
-GQ120            jd114            psk8             194.61     0.01       0          0          0          0         
-GQ121            jd117            jd114            295.68     0.01       0          0          0          0         
-GQ122            jd117            jd112            178.61     0.01       0          0          0          0         
-GQ123            jd118            jd117            206.79     0.01       0          0          0          0         
-GQ124            jd54             jd112            450.54     0.01       0          0          0          0         
-GQ125            jd120            jd55             403.52     0.01       0          0          0          0         
-GQ126            jd121            jd51             579.60     0.01       0          0          0          0         
-GQ127            jd52             jd53             483.44     0.01       0          0          0          0         
-GQ128            jd54             jd53             488.87     0.01       0          0          0          0         
-GQ129            jd125            jd32             514.43     0.01       0          0          0          0         
-GQ130            jd124            jd125            387.47     0.01       0          0          0          0         
-GQ131            jd126            jd14             685.49     0.01       0          0          0          0         
+GQ1 jd15 jd1 2200.43 0.01 0 0 0
+GQ2 jd15 jd16 875.39 0.01 0 0 0
+GQ3 jd112 psk1 670.4 0.01 0 0 0
+GQ4 jd4 jd3 979.76 0.01 0 0 0
+GQ5 jd2 jd3 809.7 0.01 0 0 0
+GQ6 jd1 jd2 362.28 0.01 0 0 0
+GQ7 jd44 jd125 842.83 0.01 0 0 0
+GQ8 jd49 jd44 1624.1 0.01 0 0 0
+GQ9 jd49 jd50 514.1 0.01 0 0 0
+GQ10 jd65 jd50 1546.77 0.01 0 0 0
+GQ11 jd48 jd42 1462.17 0.01 0 0 0
+GQ12 jd13 jd17 993.98 0.01 0 0 0
+GQ13 jd5 jd4 467.52 0.01 0 0 0
+GQ14 jd6 jd5 591.8 0.01 0 0 0
+GQ15 jd13 jd5 385.43 0.01 0 0 0
+GQ16 jd38 jd30 1586.73 0.01 0 0 0
+GQ17 jd6 jd7 321.39 0.01 0 0 0
+GQ18 jd8 jd7 600.55 0.01 0 0 0
+GQ19 jd11 jd7 240.52 0.01 0 0 0
+GQ20 jd11 jd18 836.17 0.01 0 0 0
+GQ21 jd24 jd18 562.35 0.01 0 0 0
+GQ22 jd24 jd25 547.75 0.01 0 0 0
+GQ23 jd25 jd23 233.44 0.01 0 0 0
+GQ24 jd23 jd32 434.7 0.01 0 0 0
+GQ25 jd34 jd33 400.23 0.01 0 0 0
+GQ26 jd33 jd23 960.33 0.01 0 0 0
+GQ27 jd23 jd22 384.99 0.01 0 0 0
+GQ28 jd20 jd21 1020.02 0.01 0 0 0
+GQ29 jd31 jd21 128.84 0.01 0 0 0
+GQ30 jd22 jd21 187.91 0.01 0 0 0
+GQ31 jd34 jd35 570.52 0.01 0 0 0
+GQ32 jd36 jd27 1313.66 0.01 0 0 0
+GQ33 jd36 jd35 310.11 0.01 0 0 0
+GQ34 jd42 jd36 940.14 0.01 0 0 0
+GQ35 jd37 jd36 875.46 0.01 0 0 0
+GQ36 jd37 jd38 587.09 0.01 0 0 0
+GQ37 jd27 jd28 522.37 0.01 0 0 0
+GQ38 jd30 jd28 387.88 0.01 0 0 0
+GQ39 jd26 jd17 959.91 0.01 0 0 0
+GQ40 jd27 jd26 591.84 0.01 0 0 0
+GQ41 jd38 jd39 624.86 0.01 0 0 0
+GQ42 jd40 jd39 800.16 0.01 0 0 0
+GQ43 jd52 jd40 1418.3 0.01 0 0 0
+GQ44 jd9 jd8 330.44 0.01 0 0 0
+GQ45 jd20 jd19 290.996 0.01 0 0 0
+GQ46 jd19 jd9 518.72 0.01 0 0 0
+GQ47 jd11 jd10 689.96 0.01 0 0 0
+GQ48 jd11 jd12 756.55 0.01 0 0 0
+GQ49 jd13 jd12 181.8 0.01 0 0 0
+GQ50 jd13 jd14 982.75 0.01 0 0 0
+GQ51 jd14 jd15 296.38 0.01 0 0 0
+GQ52 jd46 jd31 1572.68 0.01 0 0 0
+GQ53 jd44 jd45 784.995 0.01 0 0 0
+GQ54 jd61 jd60 608.14 0.01 0 0 0
+GQ55 jd48 jd60 263.91 0.01 0 0 0
+GQ56 jd43 jd44 1234.03 0.01 0 0 0
+GQ57 jd42 jd43 1008.56 0.01 0 0 0
+GQ58 jd42 jd41 348.95 0.01 0 0 0
+GQ59 jd40 jd41 1226.42 0.01 0 0 0
+GQ60 jd55 jd52 491.22 0.01 0 0 0
+GQ61 jd101 jd59 423.22 0.01 0 0 0
+GQ62 jd47 jd51 704.95 0.01 0 0 0
+GQ63 jd47 jd41 746.94 0.01 0 0 0
+GQ64 jd62 jd61 230.72 0.01 0 0 0
+GQ65 jd62 jd69 413.3 0.01 0 0 0
+GQ66 jd63 jd64 158.05 0.01 0 0 0
+GQ67 jd64 jd59 246.99 0.01 0 0 0
+GQ68 jd56 jd55 490.59 0.01 0 0 0
+GQ69 jd69 jd66 1204.35 0.01 0 0 0
+GQ70 jd5 psk6 92.38 0.01 0 0 0
+GQ71 jd1 psk5 175.92 0.01 0 0 0
+GQ72 jd7 psk7 116.48 0.01 0 0 0
+GQ73 jd30 psk2 83.34 0.01 0 0 0
+GQ74 jd29 jd16 798.09 0.01 0 0 0
+GQ75 jd30 jd106 497.07 0.01 0 0 0
+GQ76 jd16 psk3 136.42 0.01 0 0 0
+GQ77 psk4 jd15 174.33 0.01 0 0 0
+GQ78 jd18 jd79 607.57 0.01 0 0 0
+GQ79 jd79 jd20 589.3 0.01 0 0 0
+GQ80 jd18 jd80 517.65 0.01 0 0 0
+GQ81 jd80 jd17 511.95 0.01 0 0 0
+GQ82 jd81 jd17 369.96 0.01 0 0 0
+GQ83 jd81 jd16 364.83 0.01 0 0 0
+GQ84 jd84 jd43 1041.62 0.01 0 0 0
+GQ85 jd84 jd83 571.2 0.01 0 0 0
+GQ86 jd62 jd85 165.51 0.01 0 0 0
+GQ87 jd63 jd85 412.28 0.01 0 0 0
+GQ88 jd61 jd87 502.2 0.01 0 0 0
+GQ89 jd89 jd59 685.57 0.01 0 0 0
+GQ90 jd90 jd64 645.16 0.01 0 0 0
+GQ91 jd92 jd55 381.32 0.01 0 0 0
+GQ92 jd95 jd94 490.55 0.01 0 0 0
+GQ93 jd94 jd93 479.39 0.01 0 0 0
+GQ94 jd93 jd52 415.87 0.01 0 0 0
+GQ95 jd63 jd96 370.35 0.01 0 0 0
+GQ96 jd97 jd95 172.37 0.01 0 0 0
+GQ97 jd98 jd56 414.91 0.01 0 0 0
+GQ98 jd56 jd99 384.15 0.01 0 0 0
+GQ99 jd101 jd51 283.41 0.01 0 0 0
+GQ100 jd102 jd101 563.69 0.01 0 0 0
+GQ101 jd103 jd51 285.84 0.01 0 0 0
+GQ102 jd33 jd122 436.33 0.01 0 0 0
+GQ103 jd25 jd122 903.94 0.01 0 0 0
+GQ104 jd27 jd122 605.84 0.01 0 0 0
+GQ105 jd123 jd122 596.97 0.01 0 0 0
+GQ106 jd24 jd123 750.994 0.01 0 0 0
+GQ107 jd26 jd123 605.75 0.01 0 0 0
+GQ108 jd17 jd123 1118.17 0.01 0 0 0
+GQ109 jd135 jd26 468.3 0.01 0 0 0
+GQ110 jd29 jd106 309.48 0.01 0 0 0
+GQ111 jd135 jd106 264.6 0.01 0 0 0
+GQ112 jd107 jd54 489.997 0.01 0 0 0
+GQ113 jd109 jd107 402.02 0.01 0 0 0
+GQ114 jd108 jd56 162.78 0.01 0 0 0
+GQ115 jd111 jd107 577.43 0.01 0 0 0
+GQ116 jd111 jd110 376.92 0.01 0 0 0
+GQ117 jd136 jd112 807.4 0.01 0 0 0
+GQ118 jd113 jd136 239.25 0.01 0 0 0
+GQ119 jd53 jd114 446.22 0.01 0 0 0
+GQ120 psk8 jd114 194.61 0.01 0 0 0
+GQ121 jd117 jd114 295.68 0.01 0 0 0
+GQ122 jd112 jd117 178.61 0.01 0 0 0
+GQ123 jd118 jd117 206.79 0.01 0 0 0
+GQ124 jd112 jd54 450.54 0.01 0 0 0
+GQ125 jd120 jd55 403.52 0.01 0 0 0
+GQ126 jd121 jd51 579.6 0.01 0 0 0
+GQ127 jd52 jd53 483.44 0.01 0 0 0
+GQ128 jd54 jd53 488.87 0.01 0 0 0
+GQ129 jd125 jd32 514.43 0.01 0 0 0
+GQ130 jd125 jd124 387.47 0.01 0 0 0
+GQ131 jd14 jd126 685.49 0.01 0 0 0
 
+;;____________________________________________________________________________________________________
 [XSECTIONS]
-;;Link           Shape        Geom1            Geom2      Geom3      Geom4      Barrels    Culvert   
-;;-------------- ------------ ---------------- ---------- ---------- ---------- ---------- ----------
-GQ1              CIRCULAR     0.6              0          0          0          1                    
-GQ2              CIRCULAR     1                0          0          0          1                    
-GQ3              CIRCULAR     1.5              0          0          0          1                    
-GQ4              CIRCULAR     0.6              0          0          0          1                    
-GQ5              CIRCULAR     0.8              0          0          0          1                    
-GQ6              CIRCULAR     0.8              0          0          0          1                    
-GQ7              CIRCULAR     0.8              0          0          0          1                    
-GQ8              CIRCULAR     0.8              0          0          0          1                    
-GQ9              CIRCULAR     0.8              0          0          0          1                    
-GQ10             CIRCULAR     0.6              0          0          0          1                    
-GQ11             CIRCULAR     0.6              0          0          0          1                    
-GQ12             CIRCULAR     0.6              0          0          0          1                    
-GQ13             CIRCULAR     0.8              0          0          0          1                    
-GQ14             CIRCULAR     0.8              0          0          0          1                    
-GQ15             CIRCULAR     0.3              0          0          0          1                    
-GQ16             CIRCULAR     1.0              0          0          0          1                    
-GQ17             CIRCULAR     0.8              0          0          0          1                    
-GQ18             CIRCULAR     0.8              0          0          0          1                    
-GQ19             CIRCULAR     1                0          0          0          1                    
-GQ20             CIRCULAR     1                0          0          0          1                    
-GQ21             CIRCULAR     1.0              0          0          0          1                    
-GQ22             CIRCULAR     1.0              0          0          0          1                    
-GQ23             CIRCULAR     1.0              0          0          0          1                    
-GQ24             CIRCULAR     0.8              0          0          0          1                    
-GQ25             CIRCULAR     0.6              0          0          0          1                    
-GQ26             CIRCULAR     0.6              0          0          0          1                    
-GQ27             CIRCULAR     0.6              0          0          0          1                    
-GQ28             CIRCULAR     0.8              0          0          0          1                    
-GQ29             CIRCULAR     0.8              0          0          0          1                    
-GQ30             CIRCULAR     0.6              0          0          0          1                    
-GQ31             CIRCULAR     0.6              0          0          0          1                    
-GQ32             CIRCULAR     0.6              0          0          0          1                    
-GQ33             CIRCULAR     0.6              0          0          0          1                    
-GQ34             CIRCULAR     0.6              0          0          0          1                    
-GQ35             CIRCULAR     0.6              0          0          0          1                    
-GQ36             CIRCULAR     0.6              0          0          0          1                    
-GQ37             CIRCULAR     0.6              0          0          0          1                    
-GQ38             CIRCULAR     0.6              0          0          0          1                    
-GQ39             CIRCULAR     0.6              0          0          0          1                    
-GQ40             CIRCULAR     0.6              0          0          0          1                    
-GQ41             CIRCULAR     1                0          0          0          1                    
-GQ42             CIRCULAR     0.8              0          0          0          1                    
-GQ43             CIRCULAR     0.8              0          0          0          1                    
-GQ44             CIRCULAR     0.8              0          0          0          1                    
-GQ45             CIRCULAR     0.8              0          0          0          1                    
-GQ46             CIRCULAR     0.8              0          0          0          1                    
-GQ47             CIRCULAR     0.6              0          0          0          1                    
-GQ48             CIRCULAR     0.6              0          0          0          1                    
-GQ49             CIRCULAR     0.6              0          0          0          1                    
-GQ50             CIRCULAR     0.6              0          0          0          1                    
-GQ51             CIRCULAR     0.6              0          0          0          1                    
-GQ52             CIRCULAR     0.8              0          0          0          1                    
-GQ53             CIRCULAR     1.0              0          0          0          1                    
-GQ54             CIRCULAR     0.6              0          0          0          1                    
-GQ55             CIRCULAR     0.6              0          0          0          1                    
-GQ56             CIRCULAR     0.8              0          0          0          1                    
-GQ57             CIRCULAR     0.8              0          0          0          1                    
-GQ58             CIRCULAR     0.8              0          0          0          1                    
-GQ59             CIRCULAR     0.8              0          0          0          1                    
-GQ60             CIRCULAR     1.5              0          0          0          1                    
-GQ61             CIRCULAR     1.5              0          0          0          1                    
-GQ62             CIRCULAR     1.65             0          0          0          1                    
-GQ63             CIRCULAR     2.0              0          0          0          1                    
-GQ64             CIRCULAR     0.6              0          0          0          1                    
-GQ65             CIRCULAR     0.6              0          0          0          1                    
-GQ66             CIRCULAR     0.8              0          0          0          1                    
-GQ67             CIRCULAR     1.2              0          0          0          1                    
-GQ68             CIRCULAR     1.0              0          0          0          1                    
-GQ69             CIRCULAR     0.8              0          0          0          1                    
-GQ70             CIRCULAR     0.8              0          0          0          1                    
-GQ71             CIRCULAR     0.8              0          0          0          1                    
-GQ72             CIRCULAR     1.0              0          0          0          1                    
-GQ73             CIRCULAR     1.0              0          0          0          1                    
-GQ74             CIRCULAR     1.0              0          0          0          1                    
-GQ75             CIRCULAR     1.0              0          0          0          1                    
-GQ76             CIRCULAR     1.0              0          0          0          1                    
-GQ77             CIRCULAR     1.0              0          0          0          1                    
-GQ78             CIRCULAR     0.6              0          0          0          1                    
-GQ79             CIRCULAR     0.6              0          0          0          1                    
-GQ80             CIRCULAR     0.6              0          0          0          1                    
-GQ81             CIRCULAR     0.6              0          0          0          1                    
-GQ82             CIRCULAR     0.6              0          0          0          1                    
-GQ83             CIRCULAR     0.6              0          0          0          1                    
-GQ84             CIRCULAR     0.6              0          0          0          1                    
-GQ85             CIRCULAR     0.6              0          0          0          1                    
-GQ86             CIRCULAR     0.6              0          0          0          1                    
-GQ87             CIRCULAR     0.6              0          0          0          1                    
-GQ88             CIRCULAR     0.6              0          0          0          1                    
-GQ89             CIRCULAR     0.6              0          0          0          1                    
-GQ90             CIRCULAR     0.6              0          0          0          1                    
-GQ91             CIRCULAR     0.6              0          0          0          1                    
-GQ92             CIRCULAR     0.8              0          0          0          1                    
-GQ93             CIRCULAR     0.8              0          0          0          1                    
-GQ94             CIRCULAR     0.8              0          0          0          1                    
-GQ95             CIRCULAR     0.8              0          0          0          1                    
-GQ96             CIRCULAR     0.8              0          0          0          1                    
-GQ97             CIRCULAR     0.6              0          0          0          1                    
-GQ98             CIRCULAR     0.6              0          0          0          1                    
-GQ99             CIRCULAR     1.5              0          0          0          1                    
-GQ100            CIRCULAR     0.6              0          0          0          1                    
-GQ101            CIRCULAR     0.6              0          0          0          1                    
-GQ102            CIRCULAR     0.8              0          0          0          1                    
-GQ103            CIRCULAR     0.6              0          0          0          1                    
-GQ104            CIRCULAR     0.6              0          0          0          1                    
-GQ105            CIRCULAR     0.8              0          0          0          1                    
-GQ106            CIRCULAR     0.6              0          0          0          1                    
-GQ107            CIRCULAR     0.6              0          0          0          1                    
-GQ108            CIRCULAR     0.8              0          0          0          1                    
-GQ109            CIRCULAR     0.6              0          0          0          1                    
-GQ110            CIRCULAR     1.0              0          0          0          1                    
-GQ111            CIRCULAR     0.6              0          0          0          1                    
-GQ112            CIRCULAR     1.2              0          0          0          1                    
-GQ113            CIRCULAR     0.6              0          0          0          1                    
-GQ114            CIRCULAR     1.0              0          0          0          1                    
-GQ115            CIRCULAR     1.2              0          0          0          1                    
-GQ116            CIRCULAR     1.0              0          0          0          1                    
-GQ117            CIRCULAR     0.8              0          0          0          1                    
-GQ118            CIRCULAR     0.8              0          0          0          1                    
-GQ119            CIRCULAR     0.8              0          0          0          1                    
-GQ120            CIRCULAR     1.0              0          0          0          1                    
-GQ121            CIRCULAR     0.8              0          0          0          1                    
-GQ122            CIRCULAR     0.8              0          0          0          1                    
-GQ123            CIRCULAR     0.6              0          0          0          1                    
-GQ124            CIRCULAR     0.8              0          0          0          1                    
-GQ125            CIRCULAR     0.6              0          0          0          1                    
-GQ126            CIRCULAR     0.6              0          0          0          1                    
-GQ127            CIRCULAR     0.8              0          0          0          1                    
-GQ128            CIRCULAR     1.2              0          0          0          1                    
-GQ129            CIRCULAR     0.8              0          0          0          1                    
-GQ130            CIRCULAR     0.6              0          0          0          1                    
-GQ131            CIRCULAR     0.6              0          0          0          1                    
+GQ1 CIRCULAR 0.6 0 0 0 1
+GQ2 CIRCULAR 1 0 0 0 1
+GQ3 CIRCULAR 1.5 0 0 0 1
+GQ4 CIRCULAR 0.6 0 0 0 1
+GQ5 CIRCULAR 0.8 0 0 0 1
+GQ6 CIRCULAR 0.8 0 0 0 1
+GQ7 CIRCULAR 0.8 0 0 0 1
+GQ8 CIRCULAR 0.8 0 0 0 1
+GQ9 CIRCULAR 0.8 0 0 0 1
+GQ10 CIRCULAR 0.6 0 0 0 1
+GQ11 CIRCULAR 0.6 0 0 0 1
+GQ12 CIRCULAR 0.6 0 0 0 1
+GQ13 CIRCULAR 0.8 0 0 0 1
+GQ14 CIRCULAR 0.8 0 0 0 1
+GQ15 CIRCULAR 0.3 0 0 0 1
+GQ16 CIRCULAR 1 0 0 0 1
+GQ17 CIRCULAR 0.8 0 0 0 1
+GQ18 CIRCULAR 0.8 0 0 0 1
+GQ19 CIRCULAR 1 0 0 0 1
+GQ20 CIRCULAR 1 0 0 0 1
+GQ21 CIRCULAR 1 0 0 0 1
+GQ22 CIRCULAR 1 0 0 0 1
+GQ23 CIRCULAR 1 0 0 0 1
+GQ24 CIRCULAR 0.8 0 0 0 1
+GQ25 CIRCULAR 0.6 0 0 0 1
+GQ26 CIRCULAR 0.6 0 0 0 1
+GQ27 CIRCULAR 0.6 0 0 0 1
+GQ28 CIRCULAR 0.8 0 0 0 1
+GQ29 CIRCULAR 0.8 0 0 0 1
+GQ30 CIRCULAR 0.6 0 0 0 1
+GQ31 CIRCULAR 0.6 0 0 0 1
+GQ32 CIRCULAR 0.6 0 0 0 1
+GQ33 CIRCULAR 0.6 0 0 0 1
+GQ34 CIRCULAR 0.6 0 0 0 1
+GQ35 CIRCULAR 0.6 0 0 0 1
+GQ36 CIRCULAR 0.6 0 0 0 1
+GQ37 CIRCULAR 0.6 0 0 0 1
+GQ38 CIRCULAR 0.6 0 0 0 1
+GQ39 CIRCULAR 0.6 0 0 0 1
+GQ40 CIRCULAR 0.6 0 0 0 1
+GQ41 CIRCULAR 1 0 0 0 1
+GQ42 CIRCULAR 0.8 0 0 0 1
+GQ43 CIRCULAR 0.8 0 0 0 1
+GQ44 CIRCULAR 0.8 0 0 0 1
+GQ45 CIRCULAR 0.8 0 0 0 1
+GQ46 CIRCULAR 0.8 0 0 0 1
+GQ47 CIRCULAR 0.6 0 0 0 1
+GQ48 CIRCULAR 0.6 0 0 0 1
+GQ49 CIRCULAR 0.6 0 0 0 1
+GQ50 CIRCULAR 0.6 0 0 0 1
+GQ51 CIRCULAR 0.6 0 0 0 1
+GQ52 CIRCULAR 0.8 0 0 0 1
+GQ53 CIRCULAR 1 0 0 0 1
+GQ54 CIRCULAR 0.6 0 0 0 1
+GQ55 CIRCULAR 0.6 0 0 0 1
+GQ56 CIRCULAR 0.8 0 0 0 1
+GQ57 CIRCULAR 0.8 0 0 0 1
+GQ58 CIRCULAR 0.8 0 0 0 1
+GQ59 CIRCULAR 0.8 0 0 0 1
+GQ60 CIRCULAR 1.5 0 0 0 1
+GQ61 CIRCULAR 1.5 0 0 0 1
+GQ62 CIRCULAR 1.65 0 0 0 1
+GQ63 CIRCULAR 2 0 0 0 1
+GQ64 CIRCULAR 0.6 0 0 0 1
+GQ65 CIRCULAR 0.6 0 0 0 1
+GQ66 CIRCULAR 0.8 0 0 0 1
+GQ67 CIRCULAR 1.2 0 0 0 1
+GQ68 CIRCULAR 1 0 0 0 1
+GQ69 CIRCULAR 0.8 0 0 0 1
+GQ70 CIRCULAR 0.8 0 0 0 1
+GQ71 CIRCULAR 0.8 0 0 0 1
+GQ72 CIRCULAR 1 0 0 0 1
+GQ73 CIRCULAR 1 0 0 0 1
+GQ74 CIRCULAR 1 0 0 0 1
+GQ75 CIRCULAR 1 0 0 0 1
+GQ76 CIRCULAR 1 0 0 0 1
+GQ77 CIRCULAR 1 0 0 0 1
+GQ78 CIRCULAR 0.6 0 0 0 1
+GQ79 CIRCULAR 0.6 0 0 0 1
+GQ80 CIRCULAR 0.6 0 0 0 1
+GQ81 CIRCULAR 0.6 0 0 0 1
+GQ82 CIRCULAR 0.6 0 0 0 1
+GQ83 CIRCULAR 0.6 0 0 0 1
+GQ84 CIRCULAR 0.6 0 0 0 1
+GQ85 CIRCULAR 0.6 0 0 0 1
+GQ86 CIRCULAR 0.6 0 0 0 1
+GQ87 CIRCULAR 0.6 0 0 0 1
+GQ88 CIRCULAR 0.6 0 0 0 1
+GQ89 CIRCULAR 0.6 0 0 0 1
+GQ90 CIRCULAR 0.6 0 0 0 1
+GQ91 CIRCULAR 0.6 0 0 0 1
+GQ92 CIRCULAR 0.8 0 0 0 1
+GQ93 CIRCULAR 0.8 0 0 0 1
+GQ94 CIRCULAR 0.8 0 0 0 1
+GQ95 CIRCULAR 0.8 0 0 0 1
+GQ96 CIRCULAR 0.8 0 0 0 1
+GQ97 CIRCULAR 0.6 0 0 0 1
+GQ98 CIRCULAR 0.6 0 0 0 1
+GQ99 CIRCULAR 1.5 0 0 0 1
+GQ100 CIRCULAR 0.6 0 0 0 1
+GQ101 CIRCULAR 0.6 0 0 0 1
+GQ102 CIRCULAR 0.8 0 0 0 1
+GQ103 CIRCULAR 0.6 0 0 0 1
+GQ104 CIRCULAR 0.6 0 0 0 1
+GQ105 CIRCULAR 0.8 0 0 0 1
+GQ106 CIRCULAR 0.6 0 0 0 1
+GQ107 CIRCULAR 0.6 0 0 0 1
+GQ108 CIRCULAR 0.8 0 0 0 1
+GQ109 CIRCULAR 0.6 0 0 0 1
+GQ110 CIRCULAR 1 0 0 0 1
+GQ111 CIRCULAR 0.6 0 0 0 1
+GQ112 CIRCULAR 1.2 0 0 0 1
+GQ113 CIRCULAR 0.6 0 0 0 1
+GQ114 CIRCULAR 1 0 0 0 1
+GQ115 CIRCULAR 1.2 0 0 0 1
+GQ116 CIRCULAR 1 0 0 0 1
+GQ117 CIRCULAR 0.8 0 0 0 1
+GQ118 CIRCULAR 0.8 0 0 0 1
+GQ119 CIRCULAR 0.8 0 0 0 1
+GQ120 CIRCULAR 1 0 0 0 1
+GQ121 CIRCULAR 0.8 0 0 0 1
+GQ122 CIRCULAR 0.8 0 0 0 1
+GQ123 CIRCULAR 0.6 0 0 0 1
+GQ124 CIRCULAR 0.8 0 0 0 1
+GQ125 CIRCULAR 0.6 0 0 0 1
+GQ126 CIRCULAR 0.6 0 0 0 1
+GQ127 CIRCULAR 0.8 0 0 0 1
+GQ128 CIRCULAR 1.2 0 0 0 1
+GQ129 CIRCULAR 0.8 0 0 0 1
+GQ130 CIRCULAR 0.6 0 0 0 1
+GQ131 CIRCULAR 0.6 0 0 0 1
 
+;;____________________________________________________________________________________________________
 [TIMESERIES]
 ;;Name           Date       Time       Value     
 ;;-------------- ---------- ---------- ----------
@@ -2987,21 +2995,25 @@ bpswmm_2413      07/15/2020 21:00      1.1
 bpswmm_2413      07/15/2020 22:00      4.9       
 bpswmm_2413      07/15/2020 23:00      2.6       
 bpswmm_2413      07/16/2020 0:00       0.5       
-bpswmm_2413      07/16/2020 1:00       0.0       
+bpswmm_2413      07/16/2020 1:00       0.0
 
+;;____________________________________________________________________________________________________
 [REPORT]
 ;;Reporting Options
 SUBCATCHMENTS ALL
 NODES ALL
 LINKS ALL
 
+;;____________________________________________________________________________________________________
 [TAGS]
-Link       GQ15             0.8             
+Link       GQ15             0.8
 
+;;____________________________________________________________________________________________________
 [MAP]
 DIMENSIONS 11806532.405 3601531.746 11814351.995 3614107.943
 Units      None
 
+;;____________________________________________________________________________________________________
 [COORDINATES]
 ;;Node           X-Coord            Y-Coord           
 ;;-------------- ------------------ ------------------
@@ -3117,13 +3129,15 @@ psk4             11810164.669       3604215.573
 psk5             11808913.748       3602143.956       
 psk6             11808483.165       3604446.206       
 psk7             11807852.291       3605051.521       
-psk8             11813325.155       3610298.796       
+psk8             11813325.155       3610298.796
 
+;;____________________________________________________________________________________________________
 [VERTICES]
 ;;Link           X-Coord            Y-Coord           
 ;;-------------- ------------------ ------------------
 
-[Polygons]
+;;____________________________________________________________________________________________________
+[POLYGONS]
 ;;Subcatchment   X-Coord            Y-Coord           
 ;;-------------- ------------------ ------------------
 1                11809687.762       3602881.731       
@@ -4176,10 +4190,10 @@ psk8             11813325.155       3610298.796
 106              11812201.030       3611544.441       
 106              11812183.349       3611586.737       
 106              11812196.644       3612297.026       
-106              11812275.386       3612248.172       
+106              11812275.386       3612248.172
 
+;;____________________________________________________________________________________________________
 [SYMBOLS]
 ;;Gage           X-Coord            Y-Coord           
 ;;-------------- ------------------ ------------------
-RainGage         11813401.305       3609393.682       
-
+RainGage         11813401.305       3609393.682

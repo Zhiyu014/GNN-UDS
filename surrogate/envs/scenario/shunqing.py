@@ -210,8 +210,6 @@ class shunqing(scenario):
 
     def get_args(self):
         args = self.config.copy()
-        # state shape
-        args['state_shape'] = (len(self.get_features('nodes')),len(self.config['global_state'])) if self.global_state else len(args['states'])
         
         nodes = self.get_features('nodes')
         if not hasattr(self,'env') or self.env._isFinished:
@@ -219,6 +217,10 @@ class shunqing(scenario):
             args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth if node in inp.JUNCTIONS else 0 for node in nodes])
         else:
             args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
+
+
+        # state shape
+        args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
@@ -229,9 +231,7 @@ class shunqing(scenario):
             args['adj'] = self.get_adj()
             args['edge_adj'] = self.get_edge_adj()
             args['node_edge'] = self.get_node_edge()
-            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))
-            
-            args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
+            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))            
         return args
 
 
