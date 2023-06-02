@@ -63,7 +63,7 @@ RedChicoSur:
   n_out: 3
   conv: GCNconv
   embed_size: 128
-  n_sp_layer: 3
+  n_sp_layer: 2
   activation: relu
   recurrent: GRU
   hidden_dim: 64
@@ -103,7 +103,7 @@ astlingen:
   n_out: 3
   conv: GCNconv
   embed_size: 128
-  n_sp_layer: 3
+  n_sp_layer: 2
   activation: relu
   recurrent: GRU
   hidden_dim: 64

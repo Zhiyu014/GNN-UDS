@@ -80,10 +80,10 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'shunqing',
-    #             'data_dir':'./envs/data/shunqing/edge/',
+    #             'env':'astlingen',
+    #             'data_dir':'./envs/data/astlingen/edge/',
     #             'act':False,
-    #             'model_dir':'./model/shunqing/5s_10k_edge_res_norm_flood/',
+    #             'model_dir':'./model/astlingen/5s_5k_edge_res_norm_flood/',
     #             'batch_size':32,
     #             'epochs':5000,
     #             'resnet':True,
@@ -135,6 +135,8 @@ if __name__ == "__main__":
         
     if args.train:
         dG.load(args.data_dir)
+        if not os.path.exists(args.model_dir):
+            os.mkdir(args.model_dir)
         if args.load_model:
             emul.load(args.model_dir)
             train_ids = np.load(os.path.join(args.model_dir,'train_id.npy'))
@@ -181,7 +183,7 @@ if __name__ == "__main__":
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
                 if args.edge_fusion:
-                    edge_states = res[-1]
+                    edge_states = res[-1][...,:-1]
                     np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
 

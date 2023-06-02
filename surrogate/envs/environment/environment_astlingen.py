@@ -13,8 +13,7 @@ class env_ast(env_base):
 
         # for state and performance
         self.methods.update({'rainfall':self._getGageRainfall,
-                             'getlinktype':self._getLinkType,
-                             'setting':self._getLinkSetting})
+                             'getlinktype':self._getLinkType})
 
 
     # ------ Get necessary Parameters  ----------------------------------------------
@@ -26,7 +25,3 @@ class env_ast(env_base):
     def _getLinkType(self,ID):
         # For control formulation
         return self.sim._model.getLinkType(ID).name
-
-    def _getLinkSetting(self,_linkid):
-        return self.sim._model.getLinkResult(_linkid,
-                                            tkai.LinkResults.setting.value)

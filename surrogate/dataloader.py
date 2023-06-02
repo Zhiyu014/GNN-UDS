@@ -84,7 +84,7 @@ class DataGenerator:
     def edge_state_split(self,edge_states):
         n_spl = self.seq_out if self.recurrent else 1
         ex = edge_states[:-n_spl]
-        ey = edge_states[n_spl:,...,:-1] if self.act else edge_states[n_spl:]
+        ey = edge_states[n_spl:,...,:-1]
         if self.recurrent:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey

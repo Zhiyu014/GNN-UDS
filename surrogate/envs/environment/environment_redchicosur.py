@@ -8,7 +8,6 @@ class env_rcs(env_base):
         # for state and performance
         self.methods.update({'totaloutflow':self._getNodeTotalOutflow,
                              'type':self._getLinkType,
-                             'setting':self._getLinkSetting,
                              'flow':self._getLinkFlow,
                              })
 
@@ -21,10 +20,6 @@ class env_rcs(env_base):
     def _getLinkType(self,ID):
         # For control formulation
         return self.sim._model.getLinkType(ID).name
-
-    def _getLinkSetting(self,_linkid):
-        return self.sim._model.getLinkResult(_linkid,
-                                            tkai.LinkResults.setting.value)
     
     def _getLinkFlow(self,_linkid):
         return self.sim._model.getLinkResult(_linkid,

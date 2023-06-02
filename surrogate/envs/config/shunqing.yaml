@@ -29,6 +29,9 @@ global_state:
   - !!python/tuple
     - links
     - flow
+  - !!python/tuple
+    - links
+    - setting
 
     
 states:

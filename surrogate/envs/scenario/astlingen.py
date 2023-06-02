@@ -282,16 +282,15 @@ class astlingen(scenario):
         # if not os.path.isfile(args['rainfall']['training_events']):
         #     args['rainfall']['training_events'] = os.path.join(HERE,'config',args['rainfall']['training_events']+'.csv')
 
-        # state shape
-        args['state_shape'] = (len(self.get_features('nodes')),len(self.config['global_state'])) if self.global_state else len(args['states'])
-
-        
+        nodes = self.get_features('nodes')
         if not hasattr(self,'env') or self.env._isFinished:
             inp = read_inp_file(self.config['swmm_input'])
             args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
-            nodes = self.get_features('nodes')
             args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
+
+        # state shape
+        args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
