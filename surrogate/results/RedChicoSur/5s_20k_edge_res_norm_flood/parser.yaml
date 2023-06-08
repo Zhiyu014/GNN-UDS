@@ -1,0 +1,12 @@
+conv: GAT
+edge_fusion: true
+env: RedChicoSur
+if_flood: true
+model_dir: 5s_20k_edge_res_norm_flood
+norm: true
+recurrent: Conv1D
+resnet: true
+result_dir: 5s_20k_edge_res_norm_flood
+seq_in: 5
+seq_out: 5
+test: true

@@ -18,18 +18,23 @@ tf.config.list_physical_devices(device_type='GPU')
 # - **Predict**: *T*-times 1-step prediction OR T-step prediction?
 
 class NodeEdge(tf.keras.layers.Layer):
-    def __init__(self, shape1, shape2):
-        super(NodeEdge,self).__init__()
+    def __init__(self, inci, **kwargs):
+        super(NodeEdge,self).__init__(**kwargs)
+        self.inci = inci
+
+    def build(self,input_shape):
+        assert input_shape[-2] == self.inci.shape[1]
         self.w = self.add_weight(
-            shape=(shape1,shape2),initializer='random_normal',trainable=True,
+            name='weight',shape=self.inci.shape,initializer='random_normal',trainable=True,
         )
         self.b = self.add_weight(
-            shape=(shape1,shape2),initializer='zeros',trainable=True,
+            name='bias',shape=self.inci.shape,initializer='zeros',trainable=True,
         )
+        super(NodeEdge,self).build(input_shape)
 
     def call(self,inputs):
-        return self.w * inputs + self.b
-
+        return tf.matmul(self.w * self.inci + self.b, inputs)
+    
 
 class Emulator:
     def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
@@ -57,7 +62,6 @@ class Emulator:
         if self.if_flood:
             self.n_in += 2
 
-        # TODO: edges fusion model
         self.edge_fusion = getattr(args,"edge_fusion",False)
         if self.edge_fusion:
             self.edges = getattr(args,"edges")
@@ -74,7 +78,6 @@ class Emulator:
             self.use_adj = getattr(args,"use_adj",False)
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
 
-
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.model = self.build_network(self.conv,resnet,self.recurrent)
@@ -86,10 +89,7 @@ class Emulator:
         self.batch_size = getattr(args,"batch_size",256)
         self.epochs = getattr(args,"epochs",100)
         self.model_dir = getattr(args,"model_dir")
-
-
-
-    # TODO: node-edge fusion model
+        
     def build_network(self,conv=None,resnet=False,recurrent=None):
         # (T,N,in) (N,in)
         input_shape,bound_input = (self.n_node,self.n_in),(self.n_node,self.b_in)
@@ -146,7 +146,6 @@ class Emulator:
             if self.act:
                 ae = Dense(self.embed_size//2,activation=self.activation)(AE_in)  # Control Embedding (B,T_out,N,E)
 
-
         # Spatial block
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
         x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
@@ -154,15 +153,14 @@ class Emulator:
             if self.edge_fusion:
                 x_e = Dense(self.embed_size//2,activation=self.activation)(e)
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                x = concat([x,tf.matmul(NodeEdge(self.n_node,self.n_edge)(tf.abs(self.node_edge)),x_e)],axis=-1)
-                e = concat([e,tf.matmul(NodeEdge(self.n_edge,self.n_node)(transpose(tf.abs(self.node_edge))),e_x)],axis=-1)
+                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
                 # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
                 # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             # b = Dense(self.embed_size//2,activation=self.activation)(b)
             if self.edge_fusion:
-                # TODO: edge fusion model
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
 
@@ -253,8 +251,8 @@ class Emulator:
             if self.edge_fusion:
                 x_e = Dense(self.embed_size//2,activation=self.activation)(e)
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                x = concat([x,tf.matmul(NodeEdge(self.n_node,self.n_edge)(tf.abs(self.node_edge)),x_e)],axis=-1)
-                e = concat([e,tf.matmul(NodeEdge(self.n_edge,self.n_node)(transpose(tf.abs(self.node_edge))),e_x)],axis=-1)
+                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
                 # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
                 # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
             x = [x,A] if conv else x
@@ -514,7 +512,6 @@ class Emulator:
                 self.save(os.path.join(self.model_dir,'test'))
         return train_ids,test_ids,train_losses,test_losses
 
-    # TODO: settings
     def simulate(self,states,runoff,a=None,edge_states=None):
         # runoff shape: T_out, T_in, N
         if self.act:
@@ -625,6 +622,7 @@ class Emulator:
                 if self.norm:
                     y = self.normalize(y,'y',True)
                 q_w,y = self.constrain(y,bi)
+                # q_w = self.get_flood(y,bi)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             preds.append(y)
             if self.edge_fusion:
@@ -687,7 +685,7 @@ class Emulator:
             model_dir = os.path.dirname(model_dir)
         else:
             self.model.save_weights(os.path.join(model_dir,'model.h5'))
-        
+
         if self.norm:
             for item in 'xbye':
                 if hasattr(self,'norm_%s'%item):

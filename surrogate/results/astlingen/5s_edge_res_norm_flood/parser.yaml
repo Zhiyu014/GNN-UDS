@@ -1,9 +1,10 @@
 conv: GAT
+data_dir: edge
 edge_fusion: true
 env: astlingen
-epochs: 5000
+epochs: 20000
 if_flood: true
-model_dir: 5s_5k_edge_res_norm_flood
+model_dir: 5s_20k_edge_res_norm_flood
 norm: true
 recurrent: Conv1D
 resnet: true

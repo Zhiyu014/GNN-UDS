@@ -7,6 +7,7 @@ import numpy as np
 import os,time
 import matplotlib.pyplot as plt
 import tensorflow as tf
+from tensorflow.keras.utils import plot_model
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
@@ -84,7 +85,7 @@ if __name__ == "__main__":
     #             'data_dir':'./envs/data/astlingen/edge/',
     #             'act':False,
     #             'model_dir':'./model/astlingen/5s_5k_edge_res_norm_flood/',
-    #             'batch_size':32,
+    #             # 'batch_size':32,
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
@@ -98,19 +99,19 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # test_de = {'test':True,
-    #            'env':'RedChicoSur',
+    #            'env':'astlingen',
     #            'act':False,
-    #            'model_dir':'./model/RedChicoSur/5s_10k_edge_res_norm_flood_bal/',
+    #            'model_dir':'./model/astlingen/5s_20k_edge_res_norm_flood/',
     #            'resnet':True,
     #            'norm':True,
     #            'seq_in':5,
     #            'seq_out':5,
     #            'if_flood':True,
     #            'edge_fusion':True,
-    #            'balance':True,
+    #            'balance':False,
     #            'conv':'GAT',
     #            'recurrent':'Conv1D',
-    #            'result_dir':'./results/RedChicoSur/5s_act_edge_res_norm_flood/'}
+    #            'result_dir':'./results/astlingen/5s_edge_res_norm_flood/'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
@@ -130,13 +131,14 @@ if __name__ == "__main__":
         dG.generate(events,processes=args.processes,act=args.act)
         dG.save(args.data_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.data_dir,'parser.yaml'),'w'))
-    
-    emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         
     if args.train:
         dG.load(args.data_dir)
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
+        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
+        # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+
         if args.load_model:
             emul.load(args.model_dir)
             train_ids = np.load(os.path.join(args.model_dir,'train_id.npy'))
@@ -159,6 +161,7 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
     if args.test:
+        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         emul.load(args.model_dir)
         if not os.path.exists(args.result_dir):
             os.mkdir(args.result_dir)
@@ -174,8 +177,7 @@ if __name__ == "__main__":
                     edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
-                seq = max(args.seq_in,args.seq_out) if args.recurrent else False
-                res = dG.simulate(event,seq,act=args.act)
+                res = dG.simulate(event,act=args.act)
                 states,perfs,settings = [r for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
@@ -183,9 +185,12 @@ if __name__ == "__main__":
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
                 if args.edge_fusion:
-                    edge_states = res[-1][...,:-1]
+                    edge_states = res[-1]
                     np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
+            seq = max(args.seq_in,args.seq_out) if args.recurrent else False
+            states,perfs = [dG.expand_seq(dat,seq) for dat in [states,perfs]]
+            edge_states = dG.expand_seq(edge_states,seq) if args.edge_fusion else None
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
@@ -198,8 +203,11 @@ if __name__ == "__main__":
             states = states[:-args.seq_out]
 
             if args.edge_fusion:
-                edge_true = edge_states[args.seq_out:,...,:-1] if args.act else edge_states[args.seq_out:]
+                edge_true = edge_states[args.seq_out:,...,:-1]
                 edge_states = edge_states[:-args.seq_out]
+                if args.recurrent:
+                    edge_states = edge_states[:,-args.seq_in:,...]
+                    edge_true = edge_true[:,:args.seq_out,...]
             else:
                 edge_states = None
 
@@ -221,6 +229,18 @@ if __name__ == "__main__":
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
             if args.recurrent:
                 true = true[:,:args.seq_out,...]
+
+            los_str = "{} Testing loss: (".format(name)
+            loss = [emul.mse(emul.normalize(pred[...,:3],'y'),emul.normalize(true[...,:3],'y'))]
+            los_str += "Node: {:.4f} ".format(loss[-1])
+            if args.if_flood:
+                loss += [emul.cce(pred[...,-3:-1],true[...,-3:-1])]
+                los_str += "if_flood: {:.4f} ".format(loss[-1])
+            if args.edge_fusion:
+                loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
+                los_str += "Edge: {:.4f}".format(loss[-1])
+            print(los_str+')')
+
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)

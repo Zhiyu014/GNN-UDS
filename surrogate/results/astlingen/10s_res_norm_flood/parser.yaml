@@ -1,7 +1,8 @@
 conv: GAT
 env: astlingen
+epochs: 20000
 if_flood: true
-model_dir: 10s_10k_res_norm_flood
+model_dir: 10s_20k_res_norm_flood
 norm: true
 recurrent: Conv1D
 resnet: true
