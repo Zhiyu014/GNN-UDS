@@ -1,11 +1,11 @@
 batch_size: 64
 conv: GAT
+data_dir: edge
 edge_fusion: true
 env: shunqing
-epochs: 10000
+epochs: 20000
 if_flood: true
-load_model: true
-model_dir: 5s_10k_edge_res_norm_flood/test
+model_dir: 5s_20k_edge_res_norm_flood
 norm: true
 recurrent: Conv1D
 resnet: true

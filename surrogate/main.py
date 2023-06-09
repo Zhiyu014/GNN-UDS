@@ -137,7 +137,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
-        # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+        plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
 
         if args.load_model:
             emul.load(args.model_dir)
