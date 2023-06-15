@@ -349,3 +349,13 @@ class RedChicoSur(scenario):
 
         
         
+    def controller(self,state=None,mode='rand'):
+        asp = self.config['action_space']
+        if mode.lower() == 'rand':
+            return [table[np.random.randint(0,len(table))] for table in asp.values()]
+        elif mode.lower() == 'off':
+            return [table[0] for table in asp.values()]
+        elif mode.lower() == 'on':
+            return [table[-1] for table in asp.values()]
+        else:
+            raise AssertionError("Unknown controller %s"%str(mode))

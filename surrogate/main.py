@@ -16,7 +16,7 @@ def parser(config=None):
     parser.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
-    parser.add_argument('--act',action="store_true",help='if the environment contains control actions')
+    parser.add_argument('--act',type=str,default='False',help='if and what control actions')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
 
@@ -82,16 +82,16 @@ if __name__ == "__main__":
 
     # train_de = {'train':True,
     #             'env':'astlingen',
-    #             'data_dir':'./envs/data/astlingen/edge/',
-    #             'act':False,
-    #             'model_dir':'./model/astlingen/5s_5k_edge_res_norm_flood/',
+    #             'data_dir':'./envs/data/astlingen/act_edge/',
+    #             'act':True,
+    #             'model_dir':'./model/astlingen/10s_20k_act_edge_res_norm_flood/',
     #             # 'batch_size':32,
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
     #             'edge_fusion':True,
     #             'balance':False,
-    #             'seq_in':5,'seq_out':5,
+    #             'seq_in':10,'seq_out':10,
     #             'if_flood':True,
     #             'conv':'GAT',
     #             'recurrent':'Conv1D'}
@@ -100,18 +100,18 @@ if __name__ == "__main__":
 
     # test_de = {'test':True,
     #            'env':'astlingen',
-    #            'act':False,
-    #            'model_dir':'./model/astlingen/5s_20k_edge_res_norm_flood/',
+    #            'act':'bc',
+    #            'model_dir':'./model/astlingen/10s_20k_act_edge_res_norm_flood/',
     #            'resnet':True,
     #            'norm':True,
-    #            'seq_in':5,
-    #            'seq_out':5,
+    #            'seq_in':10,
+    #            'seq_out':10,
     #            'if_flood':True,
     #            'edge_fusion':True,
     #            'balance':False,
     #            'conv':'GAT',
     #            'recurrent':'Conv1D',
-    #            'result_dir':'./results/astlingen/5s_edge_res_norm_flood/'}
+    #            'result_dir':'./results/astlingen/10s_20k_bc_edge_res_norm_flood/'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     env_args = env.get_args()
     for k,v in env_args.items():
         if k == 'act':
-            v = v & args.act
+            v = v and args.act != 'False' and args.act
         setattr(args,k,v)
     
 
@@ -137,7 +137,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
-        plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+        # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
 
         if args.load_model:
             emul.load(args.model_dir)

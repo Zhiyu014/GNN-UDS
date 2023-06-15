@@ -435,3 +435,23 @@ class astlingen(scenario):
             for ID in self.config["action_space"]]
         return setting
 
+    def controller(self,state=None,mode='rand'):
+        asp = self.config['action_space']
+        if mode.lower() == 'rand':
+            return [table[np.random.randint(0,len(table))] for table in asp.values()]
+        elif mode.lower() == 'bc':
+            return [table[1] for table in asp.values()]
+        elif mode.lower() == 'efd':
+            state_idxs = {k:self.elements['nodes'].index(k.replace('V','T')) for k in asp}
+            depth = {k:state[idx,0] for k,idx in state_idxs.items()}
+            setting = {k:1 for k in asp}
+            if max(depth.values())<1:
+                setting = {k:1 for k in asp}
+            for k in asp:
+                setting[k] = 2 * int(depth[k] >= max(depth.values())) +\
+                    0 * int(depth[k] <= min(depth.values())) +\
+                        1 * (1-int(depth[k] >= max(depth.values()))) * (1-int(depth[k] <= min(depth.values())))
+            setting = [v[setting[k]] for k,v in asp.items()]
+            return setting
+        else:
+            raise AssertionError("Unknown controller %s"%str(mode))

@@ -42,6 +42,7 @@ class Emulator:
         # Runoff is boundary
         self.b_in = 1
         self.act = getattr(args,"act",False)
+        self.act = self.act and self.act != 'False'
 
         self.n_out = self.n_in - 1
         self.seq_in = getattr(args,'seq_in',6)
@@ -320,7 +321,7 @@ class Emulator:
             out = np.ones(self.n_edge)
             out[act_edges] = s
             return out
-        return np.apply_along_axis(set_edge_action,-1,a)
+        return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
 
     def fit_eval(self,x,a,b,y,ex=None,ey=None,fit=True):
         if self.act:
@@ -354,7 +355,7 @@ class Emulator:
 
                     if self.act:
                         if self.edge_fusion:
-                            edge_pred = concat(tf.stack(edge_pred[...,:-1],tf.multiply(edge_pred[...,-1:],ae[:,i:i+self.seq_out,...] if self.recurrent else ae)),axis=-1)
+                            edge_pred = concat([edge_pred[...,:-1],tf.multiply(edge_pred[...,-1:],ae[:,i:i+self.seq_out,...] if self.recurrent else ae)],axis=-1)
                         else:
                             pred = concat([tf.stack([pred[...,0],
                             tf.multiply(pred[...,1],a_in[:,i:i+self.seq_out,...] if self.recurrent else a_in),
@@ -401,7 +402,7 @@ class Emulator:
 
                 if self.act:
                     if self.edge_fusion:
-                        edge_preds = concat(tf.stack(edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)),axis=-1)
+                        edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
                     else:
                         preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
 
@@ -555,10 +556,10 @@ class Emulator:
                     y = squeeze(y,0).numpy()
                     if self.act:
                         if self.edge_fusion:
-                            ey[...,-1] *= ae[idx,i:i+self.seq_out,...] if self.recurrent else ae[idx]
+                            ey[...,-1:] *= ae[idx,i:i+self.seq_out,...] if self.recurrent else ae[idx]
                         else:
-                            y[...,2] *= a_out[idx,i:i+self.seq_out,...] if self.recurrent else a_out[idx]
-                            y[...,1] *= a_in[idx,i:i+self.seq_out,...] if self.recurrent else a_in[idx]
+                            y[...,2] *= a_out[idx,i:i+self.seq_out,...] if self.recurrent else a_out[idx,...]
+                            y[...,1] *= a_in[idx,i:i+self.seq_out,...] if self.recurrent else a_in[idx,...]
 
                     if self.edge_fusion:
                         node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))
@@ -606,10 +607,10 @@ class Emulator:
                 y = squeeze(y,0).numpy()
                 if self.act:
                     if self.edge_fusion:
-                        ey[...,-1] *= ae[idx]
+                        ey[...,-1:] *= ae[idx]
                     else:
-                        y[...,2] *= a_out[idx]
-                        y[...,1] *= a_in[idx]
+                        y[...,2] *= a_out[idx,...]
+                        y[...,1] *= a_in[idx,...]
 
                 if self.edge_fusion:
                     node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))

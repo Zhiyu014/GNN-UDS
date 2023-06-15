@@ -16,6 +16,7 @@ class DataGenerator:
             self.action_table = env.config['action_space']
             # self.adj = env.get_adj()
             # self.act_edges = env.get_edge_list(list(self.action_table.keys()))
+
     
     def simulate(self, event, seq = False, act = False):
         state = self.env.reset(event,global_state=True,seq=seq)
@@ -28,7 +29,7 @@ class DataGenerator:
         settings = [setting]
         done,i = False,0
         while not done:
-            setting = [table[np.random.randint(0,len(table))] for table in self.action_table.values()] if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
+            setting = self.env.controller(state,act) if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.performance(seq=seq)

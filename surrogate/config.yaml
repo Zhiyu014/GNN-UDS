@@ -2,7 +2,7 @@ shunqing:
   # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
-  act: False
+  act: 'False'
   processes: 5
   edge_fusion: False
 
@@ -42,7 +42,7 @@ RedChicoSur:
   # simulate args
   simulate: False
   data_dir: ./envs/data/RedChicoSur/
-  act: False
+  act: 'False'
   processes: 5
   edge_fusion: False
 
@@ -82,7 +82,7 @@ astlingen:
   # simulate args
   simulate: False
   data_dir: ./envs/data/astlingen/
-  act: False
+  act: 'False'
   processes: 5
   edge_fusion: False
 
