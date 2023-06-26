@@ -11,6 +11,7 @@ from functools import reduce
 from itertools import product
 from collections import deque
 from itertools import combinations
+from mpc import run_ea
 
 HERE = os.path.dirname(__file__)
 
@@ -452,6 +453,11 @@ class astlingen(scenario):
                     0 * int(depth[k] <= min(depth.values())) +\
                         1 * (1-int(depth[k] >= max(depth.values()))) * (1-int(depth[k] <= min(depth.values())))
             setting = [v[setting[k]] for k,v in asp.items()]
+            return setting
+        elif mode.lower() == 'mpc':
+            eval_file = self.get_eval_file()
+            setting = self.get_current_setting()
+            setting = run_ea(eval_file,arg,setting)
             return setting
         else:
             raise AssertionError("Unknown controller %s"%str(mode))
