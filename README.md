@@ -28,11 +28,24 @@
 
 
 ## Drainage networks
-1. **astlingen**: A combined sewer network with 30 nodes (23 junctions, 6 tanks and 1 outfall) and 29 edges (23 conduits and 6 outflow orifices). 10-yr rainfall monitoring data of 4 gauges are included. Details refer to [SWMM-Astlingen](https://github.com/open-toolbox/SWMM-Astlingen).
+1. **astlingen**
+   - Combined sewer network
+   - 30 nodes (23 junctions, 6 tanks and 1 outfall)
+   - 29 edges (23 conduits and 6 outflow orifices)
+   - 10-yr rainfall monitoring data of 4 gauges are included
+   - Details refer to [SWMM-Astlingen](https://github.com/open-toolbox/SWMM-Astlingen).
 
-2. **shunqing**: A stormwater network with 113 nodes (105 junctions and 8 outfalls), 131 conduits and 106 subcatchments (cover 33.02 km2). 148 synthetic rainfalls included with duration 6-24 hrs. Details refer to [ga_ann_for_uds](https://github.com/lhmygis/ga_ann_for_uds).
+3. **shunqing**
+   - A stormwater network with 113 nodes (105 junctions and 8 outfalls)
+   - 131 conduits and 106 subcatchments (cover 33.02 km2)
+   - 148 synthetic rainfalls included with duration 6-24 hrs
+   - Details refer to [ga_ann_for_uds](https://github.com/lhmygis/ga_ann_for_uds).
 
-3. **RedChicoSur**: A stormwater network with 443 nodes (442 junctions and 1 outfalls) and 444 edges (390 conduits and 54 orifices). 2-hr synthetic rainfalls (Chicago hytograph) included. Details refer to [MatSWMM](https://github.com/gandresr/MatSWMM).
+5. **RedChicoSur**
+   - A stormwater network with 443 nodes (442 junctions and 1 outfalls)
+   - 444 edges (390 conduits and 54 orifices)
+   - 2-hr synthetic rainfalls (Chicago hytograph) included
+   - Details refer to [MatSWMM](https://github.com/gandresr/MatSWMM).
 
 ## Requirements
 - tensorflow == 2.6.0
