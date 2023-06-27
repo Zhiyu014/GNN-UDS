@@ -36,13 +36,15 @@
    - Details refer to [SWMM-Astlingen](https://github.com/open-toolbox/SWMM-Astlingen).
 
 3. **shunqing**
-   - A stormwater network with 113 nodes (105 junctions and 8 outfalls)
+   - Stormwater network
+   - 113 nodes (105 junctions and 8 outfalls)
    - 131 conduits and 106 subcatchments (cover 33.02 km2)
-   - 148 synthetic rainfalls included with duration 6-24 hrs
+   - 148 synthetic rainfalls included with duration of 6-24 hrs
    - Details refer to [ga_ann_for_uds](https://github.com/lhmygis/ga_ann_for_uds).
 
 5. **RedChicoSur**
-   - A stormwater network with 443 nodes (442 junctions and 1 outfalls)
+   - Stormwater network
+   - 443 nodes (442 junctions and 1 outfall)
    - 444 edges (390 conduits and 54 orifices)
    - 2-hr synthetic rainfalls (Chicago hytograph) included
    - Details refer to [MatSWMM](https://github.com/gandresr/MatSWMM).
