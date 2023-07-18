@@ -1,15 +1,16 @@
 import numpy as np
 import multiprocessing as mp
 import os
+from swmm_api import swmm5_run
 
 class DataGenerator:
-    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,edge_fusion=False,data_dir=None):
+    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,use_edge=False,data_dir=None):
         self.env = env
         self.seq_in = seq_in
         self.seq_out = seq_out
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.if_flood = if_flood
-        self.edge_fusion = edge_fusion
+        self.use_edge = use_edge
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         self.act = act
         if act:
@@ -18,17 +19,20 @@ class DataGenerator:
             # self.act_edges = env.get_edge_list(list(self.action_table.keys()))
 
     
-    def simulate(self, event, seq = False, act = False):
+    def simulate(self, event, seq = False, act = False, hotstart = False):
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.performance(seq=seq)
         states,perfs = [state],[perf]
-        if self.edge_fusion:
+        if self.use_edge:
             edge_state = self.env.state_full(seq,'links')
             edge_states = [edge_state]
         setting = [1 for _ in self.action_table] if act else None
         settings = [setting]
         done,i = False,0
         while not done:
+            if hotstart:
+                eval_file = self.env.get_eval_file()
+                _ = swmm5_run(eval_file)
             setting = self.env.controller(state,act) if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
@@ -36,11 +40,11 @@ class DataGenerator:
             states.append(state)
             perfs.append(perf)
             settings.append(setting)
-            if self.edge_fusion:
+            if self.use_edge:
                 edge_state = self.env.state_full(seq,'links')
                 edge_states.append(edge_state)
             i += 1
-        if self.edge_fusion:
+        if self.use_edge:
             return np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(edge_states)
         else:
             return np.array(states),np.array(perfs),np.array(settings) if act else None
@@ -56,8 +60,8 @@ class DataGenerator:
             res = [self.simulate(event,seq,act) for event in events]
         self.states,self.perfs = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
-        if self.edge_fusion:
-            self.edge_states = np.concatenate([r[-1] for r in res],axis=0) if self.edge_fusion else None
+        if self.use_edge:
+            self.edge_states = np.concatenate([r[-1] for r in res],axis=0) if self.use_edge else None
         self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
 
     def state_split(self,states,perfs):
@@ -101,10 +105,10 @@ class DataGenerator:
             num = self.event_id==idx
             if seq > 0:
                 states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
-                edge_states = self.expand_seq(self.edge_states[num],seq) if self.edge_fusion else None
+                edge_states = self.expand_seq(self.edge_states[num],seq) if self.use_edge else None
                 settings = self.expand_seq(self.settings[num],seq,False) if self.settings is not None else None
             x,b,y = self.state_split(states,perfs)
-            ex,ey = self.edge_state_split(edge_states) if self.edge_fusion else (None,None)
+            ex,ey = self.edge_state_split(edge_states) if self.use_edge else (None,None)
             if self.settings is not None:
                 settings = settings[self.seq_out:,:self.seq_out,...] if self.recurrent else settings[1:]
             # r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y]]
@@ -120,7 +124,7 @@ class DataGenerator:
             os.mkdir(data_dir)
         np.save(os.path.join(data_dir,'states.npy'),self.states)
         np.save(os.path.join(data_dir,'perfs.npy'),self.perfs)
-        if self.edge_fusion:
+        if self.use_edge:
             np.save(os.path.join(data_dir,'edge_states.npy'),self.edge_states)
         if self.settings is not None:
             np.save(os.path.join(data_dir,'settings.npy'),self.settings)
@@ -135,7 +139,7 @@ class DataGenerator:
             else:
                 dat = None
             setattr(self,name,dat)
-        if self.edge_fusion:
+        if self.use_edge:
             self.edge_states = np.load(os.path.join(data_dir,'edge_states.npy')).astype(np.float32)
         self.get_norm()
 
@@ -154,7 +158,7 @@ class DataGenerator:
             norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
-        if self.edge_fusion:
+        if self.use_edge:
             norm_e = np.abs(self.edge_states.copy())
             while len(norm_e.shape) > 2:
                 norm_e = norm_e.max(axis=0)

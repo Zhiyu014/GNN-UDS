@@ -60,3 +60,11 @@ rainfall:
   MIET: 1
   gage: RainGage
 
+# Model predictive parameters
+prediction:
+  control_horizon: 5  # Control horizon (min)
+  eval_horizon: 5 # Evaluation horizon (min)
+  hsf_dir: hsf # file path to save the hotstart file
+  eval_dir: eval # file path to save the evaluation file
+  suffix: mpc_eval_ # suffix of the evaluation file
+

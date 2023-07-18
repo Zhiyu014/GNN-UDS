@@ -1,4 +1,4 @@
-from emulator import Emulator
+from emulator import Emulator # Emulator should be imported before env
 from dataloader import DataGenerator
 from utilities import get_inp_files
 import argparse,yaml
@@ -8,6 +8,7 @@ import os,time
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
+from line_profiler import LineProfiler
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
@@ -18,11 +19,12 @@ def parser(config=None):
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
     parser.add_argument('--act',type=str,default='False',help='if and what control actions')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
-    parser.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
+    parser.add_argument('--use_edge',action='store_true',help='if models edge attrs')
 
     # train args
     parser.add_argument('--train',action="store_true",help='if train the emulator')
     parser.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
+    parser.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
     parser.add_argument('--use_adj',action="store_true",help='if use filter to act control')
     parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
@@ -57,7 +59,6 @@ def parser(config=None):
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
         parser.set_defaults(**hyps[args.env])
     args = parser.parse_args()
-    # args.env = 'RedChicoSur'
 
     config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k)}
     for k,v in config.items():
@@ -75,7 +76,7 @@ if __name__ == "__main__":
     #            'data_dir':'./envs/data/RedChicoSur/act_edge/',
     #            'act':True,
     #            'processes':1,
-    #            'edge_fusion':True
+    #            'use_edge':True
     #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
@@ -89,7 +90,7 @@ if __name__ == "__main__":
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
-    #             'edge_fusion':True,
+    #             'use_edge':True,
     #             'balance':False,
     #             'seq_in':10,'seq_out':10,
     #             'if_flood':True,
@@ -107,7 +108,7 @@ if __name__ == "__main__":
     #            'seq_in':10,
     #            'seq_out':10,
     #            'if_flood':True,
-    #            'edge_fusion':True,
+    #            'use_edge':True,
     #            'balance':False,
     #            'conv':'GAT',
     #            'recurrent':'Conv1D',
@@ -121,9 +122,9 @@ if __name__ == "__main__":
         if k == 'act':
             v = v and args.act != 'False' and args.act
         setattr(args,k,v)
-    
+    args.use_edge = args.use_edge or args.edge_fusion
 
-    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.edge_fusion,args.data_dir)
+    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.use_edge,args.data_dir)
 
 
     events = get_inp_files(env.config['swmm_input'],env.config['rainfall'])
@@ -173,24 +174,24 @@ if __name__ == "__main__":
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
                 if args.act:
                     settings = np.load(os.path.join(args.result_dir,name + '_settings.npy'))
-                if args.edge_fusion:
+                if args.use_edge:
                     edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
-                res = dG.simulate(event,act=args.act)
+                res = dG.simulate(event,act=args.act,hotstart=True)
                 states,perfs,settings = [r for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
-                if args.edge_fusion:
+                if args.use_edge:
                     edge_states = res[-1]
                     np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
             seq = max(args.seq_in,args.seq_out) if args.recurrent else False
             states,perfs = [dG.expand_seq(dat,seq) for dat in [states,perfs]]
-            edge_states = dG.expand_seq(edge_states,seq) if args.edge_fusion else None
+            edge_states = dG.expand_seq(edge_states,seq) if args.use_edge else None
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
@@ -202,7 +203,7 @@ if __name__ == "__main__":
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             states = states[:-args.seq_out]
 
-            if args.edge_fusion:
+            if args.use_edge:
                 edge_true = edge_states[args.seq_out:,...,:-1]
                 edge_states = edge_states[:-args.seq_out]
                 if args.recurrent:
@@ -221,8 +222,12 @@ if __name__ == "__main__":
                 a = None
             
             t0 = time.time()
+            # lp = LineProfiler()
+            # lp_wrapper = lp(emul.simulate)
+            # pred = lp_wrapper(states,r,a,edge_states)
+            # lp.print_stats()
             pred = emul.simulate(states,r,a,edge_states)
-            if args.edge_fusion:
+            if args.use_edge:
                 pred,edge_pred = pred
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
@@ -236,7 +241,7 @@ if __name__ == "__main__":
             if args.if_flood:
                 loss += [emul.cce(pred[...,-3:-1],true[...,-3:-1])]
                 los_str += "if_flood: {:.4f} ".format(loss[-1])
-            if args.edge_fusion:
+            if args.use_edge:
                 loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
                 los_str += "Edge: {:.4f}".format(loss[-1])
             print(los_str+')')
@@ -244,7 +249,7 @@ if __name__ == "__main__":
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)
-            if args.edge_fusion:
+            if args.use_edge:
                 edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
                 np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true)
                 np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred)

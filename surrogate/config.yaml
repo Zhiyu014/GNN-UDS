@@ -4,11 +4,13 @@ shunqing:
   data_dir: ./envs/data/shunqing/
   act: 'False'
   processes: 5
-  edge_fusion: False
+  use_edge: False
 
   # train args
   train: False
   load_model: False
+  edge_fusion: False
+  use_adj: False
   model_dir: ./model/shunqing/
   ratio: 0.8
   learning_rate: 0.001
@@ -44,11 +46,12 @@ RedChicoSur:
   data_dir: ./envs/data/RedChicoSur/
   act: 'False'
   processes: 5
-  edge_fusion: False
+  use_edge: False
 
   # train args
   train: False
   load_model: False
+  edge_fusion: False
   use_adj: False
   model_dir: ./model/RedChicoSur/
   ratio: 0.8
@@ -84,11 +87,12 @@ astlingen:
   data_dir: ./envs/data/astlingen/
   act: 'False'
   processes: 5
-  edge_fusion: False
+  use_edge: False
 
   # train args
   train: False
   load_model: False
+  edge_fusion: False
   use_adj: False
   model_dir: ./model/astlingen/
   ratio: 0.8
@@ -117,3 +121,17 @@ astlingen:
   # test args
   test: False
   result_dir: ./results/astlingen/
+
+  # MPC args
+  pop_size: 32
+  sampling: 0.4
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  surrogate: False
