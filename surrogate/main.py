@@ -19,6 +19,7 @@ def parser(config=None):
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
     parser.add_argument('--act',type=str,default='False',help='if and what control actions')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
+    parser.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
     parser.add_argument('--use_edge',action='store_true',help='if models edge attrs')
 
     # train args
@@ -76,6 +77,7 @@ if __name__ == "__main__":
     #            'data_dir':'./envs/data/RedChicoSur/act_edge/',
     #            'act':True,
     #            'processes':1,
+    #            'repeats':1,
     #            'use_edge':True
     #            }
     # for k,v in simu_de.items():
@@ -85,14 +87,15 @@ if __name__ == "__main__":
     #             'env':'astlingen',
     #             'data_dir':'./envs/data/astlingen/act_edge/',
     #             'act':True,
-    #             'model_dir':'./model/astlingen/10s_20k_act_edge_res_norm_flood/',
-    #             # 'batch_size':32,
+    #             'model_dir':'./model/astlingen/10s_20k_act_edgef_res_norm_flood_roll/',
+    #             'batch_size':32,
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
-    #             'use_edge':True,
+    #             'roll':True,
+    #             'use_edge':True,'edge_fusion':True,
     #             'balance':False,
-    #             'seq_in':10,'seq_out':10,
+    #             'seq_in':10,'seq_out':5,
     #             'if_flood':True,
     #             'conv':'GAT',
     #             'recurrent':'Conv1D'}
@@ -129,16 +132,19 @@ if __name__ == "__main__":
 
     events = get_inp_files(env.config['swmm_input'],env.config['rainfall'])
     if args.simulate:
-        dG.generate(events,processes=args.processes,act=args.act)
-        dG.save(args.data_dir)
+        if not os.path.exists(args.data_dir):
+            os.mkdir(args.data_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.data_dir,'parser.yaml'),'w'))
-        
+        dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act)
+        dG.save(args.data_dir)
+
     if args.train:
         dG.load(args.data_dir)
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+        yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
         if args.load_model:
             emul.load(args.model_dir)
@@ -151,7 +157,6 @@ if __name__ == "__main__":
 
         # save
         emul.save(args.model_dir)
-        yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
         np.save(os.path.join(args.model_dir,'train_id.npy'),np.array(train_ids))
         np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
@@ -199,7 +204,7 @@ if __name__ == "__main__":
             if args.if_flood:
                 f = (perfs>0).astype(int)
                 f = np.eye(2)[f].squeeze(-2)
-                states = np.concatenate([states,f],axis=-1)
+                states = np.concatenate([states[...,:-1],f,states[...,-1:]],axis=-1)
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             states = states[:-args.seq_out]
 

@@ -24,6 +24,7 @@ def parser(config=None):
     
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
+    parser.add_argument('--use_current',action="store_true",help='if use current setting as initial')
     parser.add_argument('--sampling',type=float,default=0.4,help='sampling rate')
     parser.add_argument('--crossover',nargs='+',type=float,default=[1.0,3.0],help='crossover rate')
     parser.add_argument('--mutation',nargs='+',type=float,default=[1.0,3.0],help='mutation rate')
@@ -59,6 +60,8 @@ class mpc_problem(Problem):
         self.n_act = len(args.action_space)
         self.actions = [{i:v for i,v in enumerate(val)}
                          for val in args.action_space.values()]
+        self.step = args.interval
+        self.eval_hrz = args.prediction['eval_horizon']
         self.n_step = args.prediction['control_horizon']//args.control_interval
         self.r_step = args.control_interval//args.interval
         self.n_var = self.n_act*self.n_step
@@ -71,13 +74,17 @@ class mpc_problem(Problem):
                          vtype=int)
 
     def pred_simu(self,y):
-        y = y.reshape((self.n_step,self.n_act)).tolist()
+        y = y.reshape((self.n_step,self.n_act))
+        y = np.concatenate([np.repeat(y[i:i+1,:],self.r_step,axis=0) for i in range(self.n_step)])
+        if y.shape[0] < self.eval_hrz // self.step:
+            y = np.concatenate([y,np.repeat(y[-1:,:],self.eval_hrz // self.step-y.shape[0],axis=0)],axis=0)
+
         env = get_env(self.args.env)(swmm_file = self.file)
         done = False
         idx = 0
         perf = 0
-        while not done:
-            yi = y[idx] if idx < len(y) else y[-1]
+        while not done and idx < y.shape[0]:
+            yi = y[idx]
             done = env.step([self.actions[i][act] for i,act in enumerate(yi)])
             perf += env.performance().sum()
             idx += 1
@@ -86,7 +93,10 @@ class mpc_problem(Problem):
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
         settings = np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
-        settings = np.concatenate([np.repeat(settings[:,i:i+1,...],self.r_step,axis=1) for i in range(y.shape[1])],axis=1)
+        settings = np.concatenate([np.repeat(settings[:,i:i+1,...],self.r_step,axis=1) for i in range(self.n_step)],axis=1)
+        if settings.shape[1] < self.runoff.shape[0]:
+            # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
+            settings = np.concatenate([settings,np.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
         state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
@@ -113,16 +123,45 @@ def initialize(x0,xl,xu,pop_size,prob):
         population.append(xi)
     return np.array(population)
 
-def get_runoff(env,event):
-    state = env.reset(event,global_state=True)
-    states = [state]
+def get_runoff(env,event,rate=False):
+    _ = env.reset(event,global_state=True)
+    runoffs = []
     done = False
     while not done:
         done = env.step()
-        state = env.state()
-        states.append(state)
-    runoff = np.array(states)[...,-1:]
+        if rate:
+            runoff = [[env.env._getNodeLateralInflow(node)
+                        if not env.env._isFinished else 0.0]
+                       for node in env.elements['nodes']]
+        else:
+            runoff = env.state()[...,-1:]
+        runoffs.append(runoff)
+    runoff = np.array(runoffs)
     return runoff
+
+def pred_simu(y,file,args,r=None):
+    n_step = args.prediction['control_horizon']//args.control_interval
+    r_step = args.control_interval//args.interval
+    e_hrz = args.prediction['eval_horizon'] // args.interval
+    actions = list(args.action_space.values())
+
+    y = y.reshape(n_step,len(args.action_space))
+    y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
+    if y.shape[0] < e_hrz:
+        y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
+    
+    env = get_env(args.env_name)(swmm_file = file)
+    done = False
+    idx = 0
+    perf = []
+    while not done and idx < y.shape[0]:
+        if args.prediction['no_runoff']:
+            for node,ri in zip(env.elements['nodes'],r[idx]):
+                env.env._setNodeInflow(node,ri)
+        done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
+        perf.append(env.performance())
+        idx += 1
+    return np.array(perf)
 
 def run_ea(args,margs=None,eval_file=None,setting=None):
     if margs is not None:
@@ -132,11 +171,11 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     else:
         raise AssertionError('No margs or file claimed')
 
-    if setting is not None:
+    if args.use_current and setting is not None:
         setting *= prob.n_step
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling)
     else:
-        sampling = IntegerRandomSampling(*args.sampling)
+        sampling = IntegerRandomSampling()
     crossover = SBX(*args.crossover,vtype=int,repair=RoundingRepair())
     mutation = PM(*args.mutation,vtype=int,repair=RoundingRepair())
     termination = get_termination(*args.termination)
@@ -203,60 +242,60 @@ if __name__ == '__main__':
         os.mkdir(args.result_dir)
     yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
 
-    for event in events:
-        name = os.path.basename(event).strip('.inp')
-        t0 = time.time()
-        if args.surrogate:
-            runoff = get_runoff(env,event)
-            horizon = args.prediction['control_horizon']//args.interval
-            runoff = np.stack([np.concatenate([runoff[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
-                                for idx,s in enumerate(runoff)])
-        t1 = time.time()
-        state = env.reset(event,global_state=True,seq=margs.seq_in if args.surrogate else False)
-        perf = env.performance(seq=margs.seq_in if args.surrogate else False)
-        states,perfs = [state[-1] if len(state)>2 else state],[perf[-1] if len(perf)>2 else perf]
+    # for event in events:
+    event = events[0]
+    name = os.path.basename(event).strip('.inp')
+    t0 = time.time()
+    if args.surrogate:
+        runoff = get_runoff(env,event)
+        horizon = args.prediction['eval_horizon']//args.interval
+        runoff = np.stack([np.concatenate([runoff[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                            for idx,s in enumerate(runoff)])
+    t1 = time.time()
+    state = env.reset(event,global_state=True,seq=margs.seq_in if args.surrogate else False)
+    perf = env.performance(seq=margs.seq_in if args.surrogate else False)
+    states,perfs = [state[-1] if args.surrogate else state],[perf[-1] if args.surrogate else perf]
 
-        edge_state = env.state_full(typ='links',seq=margs.seq_in if args.surrogate else False)
-        edge_states = [edge_state[-1] if args.surrogate else edge_state]
-        
-        setting = [1 for _ in env.config['action_space']]
-        settings = [setting]
-        done,i = False,0
-        while not done:
-            # TODO: decide settings every control interval not interval
-            if i*args.interval % args.control_interval == 0:
-                if args.surrogate:
-                    if margs.if_flood:
-                        f = (perf>0).astype(int)
-                        f = np.eye(2)[f].squeeze(-2)
-                        state = np.concatenate([state,f],axis=-1)
-                    margs.state = state
-                    margs.runoff = runoff[i]
-                    if margs.use_edge:
-                        margs.edge_state = edge_state
-                    setting = run_ea(args,margs=margs,setting=setting)
-                else:
-                    eval_file = env.get_eval_file()
-                    setting = run_ea(args,eval_file=eval_file,setting=setting)
-                done = env.step(setting)
+    edge_state = env.state_full(typ='links',seq=margs.seq_in if args.surrogate else False)
+    edge_states = [edge_state[-1] if args.surrogate else edge_state]
+    
+    setting = [1 for _ in env.config['action_space']]
+    settings = [setting]
+    done,i = False,0
+    while not done:
+        if i*args.interval % args.control_interval == 0:
+            if args.surrogate:
+                if margs.if_flood:
+                    f = (perf>0).astype(int)
+                    f = np.eye(2)[f].squeeze(-2)
+                    state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                margs.state = state
+                margs.runoff = runoff[i]
+                if margs.use_edge:
+                    margs.edge_state = edge_state
+                setting = run_ea(args,margs=margs,setting=setting)
             else:
-                done = env.step()
-            state = env.state(seq=margs.seq_in if args.surrogate else False)
-            perf = env.performance(seq=margs.seq_in if args.surrogate else False)
-            edge_state = env.state_full(margs.seq_in if args.surrogate else False,'links')
-            states.append(state[-1] if args.surrogate else state)
-            perfs.append(perf[-1] if args.surrogate else perf)
-            edge_states.append(edge_state[-1] if args.surrogate else edge_state)
-            settings.append(setting)
-            i += 1
-            print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
-        print('Runoff : {} s Simulation: {} s per step'.format(t1-t0,(time.time()-t1)/i))
-        
-        item = 'emul' if args.surrogate else 'simu'
-        np.save(os.path.join(args.result_dir,name + '_%s_state.npy'%item),np.array(states))
-        np.save(os.path.join(args.result_dir,name + '_%s_perf.npy'%item),np.array(perfs))
-        np.save(os.path.join(args.result_dir,name + '_%s_settings.npy'%item),np.array(settings))
-        np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.array(edge_states))
+                eval_file = env.get_eval_file()
+                setting = run_ea(args,eval_file=eval_file,setting=setting)
+            done = env.step(setting)
+        else:
+            done = env.step()
+        state = env.state(seq=margs.seq_in if args.surrogate else False)
+        perf = env.performance(seq=margs.seq_in if args.surrogate else False)
+        edge_state = env.state_full(margs.seq_in if args.surrogate else False,'links')
+        states.append(state[-1] if args.surrogate else state)
+        perfs.append(perf[-1] if args.surrogate else perf)
+        edge_states.append(edge_state[-1] if args.surrogate else edge_state)
+        settings.append(setting)
+        i += 1
+        print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
+    print('Runoff : {} s Simulation: {} s per step'.format(t1-t0,(time.time()-t1)/i))
+    
+    item = 'emul' if args.surrogate else 'simu'
+    np.save(os.path.join(args.result_dir,name + '_%s_state.npy'%item),np.array(states))
+    np.save(os.path.join(args.result_dir,name + '_%s_perf.npy'%item),np.array(perfs))
+    np.save(os.path.join(args.result_dir,name + '_%s_settings.npy'%item),np.array(settings))
+    np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.array(edge_states))
 
 
 

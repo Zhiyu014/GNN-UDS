@@ -49,20 +49,23 @@ class DataGenerator:
         else:
             return np.array(states),np.array(perfs),np.array(settings) if act else None
         
-    def generate(self,events,processes=1,seq=False,act=False):
+    def generate(self,events,processes=1,repeats=1,seq=False,act=False):
         if processes > 1:
             pool = mp.Pool(processes)
-            res = [pool.apply_async(func=self.simulate,args=(event,seq,act,)) for event in events]
+            res = [pool.apply_async(func=self.simulate,args=(event,seq,act,))
+                    for event in events for _ in range(repeats)]
             pool.close()
             pool.join()
             res = [r.get() for r in res]
         else:
-            res = [self.simulate(event,seq,act) for event in events]
+            res = [self.simulate(event,seq,act)
+                    for event in events for _ in range(repeats)]
         self.states,self.perfs = [np.concatenate([r[i] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
         if self.use_edge:
             self.edge_states = np.concatenate([r[-1] for r in res],axis=0) if self.use_edge else None
-        self.event_id = np.concatenate([np.repeat(i,r[0].shape[0]) for i,r in enumerate(res)])
+        self.event_id = np.concatenate([np.repeat(i,sum([r.shape[0] for r in res[i*repeats:(i+1)*repeats]]))
+                                         for i,_ in enumerate(events)])
 
     def state_split(self,states,perfs):
         h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
@@ -77,7 +80,7 @@ class DataGenerator:
         if self.if_flood:
             f = (perfs>0).astype(int)
             f = np.eye(2)[f].squeeze(-2)
-            X,Y = np.concatenate([X,f[:-n_spl]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
+            X,Y = np.concatenate([X[...,:-1],f[:-n_spl],X[...,-1:]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
         Y = np.concatenate([Y,perfs[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
         if self.recurrent:
@@ -151,7 +154,7 @@ class DataGenerator:
         norm_b = (norm[...,-2:-1] + 1e-6).astype(np.float32)
         
         if self.if_flood:
-            norm_x = np.concatenate([norm[...,:-1] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32)],axis=-1)
+            norm_x = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
             norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         else:
             norm_x = norm[...,:-1]+1e-6

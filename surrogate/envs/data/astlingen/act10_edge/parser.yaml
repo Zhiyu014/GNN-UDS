@@ -1,0 +1,6 @@
+act: rand
+data_dir: act10_edge
+env: astlingen
+repeats: 10
+simulate: true
+use_edge: true

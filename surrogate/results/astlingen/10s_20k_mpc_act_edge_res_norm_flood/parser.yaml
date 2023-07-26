@@ -1,4 +1,4 @@
 env: astlingen
 model_dir: 10s_20k_act_edge_res_norm_flood
 pop_size: 64
-result_dir: 10s_20k_mpc_edge_res_norm_flood
+result_dir: 10s_20k_mpc_act_edge_res_norm_flood

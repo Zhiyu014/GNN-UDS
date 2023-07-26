@@ -98,12 +98,12 @@ class Emulator:
         
     def build_network(self,conv=None,resnet=False,recurrent=None):
         # (T,N,in) (N,in)
-        input_shape,bound_input = (self.n_node,self.n_in),(self.n_node,self.b_in)
+        state_shape,bound_shape = (self.n_node,self.n_in),(self.n_node,self.b_in)
         if recurrent:
-            input_shape = (self.seq_in,) + input_shape
-            bound_input = (self.seq_out,) + bound_input
-        X_in = Input(shape=input_shape)
-        B_in = Input(shape=bound_input)
+            state_shape = (self.seq_in,) + state_shape
+            bound_shape = (self.seq_out,) + bound_shape
+        X_in = Input(shape=state_shape)
+        B_in = Input(shape=bound_shape)
         inp = [X_in,B_in]
         if conv:
             Adj_in = Input(self.n_node,)
@@ -128,19 +128,19 @@ class Emulator:
 
 
         if self.use_edge:
-            edge_input_shape = (self.seq_in,self.n_edge,self.e_in,) if recurrent else (self.n_edge,self.e_in,)
-            E_in = Input(shape=edge_input_shape)
+            edge_state_shape = (self.seq_in,self.n_edge,self.e_in,) if recurrent else (self.n_edge,self.e_in,)
+            E_in = Input(shape=edge_state_shape)
             inp += [E_in]
             if conv:
                 Eadj_in = Input(self.n_edge,)
                 inp += [Eadj_in]
             if self.act:
-                AE_in = Input(shape=edge_input_shape[:-1]+(1,))
+                AE_in = Input(shape=edge_state_shape[:-1]+(1,))
                 inp += [AE_in]
 
         # Embedding block
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
-        x = reshape(X_in,(-1,)+tuple(input_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
+        x = reshape(X_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
         x = Dense(self.embed_size,activation=self.activation)(x) # Embedding
         res = [x]
         b = Dense(self.embed_size//2,activation=self.activation)(B_in)  # Boundary Embedding (B,T_out,N,E)
@@ -172,14 +172,14 @@ class Emulator:
 
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-        x_out = reshape(x,(-1,)+input_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+input_shape[:-2]+(x.shape[-1],)) 
+        x_out = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
         res += [x_out]
         #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> （B,T,N,E)
         x = Add()(res) if resnet else x_out
 
         if self.use_edge:
             # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-            e_out = reshape(e,(-1,)+edge_input_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_input_shape[:-2]+(e.shape[-1],)) 
+            e_out = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
             res_e += [e_out]
             #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B,T,N,E)
             e = Add()(res_e) if resnet else e_out
@@ -268,11 +268,13 @@ class Emulator:
                 e = net(self.embed_size,activation=self.activation)(e)
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-        x = reshape(x,(-1,)+input_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+input_shape[:-2]+(x.shape[-1],)) 
+        state_shape = (self.seq_out,) + state_shape[1:] if recurrent else state_shape
+        x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
 
         if self.use_edge:
             # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-            e = reshape(e,(-1,)+edge_input_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_input_shape[:-2]+(e.shape[-1],)) 
+            edge_state_shape = (self.seq_out,) + edge_state_shape[1:] if recurrent else edge_state_shape
+            e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
 
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
@@ -334,7 +336,7 @@ class Emulator:
                 adj = self.get_adj_action(a)
             if self.use_edge:
                 ae = self.get_edge_action(a)
-            else:
+            if not self.edge_fusion:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
@@ -361,7 +363,7 @@ class Emulator:
                     if self.act:
                         if self.use_edge:
                             edge_pred = concat([edge_pred[...,:-1],tf.multiply(edge_pred[...,-1:],ae[:,i:i+self.seq_out,...] if self.recurrent else ae)],axis=-1)                                
-                        if not (self.use_edge and self.edge_fusion):
+                        if not self.edge_fusion:
                             pred = concat([tf.stack([pred[...,0],
                             tf.multiply(pred[...,1],a_in[:,i:i+self.seq_out,...] if self.recurrent else a_in),
                             tf.multiply(pred[...,2],a_out[:,i:i+self.seq_out,...] if self.recurrent else a_out)],axis=-1),
@@ -381,7 +383,7 @@ class Emulator:
                         pred = concat([pred[...,:1],node_inflow,node_outflow,pred[...,1:]],axis=-1)
 
                     preds.append(pred)
-                    x = concat([x[:,1:,...],pred[:,:1,...]],axis=1) if self.recurrent else pred
+                    x = concat([x[:,1:,...],concat([pred[:,:1,...],b[:,i:i+self.seq_out,...]],axis=-1)],axis=1) if self.recurrent else concat([pred,b],axis=-1)
                     if self.use_edge:
                         edge_preds.append(edge_pred)
                         if self.act:
@@ -408,7 +410,7 @@ class Emulator:
                 if self.act:
                     if self.use_edge:
                         edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
-                    if not (self.use_edge and self.edge_fusion):
+                    if not self.edge_fusion:
                         preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
 
                 if self.use_edge and self.edge_fusion:
@@ -525,7 +527,7 @@ class Emulator:
                 adj = self.get_adj_action(a)
             if self.use_edge:
                 ae = self.get_edge_action(a)
-            else:
+            if not self.edge_fusion:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
         preds = []
         if self.use_edge:
@@ -562,7 +564,7 @@ class Emulator:
                     if self.act:
                         if self.use_edge:
                             ey[...,-1:] *= ae[idx,i:i+self.seq_out,...] if self.recurrent else ae[idx]
-                        if not (self.use_edge and self.edge_fusion):
+                        if not self.edge_fusion:
                             y[...,2] *= a_out[idx,i:i+self.seq_out,...] if self.recurrent else a_out[idx,...]
                             y[...,1] *= a_in[idx,i:i+self.seq_out,...] if self.recurrent else a_in[idx,...]
 
@@ -579,7 +581,7 @@ class Emulator:
                         y = self.normalize(y,'y',True)
 
                     q_w,y = self.constrain(y,b_i)
-                    x = np.concatenate([x[1:],y[:1]],axis=0) if self.recurrent else y
+                    x = np.concatenate([x[1:],np.concatenate([y[:1],b_i],axis=-1)],axis=0) if self.recurrent else np.concatenate([y,b_i],axis=-1)
                     qws.append(q_w)
                     ys.append(y)
                     if self.use_edge:
@@ -613,7 +615,7 @@ class Emulator:
                 if self.act:
                     if self.use_edge:
                         ey[...,-1:] *= ae[idx]
-                    if not (self.use_edge and self.edge_fusion):
+                    if not self.edge_fusion:
                         y[...,2] *= a_out[idx,...]
                         y[...,1] *= a_in[idx,...]
 
@@ -656,7 +658,7 @@ class Emulator:
                     adj = self.get_adj_action(a[:,sc,...])
                 if self.use_edge:
                     ae = self.get_edge_action(a[:,sc,...])
-                else:
+                if not self.edge_fusion:
                     a_out,a_in = self.get_action(a[:,sc,...])
             inp = [self.normalize(x,'x'),self.normalize(b,'b')] if self.norm else [x,b]
             # inp = [expand_dims(dat,0) for dat in inp]
@@ -681,7 +683,7 @@ class Emulator:
             if self.act:
                 if self.use_edge:
                     ey[...,-1:] *= ae
-                if not (self.use_edge and self.edge_fusion):
+                if not self.edge_fusion:
                     y[...,2] *= a_out
                     y[...,1] *= a_in
             if self.use_edge and self.edge_fusion:
@@ -697,11 +699,11 @@ class Emulator:
 
             if self.recurrent and self.seq_in > self.seq_out:    
                 x = np.concatenate([x[:,self.seq_out-self.seq_in:,...],
-                                    np.concatenate([y[...,:-2],b,y[...,-2:]] if self.if_flood else [y,b],axis=-1)],axis=1)
+                                    np.concatenate([y,b],axis=-1)],axis=1)
                 if self.use_edge:
                     ex = np.concatenate([ex[:,self.seq_out-self.seq_in:,...],np.concatenate([ey,ae],axis=-1) if self.act else ey],axis=1)
             else:
-                x = np.concatenate([y[...,:-2],b,y[...,-2:]] if self.if_flood else [y,b],axis=-1)
+                x = np.concatenate([y,b],axis=-1)
                 if self.use_edge:
                     ex = np.concatenate([ey,ae],axis=-1)
 

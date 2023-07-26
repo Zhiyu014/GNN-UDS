@@ -1,0 +1,17 @@
+act: rand
+batch_size: 32
+conv: GAT
+data_dir: act_edge
+use_edge: true
+edge_fusion: true
+env: astlingen
+epochs: 20000
+if_flood: true
+model_dir: 10s_20k_act_edgef_res_norm_flood_roll
+norm: true
+recurrent: Conv1D
+resnet: true
+roll: true
+seq_in: 10
+seq_out: 5
+train: true

@@ -273,3 +273,7 @@ class env_base(environment):
         flow_per_ft3 = [1,448.831169,0.00646317,0.0283168,28.3168,2.446576]
         return length_per_ft[unit],flow_per_ft3[unit]
 
+    def _setNodeInflow(self,ID,flow_rate):
+        # Set lateral inflow rate
+        return self.sim._model.setNodeInflow(ID,flow_rate)
+                

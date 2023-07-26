@@ -378,21 +378,28 @@ class astlingen(scenario):
             os.mkdir(os.path.dirname(hsf_file))
         return self.env.save_hotstart(hsf_file)
 
-    def create_eval_file(self,hsf_file=None):
+    def create_eval_file(self,hsf_file=None,no_runoff=False):
         ct = self.env.methods['simulation_time']()
         inp = read_inp_file(self.config['swmm_input'])
 
         # Set the simulation time & hsf options
         inp['OPTIONS']['START_DATE'] = inp['OPTIONS']['REPORT_START_DATE'] = ct.date()
         inp['OPTIONS']['START_TIME'] = inp['OPTIONS']['REPORT_START_TIME'] = ct.time()
-        inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).date()
-        inp['OPTIONS']['END_TIME'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).time()
+        # inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).date()
+        # inp['OPTIONS']['END_TIME'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).time()
         
         if hsf_file is not None:
             if 'FILES' not in inp:
                 inp['FILES'] = FilesSection()
             inp['FILES']['USE HOTSTART'] = hsf_file
         
+        # Set the outlet of subcatchments to themselves if no_runoff
+        if no_runoff:
+            for k,v in inp.SUBCATCHMENTS.items():
+                v.Outlet = v.Name
+            if 'DWF' in inp.keys():
+                inp.pop('DWF')
+            
         # Set the Control Rules
         # inp['CONTROLS'] = Control.create_section()
         # for i in range(self.config['prediction']['control_horizon']//self.config['control_interval']):
@@ -417,13 +424,13 @@ class astlingen(scenario):
 
         return eval_inp_file
 
-    def get_eval_file(self):
+    def get_eval_file(self,no_runoff=False):
         if self.env._isFinished:
             print('Simulation already finished')
             return None
         else:
             hsf_file = self.save_hotstart()
-            eval_file = self.create_eval_file(hsf_file)
+            eval_file = self.create_eval_file(hsf_file,no_runoff)
             return eval_file
 
     def get_current_setting(self):
