@@ -1,5 +1,4 @@
 data_dir: edge
-edge_fusion: true
 env: shunqing
 simulate: true
-use_adj: false
+use_edge: true

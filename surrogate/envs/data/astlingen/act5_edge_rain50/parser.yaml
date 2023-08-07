@@ -1,0 +1,6 @@
+act: rand
+data_dir: act5_edge_rain50
+env: astlingen
+repeats: 5
+simulate: true
+use_edge: true

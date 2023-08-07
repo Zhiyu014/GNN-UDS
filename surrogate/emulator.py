@@ -1,17 +1,17 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add
+from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract
+from tensorflow.keras import activations
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
 from tensorflow.keras import mixed_precision
 import numpy as np
 import os
-from spektral.layers import GCNConv,GATConv
-from spektral.utils.convolution import gcn_filter
+from spektral.layers import GCNConv,GATConv,ECCConv,GeneralConv,DiffusionConv
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 # mixed_precision.set_global_policy('mixed_float16')
 
 # - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?  TO reduce model
@@ -64,6 +64,7 @@ class Emulator:
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
             self.n_in += 2
+        self.epsilon = getattr(args,"epsilon",0.1)
 
         self.use_edge = getattr(args,"use_edge",False)
         self.edge_fusion = getattr(args,"edge_fusion",False)
@@ -77,7 +78,8 @@ class Emulator:
             if self.edge_fusion:
                 self.n_out -= 2 # exclude q_in, q_out
                 self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
-
+                self.node_index = tf.convert_to_tensor(getattr(args,"node_index"),dtype=tf.int32)
+                self.edge_index = tf.convert_to_tensor(getattr(args,"edge_index"),dtype=tf.int32)
         self.adj = getattr(args,"adj",np.eye(self.n_node))
         if self.act:
             self.act_edges = getattr(args,"act_edges")
@@ -108,16 +110,27 @@ class Emulator:
         if conv:
             Adj_in = Input(self.n_node,)
             inp += [Adj_in]
+            # maybe problematic for directed graph, use GeneralConv instead
             if 'GCN' in conv:
                 net = GCNConv
-                self.filter = gcn_filter(self.adj)
+                self.filter = GCNConv.preprocess(self.adj)
                 if self.use_edge:
-                    self.edge_filter = gcn_filter(self.edge_adj)
+                    self.edge_filter = GCNConv.preprocess(self.edge_adj)
+            elif 'Diff' in conv:
+                net = DiffusionConv
+                self.filter = DiffusionConv.preprocess(self.adj)
+                if self.use_edge:
+                    self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
             elif 'GAT' in conv:
                 net = GATConv
-                self.filter = self.adj.copy()
+                self.filter = self.adj.astype(int)
                 if self.use_edge:
-                    self.edge_filter = self.edge_adj.copy()
+                    self.edge_filter = self.edge_adj.astype(int)
+            elif 'General' in conv:
+                net = GeneralConv
+                self.filter = self.adj.astype(int)
+                if self.use_edge:
+                    self.edge_filter = self.edge_adj.astype(int)
             else:
                 raise AssertionError("Unknown Convolution layer %s"%str(conv))
             if self.act and self.use_adj:
@@ -125,7 +138,6 @@ class Emulator:
                 inp += [A_in]
         else:
             net = Dense
-
 
         if self.use_edge:
             edge_state_shape = (self.seq_in,self.n_edge,self.e_in,) if recurrent else (self.n_edge,self.e_in,)
@@ -137,60 +149,62 @@ class Emulator:
             if self.act:
                 AE_in = Input(shape=edge_state_shape[:-1]+(1,))
                 inp += [AE_in]
+        activation = activations.get(self.activation)
 
         # Embedding block
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
         x = reshape(X_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
-        x = Dense(self.embed_size,activation=self.activation)(x) # Embedding
-        res = [x]
-        b = Dense(self.embed_size//2,activation=self.activation)(B_in)  # Boundary Embedding (B,T_out,N,E)
+        x = Dense(self.embed_size,activation='linear')(x) # Embedding
+        res = x[:,-1:,...] if recurrent else x  # Keep the identity original with no activation
+        x = activation(x)
+        b = reshape(B_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.b_in,)) if not conv else B_in
+        b = Dense(self.embed_size//2,activation=self.activation)(b)  # Boundary Embedding (B,T_out,N,E)
         if self.use_edge:
-            e = Dense(self.embed_size,activation=self.activation)(E_in)  # Edge attr Embedding (B,T_in,N,E)
-            res_e = [e]
+            e = reshape(E_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*self.e_in,)) if not conv else E_in
+            e = Dense(self.embed_size,activation='linear')(e)  # Edge attr Embedding (B,T_in,N,E)
+            res_e = e[:,-1:,...] if recurrent else e
+            e = activation(e)
             # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
             e = reshape(e,(-1,) + tuple(e.shape[2:])) if recurrent else e
             if self.act:
-                ae = Dense(self.embed_size//2,activation=self.activation)(AE_in)  # Control Embedding (B,T_out,N,E)
+                ae = reshape(AE_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*1,)) if not conv else AE_in
+                ae = Dense(self.embed_size//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,E)
 
-        # Spatial block
+        # Spatial block: Does spatial and temporal nets need combination one-by-one?
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
         x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
         for _ in range(self.n_sp_layer):
-            if self.use_edge and self.edge_fusion:
-                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
-                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
-                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-                # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
-                # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
+            if conv and self.use_edge and self.edge_fusion:
+                # n,n,e   B,E,H  how to convert e from beh to bnnh?
+                x_e = tf.gather(e,self.edge_index,axis=1)
+                e_x = tf.gather(x,self.node_index,axis=1)
+                x = ECCConv(self.embed_size)([x,Adj_in,x_e])
+                e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
+                # x_e = Dense(self.embed_size//2,activation=self.activation)(e)
+                # e_x = Dense(self.embed_size//2,activation=self.activation)(x)
+                # x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                # e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
-            # b = Dense(self.embed_size//2,activation=self.activation)(b)
             if self.use_edge:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
 
-
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-        x_out = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
-        res += [x_out]
-        #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> （B,T,N,E)
-        x = Add()(res) if resnet else x_out
-
+        x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
         if self.use_edge:
             # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
-            e_out = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
-            res_e += [e_out]
-            #  (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B,T,N,E)
-            e = Add()(res_e) if resnet else e_out
+            e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
 
-
-        # Recurrent block
+        # Recurrent block: No need for b and ae temporal nets
         if recurrent:
+            # Model the spatio-temporal differences
+            # x = Subtract()([x,concat([tf.zeros_like(x[:,0:1,...]),x[:,1:,...]],axis=1)])
             # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E)
             x = transpose(x,[0,2,1,3]) if conv else x
-            b = transpose(b,[0,2,1,3])
+            b = transpose(b,[0,2,1,3]) if conv else b
             if self.use_edge:
+                # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
                 e = transpose(e,[0,2,1,3]) if conv else e
                 if self.act:
                     ae = transpose(ae,[0,2,1,3])
@@ -205,7 +219,7 @@ class Emulator:
                 x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
                 b_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
                 if self.use_edge:
-                    e_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
+                    e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
                     if self.act:
                         ae_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
             else:
@@ -213,7 +227,7 @@ class Emulator:
             
             # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
             x = reshape(x,(-1,self.seq_in,x.shape[-1])) if conv else x
-            b = reshape(b,(-1,self.seq_out,b.shape[-1]))
+            b = reshape(b,(-1,self.seq_out,b.shape[-1])) if conv else b
             # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
             for i in range(self.n_tp_layer):
                 x = x_tem_nets[i](x)
@@ -221,10 +235,11 @@ class Emulator:
             x = x[...,-self.seq_out:,:] # seq_in >= seq_out if roll
             # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
             x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
-            b = reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1]))
-            # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
             x = transpose(x,[0,2,1,3]) if conv else x
-            b = transpose(b,[0,2,1,3])
+            b = b[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+            b = reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1])) if conv else b
+            # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+            b = transpose(b,[0,2,1,3]) if conv else b
             if self.use_edge:
                 e = reshape(e,(-1,self.seq_in,e.shape[-1])) if conv else e
                 for i in range(self.n_tp_layer):
@@ -236,13 +251,20 @@ class Emulator:
                     ae = reshape(ae,(-1,self.seq_out,ae.shape[-1]))
                     for i in range(self.n_tp_layer):
                         ae = ae_tem_nets[i](ae)
+                    ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
                     ae = reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1]))
                     ae = transpose(ae,[0,2,1,3])
 
-        # boundary in
+
+        # Boundary in: Add or concat? maybe add makes more sense
+        # b = Dense(self.hidden_dim,activation=self.activation)(B_in)  # Boundary Embedding (B,T_out,N,H)
         x = concat([x,b],axis=-1)
+        # x = Add()([x,b])
         if self.use_edge and self.act:
+            # ae = Dense(self.hidden_dim//2,activation=self.activation)(AE_in)  # Control Embedding (B,T_out,N,H)
             e = concat([e,ae],axis=-1)
+            # e = Add()([e,ae])
+
 
         # Spatial block 2
         x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
@@ -254,13 +276,16 @@ class Emulator:
             else:
                 A = Adj_in
         for _ in range(self.n_sp_layer):
-            if self.use_edge and self.edge_fusion:
-                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
-                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
-                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-                # x = concat([x,tf.matmul(tf.abs(self.node_edge),x_e)],axis=-1)
-                # e = concat([e,tf.matmul(transpose(tf.abs(self.node_edge)),e_x)],axis=-1)
+            if conv and self.use_edge and self.edge_fusion:
+                # n,n,e   B,E,H  how to convert e from beh to bnnh?
+                x_e = tf.gather(e,self.edge_index,axis=1)
+                e_x = tf.gather(x,self.node_index,axis=1)
+                x = ECCConv(self.embed_size)([x,Adj_in,x_e])
+                e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
+                # x_e = Dense(self.embed_size//2,activation=self.activation)(e)
+                # e_x = Dense(self.embed_size//2,activation=self.activation)(x)
+                # x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                # e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             if self.use_edge:
@@ -270,16 +295,24 @@ class Emulator:
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         state_shape = (self.seq_out,) + state_shape[1:] if recurrent else state_shape
         x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
+        
+        # resnet
+        x_out = Dense(self.embed_size,activation='linear')(x)
+        x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if recurrent else Add()([res,x_out]) if resnet else x_out
+        x = activation(x)   # if activation is needed here?
 
         if self.use_edge:
             # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
             edge_state_shape = (self.seq_out,) + edge_state_shape[1:] if recurrent else edge_state_shape
             e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
-
+            # resnet
+            e_out = Dense(self.embed_size,activation='linear')(e)
+            e = Add()([cumsum(e_out,axis=1),tile(res_e,(1,self.seq_out,)+(1,)*len(res_e.shape[2:]))]) if recurrent else Add()([res_e,e_out]) if resnet else e_out
+            e = activation(e)
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
         # (B,T_out,N,H) (B,T_out,H) --> (B,T_out,N,n_out)
-        out = Dense(out_shape,activation='linear')(x)
+        out = Dense(out_shape,activation='tanh' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
             out_shape = 2 if conv else 2 * self.n_node
@@ -290,7 +323,7 @@ class Emulator:
 
         if self.use_edge:
             out_shape = self.e_out if conv else self.e_out * self.n_edge
-            e_out = Dense(out_shape,activation='linear')(e)
+            e_out = Dense(out_shape,activation='tanh' if self.norm else 'linear')(e)
             e_out = reshape(e_out,(-1,self.seq_out,self.n_edge,self.e_out))
             out = [out,e_out]
 
@@ -306,7 +339,11 @@ class Emulator:
         adj = np.apply_along_axis(get_act,-1,a)
 
         if 'GCN' in self.conv:
-            adj = gcn_filter(adj)
+            adj = GCNConv.preprocess(adj)
+        elif 'Diff' in self.conv:
+            adj = DiffusionConv.preprocess(adj)
+        else:
+            adj = adj.astype(int)
         return adj
 
     def get_action(self,a):
@@ -726,8 +763,9 @@ class Emulator:
             h = self.hmax * f + h * ~f
             y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
         else:
-            # q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1) * (self.hmax > 0)
-            q_w = np.clip(q_us + r - q_ds,0,np.inf)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (self.hmax > 0)
+            if self.epsilon > 0:
+                q_w *= ((self.hmax - h) < self.epsilon)
             y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
@@ -740,8 +778,10 @@ class Emulator:
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
             h = np.clip(h,0,self.hmax)
-            # q_w = np.clip(q_us + r - q_ds,0,np.inf) * ((self.hmax - h) < 0.1) * (self.hmax > 0)
-            q_w = np.clip(q_us + r - q_ds,0,np.inf)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (self.hmax > 0)
+            if self.epsilon > 0:
+                q_w *= ((self.hmax - h) < self.epsilon)
+                
         # err = q_us + r - q_ds - q_w
         # return tf.sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
         return q_w

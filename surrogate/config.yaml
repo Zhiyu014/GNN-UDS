@@ -1,10 +1,18 @@
 shunqing:
+  # env args
+  env: shunqing
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix: bpswmm
+
   # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
   act: 'False'
   processes: 5
-  repeat: 1
+  repeats: 1
   use_edge: False
 
   # train args
@@ -35,19 +43,27 @@ shunqing:
   seq_out: 1
   resnet: False
   if_flood: False
+  epsilon: 0.1
 
   # test args
   test: False
   result_dir: ./results/shunqing/
 
-
 RedChicoSur:
+  # env args
+  env: RedChicoSur
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix:
+
   # simulate args
   simulate: False
   data_dir: ./envs/data/RedChicoSur/
   act: 'False'
   processes: 5
-  repeat: 1
+  repeats: 1
   use_edge: False
 
   # train args
@@ -78,18 +94,29 @@ RedChicoSur:
   seq_out: 1
   resnet: False
   if_flood: False
+  epsilon: 0.1
 
   # test args
   test: False
   result_dir: ./results/RedChicoSur/
+  rain_dir: ./envs/config/
+  rain_suffix:
 
 astlingen:
+  # env args
+  env: astlingen
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix:
+
   # simulate args
   simulate: False
   data_dir: ./envs/data/astlingen/
   act: 'False'
   processes: 5
-  repeat: 1
+  repeats: 1
   use_edge: False
 
   # train args
@@ -120,6 +147,7 @@ astlingen:
   seq_out: 1
   resnet: False
   if_flood: False
+  epsilon: 0.1
 
   # test args
   test: False

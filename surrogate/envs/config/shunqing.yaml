@@ -13,13 +13,13 @@ global_state:
     - depthN
   - !!python/tuple
     - nodes
-    - cuminflow
+    - totalinflow
   - !!python/tuple
     - nodes
     - totaloutflow
   - !!python/tuple
     - nodes
-    - cum_lateral_inflow
+    - lateralinflow
   - !!python/tuple
     - links
     - depthL
@@ -52,6 +52,11 @@ performance_targets:
     - cumflooding
     - 1
 
+flood:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+    
 # Rainfall scenario parameters
 rainfall:
   func: generate_file

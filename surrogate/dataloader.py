@@ -21,7 +21,7 @@ class DataGenerator:
     
     def simulate(self, event, seq = False, act = False, hotstart = False):
         state = self.env.reset(event,global_state=True,seq=seq)
-        perf = self.env.performance(seq=seq)
+        perf = self.env.flood(seq=seq)
         states,perfs = [state],[perf]
         if self.use_edge:
             edge_state = self.env.state_full(seq,'links')
@@ -36,7 +36,7 @@ class DataGenerator:
             setting = self.env.controller(state,act) if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
-            perf = self.env.performance(seq=seq)
+            perf = self.env.flood(seq=seq)
             states.append(state)
             perfs.append(perf)
             settings.append(setting)
@@ -64,7 +64,7 @@ class DataGenerator:
         self.settings = np.concatenate([r[2] for r in res],axis=0) if act else None
         if self.use_edge:
             self.edge_states = np.concatenate([r[-1] for r in res],axis=0) if self.use_edge else None
-        self.event_id = np.concatenate([np.repeat(i,sum([r.shape[0] for r in res[i*repeats:(i+1)*repeats]]))
+        self.event_id = np.concatenate([np.repeat(i,sum([r[0].shape[0] for r in res[i*repeats:(i+1)*repeats]]))
                                          for i,_ in enumerate(events)])
 
     def state_split(self,states,perfs):

@@ -100,6 +100,12 @@ performance_targets:
     - cumflooding
     - 1
 
+# Flooding volume in each node
+flood:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+    
 # Rainfall scenario parameters
 rainfall:
   func: generate_file

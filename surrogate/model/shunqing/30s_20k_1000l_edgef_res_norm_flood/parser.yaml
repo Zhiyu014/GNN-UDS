@@ -1,0 +1,16 @@
+batch_size: 64
+conv: GCN
+data_dir: edge
+edge_fusion: true
+epochs: 20000
+if_flood: true
+length: 2000.0
+model_dir: 30s_20k_1000l_edgef_res_norm_flood
+n_tp_layer: 4
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 30
+seq_out: 30
+train: true
+use_edge: true

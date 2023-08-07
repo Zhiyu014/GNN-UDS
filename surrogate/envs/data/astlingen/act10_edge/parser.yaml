@@ -1,4 +1,3 @@
-act: rand
 data_dir: act10_edge
 env: astlingen
 repeats: 10

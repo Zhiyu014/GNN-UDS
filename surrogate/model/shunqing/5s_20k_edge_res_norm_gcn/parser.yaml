@@ -1,0 +1,14 @@
+batch_size: 128
+conv: GCN
+data_dir: edge
+embed_size: 256
+env: shunqing
+epochs: 20000
+model_dir: 5s_20k_edge_res_norm_flood_gcn
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 5
+seq_out: 5
+train: true
+use_edge: true

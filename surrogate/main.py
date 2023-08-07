@@ -8,13 +8,20 @@ import os,time
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
-from line_profiler import LineProfiler
+# from line_profiler import LineProfiler
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
 
-    # simulate args
+    # env args
     parser.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
+    parser.add_argument('--directed',action='store_true',help='if use directed graph')
+    parser.add_argument('--length',type=float,default=0,help='adjacency range')
+    parser.add_argument('--order',type=int,default=1,help='adjacency order')
+    parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
+    parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
+
+    # simulate args
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
     parser.add_argument('--act',type=str,default='False',help='if and what control actions')
@@ -50,6 +57,7 @@ def parser(config=None):
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--if_flood',action='store_true',help='if classify flooding or not')
+    parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
 
     # test args
     parser.add_argument('--test',action="store_true",help='if test the emulator')
@@ -84,20 +92,20 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'astlingen',
-    #             'data_dir':'./envs/data/astlingen/act_edge/',
-    #             'act':True,
-    #             'model_dir':'./model/astlingen/10s_20k_act_edgef_res_norm_flood_roll/',
-    #             'batch_size':32,
+    #             'env':'shunqing',
+    #             'data_dir':'./envs/data/shunqing/edge/',
+    #             'act':False,
+    #             'model_dir':'./model/shunqing/5s_20k_res_norm_flood_nn/',
+    #             'batch_size':64,
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
-    #             'roll':True,
-    #             'use_edge':True,'edge_fusion':True,
+    #             'roll':False,
+    #             'use_edge':False,'edge_fusion':False,
     #             'balance':False,
-    #             'seq_in':10,'seq_out':5,
+    #             'seq_in':5,'seq_out':5,
     #             'if_flood':True,
-    #             'conv':'GAT',
+    #             'conv':'False',
     #             'recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
@@ -120,7 +128,7 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     env = get_env(args.env)()
-    env_args = env.get_args()
+    env_args = env.get_args(args.directed,args.length,args.order)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act != 'False' and args.act
@@ -128,13 +136,17 @@ if __name__ == "__main__":
     args.use_edge = args.use_edge or args.edge_fusion
 
     dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.use_edge,args.data_dir)
-
-
-    events = get_inp_files(env.config['swmm_input'],env.config['rainfall'])
+    
     if args.simulate:
         if not os.path.exists(args.data_dir):
             os.mkdir(args.data_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.data_dir,'parser.yaml'),'w'))
+        rain_arg = env.config['rainfall']
+        if 'rain_dir' in config:
+            rain_arg['rainfall_events'] = args.rain_dir
+        if 'rain_suffix' in config:
+            rain_arg['suffix'] = args.rain_suffix
+        events = get_inp_files(env.config['swmm_input'],rain_arg)
         dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act)
         dG.save(args.data_dir)
 
@@ -172,6 +184,12 @@ if __name__ == "__main__":
         if not os.path.exists(args.result_dir):
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
+        rain_arg = env.config['rainfall']
+        if 'rain_dir' in config:
+            rain_arg['rainfall_events'] = args.rain_dir
+        if 'rain_suffix' in config:
+            rain_arg['suffix'] = args.rain_suffix
+        events = get_inp_files(env.config['swmm_input'],rain_arg)
         for event in events:
             name = os.path.basename(event).strip('.inp')
             if os.path.exists(os.path.join(args.result_dir,name + '_states.npy')):

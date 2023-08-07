@@ -52,7 +52,9 @@ class env_base(environment):
         self.methods.update({'fulldepth':self._getNodefullDepth,
                              'cumflooding':self._getCumFlooding,
                              'cuminflow':self._getNodeCumInflow,
+                             'totalinflow':self._getNodeTotalInflow,
                              'totaloutflow':self._getNodeTotalOutflow,
+                             'lateralinflow':self._getNodeLateralInflow,
                              'cum_lateral_inflow':self._getNodeLateralInflowVol,
                              'flow':self._getLinkFlow,
                              'setting':self._getLinkSetting,
@@ -154,19 +156,23 @@ class env_base(environment):
     
     def _getNodeTotalInflow(self,ID):
         # Inflow rate
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value)
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value) * self.config['interval'] * 60
     
     def _getNodeCumInflow(self,ID):
         # Cumulative inflow volume
-        return self.sim._model.node_inflow(ID)
-                
+        if ID == 'system':
+            stats = self.sim._model.flow_routing_stats()
+            return sum([v for k,v in stats.items() if k.endswith('inflow')])
+        else:
+            return self.sim._model.node_inflow(ID)
+        
     def _getNodeTotalOutflow(self,ID):
         # Outflow rate * step
         return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['interval'] * 60
         
     def _getNodeLateralInflow(self,ID):
         # Lateral inflow rate
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value)
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value) * self.config['interval'] * 60
 
     def _getNodeLateralInflowVol(self,ID):
         # Cumulative lateral inflow volume
