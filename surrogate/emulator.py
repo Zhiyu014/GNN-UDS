@@ -7,6 +7,7 @@ from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
 from tensorflow.keras import mixed_precision
 import numpy as np
 import os
+# from line_profiler import LineProfiler
 from spektral.layers import GCNConv,GATConv,ECCConv,GeneralConv,DiffusionConv
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
@@ -504,18 +505,27 @@ class Emulator:
         else:
             test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 
-        train_dats = dG.prepare(seq,train_ids)
-        test_dats = dG.prepare(seq,test_ids)
+        try:
+            train_datas = dG.prepare(seq,train_ids)
+            test_datas = dG.prepare(seq,test_ids)
+            _dataloaded = True
+        except:
+            print('Full data load failed, prepare per batch')
+            _dataloaded = False
 
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
             # Training
-            idxs = np.random.choice(range(train_dats[0].shape[0]),batch_size)
-            x,a,b,y = [dat[idxs] if dat is not None else dat for dat in train_dats[:4]]
+            if _dataloaded:
+                idxs = np.random.choice(range(train_datas[0].shape[0]),batch_size)
+                train_dats = [dat[idxs] if dat is not None else dat for dat in train_datas]
+            else:
+                train_dats = dG.prepare_batch(seq,train_ids,batch_size)
+            x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
             if self.use_edge:
-                ex,ey = [dat[idxs] for dat in train_dats[-2:]]
+                ex,ey = [dat for dat in train_dats[-2:]]
                 if self.norm:
                     ex,ey = [self.normalize(dat,'e') for dat in [ex,ey]]
             else:
@@ -524,12 +534,16 @@ class Emulator:
             train_losses.append(train_loss)
 
             # Validation
-            idxs = np.random.choice(range(test_dats[0].shape[0]),batch_size)
-            x,a,b,y = [dat[idxs] if dat is not None else dat for dat in test_dats[:4]]
+            if _dataloaded:
+                idxs = np.random.choice(range(test_datas[0].shape[0]),batch_size)
+                test_dats = [dat[idxs] if dat is not None else dat for dat in test_datas]
+            else:
+                test_dats = dG.prepare_batch(seq,test_ids,batch_size)
+            x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
             if self.use_edge:
-                ex,ey = [dat[idxs] for dat in test_dats[-2:]]
+                ex,ey = [dat for dat in test_dats[-2:]]
                 if self.norm:
                     ex,ey = [self.normalize(dat,'e') for dat in [ex,ey]]
             else:

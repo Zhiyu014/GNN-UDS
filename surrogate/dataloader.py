@@ -105,19 +105,52 @@ class DataGenerator:
         res = []
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         for idx in event:
-            num = self.event_id==idx
+            num = np.where(self.event_id==idx)[0]
             if seq > 0:
                 states,perfs = [self.expand_seq(dat[num],seq) for dat in [self.states,self.perfs]]
                 edge_states = self.expand_seq(self.edge_states[num],seq) if self.use_edge else None
                 settings = self.expand_seq(self.settings[num],seq,False) if self.settings is not None else None
+            else:
+                states,perfs = self.states[num],self.perfs[num]
+                edge_states = self.edge_states[num] if self.use_edge else None
+                settings = self.settings[num] if self.settings is not None else None
             x,b,y = self.state_split(states,perfs)
             ex,ey = self.edge_state_split(edge_states) if self.use_edge else (None,None)
             if self.settings is not None:
-                settings = settings[self.seq_out:,:self.seq_out,...] if self.recurrent else settings[1:]
-            # r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y]]
+                settings = settings[self.seq_out:,:self.seq_out,...] if self.recurrent else settings[1:]            
             r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
             res.append(r)
         return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
+
+    def prepare_batch(self,seq=0,event=None,batch_size=32):
+        res = []
+        event = np.arange(int(max(self.event_id))+1) if event is None else event
+        event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
+        numbs = sum([idx.shape[0] for idx in event_idxs])
+        event_batch = np.random.choice(range(len(event_idxs)),batch_size,p=[idx.shape[0]/numbs for idx in event_idxs])
+        for idx in event_batch:
+            lm,um = event_idxs[idx].min(),event_idxs[idx].max()+1
+            ix = np.random.randint(lm+seq,um-seq)
+            sli = slice(max(ix-seq+1,lm),min(ix+seq+1,um))
+            if seq > 0:
+                states,perfs = [self.expand_seq(dat[sli],seq) for dat in [self.states,self.perfs]]
+                edge_states = self.expand_seq(self.edge_states[sli],seq) if self.use_edge else None
+                settings = self.expand_seq(self.settings[sli],seq,False) if self.settings is not None else None
+            else:
+                states,perfs = [dat[sli] for dat in [self.states,self.perfs]]
+                edge_states = self.edge_states[sli] if self.use_edge else None
+                settings = self.settings[sli] if self.settings is not None else None          
+            x,b,y = self.state_split(states,perfs)
+            ex,ey = self.edge_state_split(edge_states) if self.use_edge else (None,None)
+            ex,ey = ex[-1],ey[0] if self.use_edge else (None,None)
+            if self.settings is not None:
+                settings = settings[self.seq_out,:self.seq_out,...] if self.recurrent else settings[1:]            
+            r = [dat.astype(np.float32) if dat is not None else dat for dat in [x[-1],settings,b[0],y[0],ex,ey]]
+            res.append(r)
+        return [np.stack([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
+
+
+
 
 
 

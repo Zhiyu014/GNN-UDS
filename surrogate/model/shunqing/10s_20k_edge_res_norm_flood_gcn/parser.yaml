@@ -1,10 +1,10 @@
-batch_size: 32
+batch_size: 64
 conv: GCN
 data_dir: edge
-embed_size: 256
-env: shunqing
 epochs: 20000
+if_flood: true
 model_dir: 10s_20k_edge_res_norm_flood_gcn
+n_tp_layer: 3
 norm: true
 recurrent: Conv1D
 resnet: true
