@@ -71,7 +71,7 @@ def parser(config=None):
 
     config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k)}
     for k,v in config.items():
-        if 'dir' in k:
+        if '_dir' in k:
             setattr(args,k,os.path.join(hyps[args.env][k],v))
 
     print('Training configs: {}'.format(args))

@@ -46,7 +46,7 @@ def parser(config=None):
     args = parser.parse_args()
     config = {k:v for k,v in args.__dict__.items() if v!=hyp.get(k)}
     for k,v in config.items():
-        if 'dir' in k:
+        if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
     args.termination[-1] = eval(args.termination[-1]) if args.termination[0] != 'time' else args.termination[-1]
 
