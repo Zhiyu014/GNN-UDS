@@ -4,16 +4,18 @@ import os
 from swmm_api import swmm5_run
 
 class DataGenerator:
-    def __init__(self,env,seq_in = 4,seq_out=1,recurrent=True,act = False,if_flood=False,use_edge=False,data_dir=None):
+    def __init__(self,env,data_dir=None,args=None):
         self.env = env
-        self.seq_in = seq_in
-        self.seq_out = seq_out
-        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
-        self.if_flood = if_flood
-        self.use_edge = use_edge
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
-        self.act = act
-        if act:
+        self.seq_in = getattr(args,"seq_in",6)
+        self.seq_out = getattr(args,"seq_out",1)
+        recurrent = getattr(args,"recurrent",'False')
+        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
+        self.if_flood = getattr(args,"if_flood",False)
+        self.use_edge = getattr(args,"use_edge",False)
+        self.is_outfall = getattr(args,"is_outfall",np.array([0]))
+        self.act = getattr(args,"act",False)
+        if self.act:
             self.action_table = env.config['action_space']
             # self.adj = env.get_adj()
             # self.act_edges = env.get_edge_list(list(self.action_table.keys()))
@@ -82,6 +84,9 @@ class DataGenerator:
             X,Y = np.concatenate([X[...,:-1],f[:-n_spl],X[...,-1:]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
         Y = np.concatenate([Y,perfs[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
+        if self.env.config['tide']:
+            t = h[n_spl:] * self.is_outfall
+            B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
         if self.recurrent:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
@@ -157,6 +162,9 @@ class DataGenerator:
         q_us = q_totin - r
         Y = np.stack([h,q_us,q_ds],axis=-1)
         B = np.expand_dims(r,axis=-1)
+        if self.env.config['tide']:
+            t = h * self.is_outfall
+            B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
 
         if self.if_flood:
             f1 = (perfs[0]>0).astype(int)
@@ -195,12 +203,12 @@ class DataGenerator:
         data_dir = data_dir if data_dir is not None else self.data_dir
         for name in ['states','perfs','settings','event_id']:
             if os.path.isfile(os.path.join(data_dir,name+'.npy')):
-                dat = np.load(os.path.join(data_dir,name+'.npy')).astype(np.float32)
+                dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r').astype(np.float32)
             else:
                 dat = None
             setattr(self,name,dat)
         if self.use_edge:
-            self.edge_states = np.load(os.path.join(data_dir,'edge_states.npy')).astype(np.float32)
+            self.edge_states = np.load(os.path.join(data_dir,'edge_states.npy'),mmap_mode='r').astype(np.float32)
         self.get_norm()
 
     def get_norm(self):
@@ -209,7 +217,9 @@ class DataGenerator:
         while len(norm.shape) > 2:
             norm = norm.max(axis=0)
         norm_b = (norm[...,-2:-1] + 1e-6).astype(np.float32)
-        
+        if self.env.config['tide']:
+            norm_b = np.concatenate([norm_b,norm[...,0:1]*self.is_outfall+1e-6],axis=-1).astype(np.float32)
+                    
         if self.if_flood:
             norm_x = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
             norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)

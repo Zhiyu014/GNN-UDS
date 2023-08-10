@@ -65,6 +65,9 @@ rainfall:
   MIET: 1
   gage: RainGage
 
+# if time-variant outlet boundary
+tide: False
+
 # Model predictive parameters
 prediction:
   control_horizon: 5  # Control horizon (min)

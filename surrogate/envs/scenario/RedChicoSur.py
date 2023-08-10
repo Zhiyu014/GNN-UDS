@@ -254,10 +254,16 @@ class RedChicoSur(scenario):
         nodes = self.get_features('nodes')
         if not hasattr(self,'env') or self.env._isFinished:
             inp = read_inp_file(self.config['swmm_input'])
-            args['hmax'] = np.array([inp.JUNCTIONS[node].MaxDepth if node in inp.JUNCTIONS else 0 for node in nodes])
+            args['is_outfall'] = np.array([1 if sec == 'OUTFALLS' else 0 for sec in NODE_SECTIONS
+                                           for _ in getattr(getattr(inp,sec,[]),'values',[])])
+            args['hmax'] = np.array([getattr(node,'MaxDepth',0) for sec in NODE_SECTIONS
+                                      for node in getattr(getattr(inp,sec,[]),'values',[])])
+            # It seems that a tidal outfall may have large full depth hmax above the maximum tide level
+            # args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
+            args['is_outfall'] = np.array([self.env._is_Outfall(node) for node in nodes])
             args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
-        
+
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
 

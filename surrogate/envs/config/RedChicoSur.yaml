@@ -114,4 +114,6 @@ rainfall:
   MIET: 4
   gage: P-1
 
+# if time-variant outlet boundary
+tide: False
 

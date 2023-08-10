@@ -140,18 +140,21 @@ def initialize(x0,xl,xu,pop_size,prob):
         population.append(xi)
     return np.array(population)
 
-def get_runoff(env,event,rate=False):
+def get_runoff(env,event,rate=False,tide=False):
     _ = env.reset(event,global_state=True)
     runoffs = []
     done = False
     while not done:
         done = env.step()
         if rate:
-            runoff = [[env.env._getNodeLateralInflow(node)
+            runoff = np.array([[env.env._getNodeLateralinflow(node)
                         if not env.env._isFinished else 0.0]
-                       for node in env.elements['nodes']]
+                       for node in env.elements['nodes']])
         else:
             runoff = env.state()[...,-1:]
+        if tide:
+            t = env.state()[...,:1]
+            runoff = np.concatenate([runoff,t],axis=-1)
         runoffs.append(runoff)
     runoff = np.array(runoffs)
     return runoff
@@ -275,7 +278,7 @@ if __name__ == '__main__':
         name = os.path.basename(event).strip('.inp')
         t0 = time.time()
         if args.surrogate:
-            runoff = get_runoff(env,event)
+            runoff = get_runoff(env,event,tide=args.tide)
             horizon = args.prediction['eval_horizon']//args.interval
             runoff = np.stack([np.concatenate([runoff[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
                                 for idx,s in enumerate(runoff)])
@@ -307,7 +310,7 @@ if __name__ == '__main__':
                         f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     margs.state = state
-                    if i < runoff.shape[0]:
+                    if i < runoff.shape[0]:                      
                         margs.runoff = runoff[i]
                     else:
                         continue

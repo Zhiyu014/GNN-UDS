@@ -1,6 +1,6 @@
 act: rand
 data_dir: act5_edge_rain50
-env: astlingen
+rain_dir: ast_train_events.csv
 repeats: 5
 simulate: true
 use_edge: true

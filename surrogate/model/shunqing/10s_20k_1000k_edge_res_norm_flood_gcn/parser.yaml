@@ -4,7 +4,7 @@ data_dir: edge
 epochs: 20000
 if_flood: true
 length: 1000.0
-model_dir: 10s_20k_1000k_edgef_res_norm_flood
+model_dir: 10s_20k_1000k_edge_res_norm_flood_gvn
 n_tp_layer: 3
 norm: true
 recurrent: Conv1D

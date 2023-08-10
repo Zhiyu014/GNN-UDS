@@ -262,6 +262,9 @@ class env_base(environment):
         return self.sim._model.getSubcatchResult(_subcatchmentid,
                                                  tkai.SubcResults.infilLoss.value)
 
+    def _is_Outfall(self,_nodeid):
+        return self.sim._model.getNodeType(_nodeid).value == tkai.NodeType.outfall.value
+    
     def _is_Storage(self,_nodeid):
         return self.sim._model.getNodeType(_nodeid).value == tkai.NodeType.storage.value
 

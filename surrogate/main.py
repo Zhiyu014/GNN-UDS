@@ -201,7 +201,7 @@ if __name__ == "__main__":
                     edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
-                res = dG.simulate(event,act=args.act,hotstart=True)
+                res = dG.simulate(event,act=args.act,hotstart=False)
                 states,perfs,settings = [r for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
@@ -218,6 +218,10 @@ if __name__ == "__main__":
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
+            if args.tide:
+                t = states[args.seq_out:,...,:1] * args.is_outfall
+                r = np.concatenate([r,t],axis=-1)
+                
             # states = states[...,:-1]
             if args.if_flood:
                 f = (perfs>0).astype(int)

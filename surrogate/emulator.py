@@ -42,8 +42,9 @@ class NodeEdge(tf.keras.layers.Layer):
 class Emulator:
     def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
-        # Runoff is boundary
-        self.b_in = 1
+        self.tide = getattr(args,'tide',False)
+        # Runoff (tide) is boundary
+        self.b_in = 2 if self.tide else 1
         self.act = getattr(args,"act",False)
         self.act = self.act and self.act != 'False'
 
@@ -65,6 +66,7 @@ class Emulator:
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
             self.n_in += 2
+        self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         self.epsilon = getattr(args,"epsilon",0.1)
 
         self.use_edge = getattr(args,"use_edge",False)
@@ -177,14 +179,14 @@ class Emulator:
         for _ in range(self.n_sp_layer):
             if conv and self.use_edge and self.edge_fusion:
                 # n,n,e   B,E,H  how to convert e from beh to bnnh?
-                x_e = tf.gather(e,self.edge_index,axis=1)
-                e_x = tf.gather(x,self.node_index,axis=1)
-                x = ECCConv(self.embed_size)([x,Adj_in,x_e])
-                e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
-                # x_e = Dense(self.embed_size//2,activation=self.activation)(e)
-                # e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                # x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
-                # e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
+                # x_e = tf.gather(e,self.edge_index,axis=1)
+                # e_x = tf.gather(x,self.node_index,axis=1)
+                # x = ECCConv(self.embed_size)([x,Adj_in,x_e])
+                # e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
+                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
+                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
+                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             if self.use_edge:
@@ -208,7 +210,7 @@ class Emulator:
                 # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
                 e = transpose(e,[0,2,1,3]) if conv else e
                 if self.act:
-                    ae = transpose(ae,[0,2,1,3])
+                    ae = transpose(ae,[0,2,1,3]) if conv else ae
             if recurrent == 'Conv1D':
                 x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
                 b_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:]) for i in range(self.n_tp_layer)]
@@ -253,8 +255,8 @@ class Emulator:
                     for i in range(self.n_tp_layer):
                         ae = ae_tem_nets[i](ae)
                     ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-                    ae = reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1]))
-                    ae = transpose(ae,[0,2,1,3])
+                    ae = reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1])) if conv else ae
+                    ae = transpose(ae,[0,2,1,3]) if conv else ae
 
 
         # Boundary in: Add or concat? maybe add makes more sense
@@ -279,14 +281,14 @@ class Emulator:
         for _ in range(self.n_sp_layer):
             if conv and self.use_edge and self.edge_fusion:
                 # n,n,e   B,E,H  how to convert e from beh to bnnh?
-                x_e = tf.gather(e,self.edge_index,axis=1)
-                e_x = tf.gather(x,self.node_index,axis=1)
-                x = ECCConv(self.embed_size)([x,Adj_in,x_e])
-                e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
-                # x_e = Dense(self.embed_size//2,activation=self.activation)(e)
-                # e_x = Dense(self.embed_size//2,activation=self.activation)(x)
-                # x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
-                # e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
+                # x_e = tf.gather(e,self.edge_index,axis=1)
+                # e_x = tf.gather(x,self.node_index,axis=1)
+                # x = ECCConv(self.embed_size)([x,Adj_in,x_e])
+                # e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
+                x_e = Dense(self.embed_size//2,activation=self.activation)(e)
+                e_x = Dense(self.embed_size//2,activation=self.activation)(x)
+                x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
+                e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
             if self.use_edge:
@@ -421,7 +423,7 @@ class Emulator:
                         pred = concat([pred[...,:1],node_inflow,node_outflow,pred[...,1:]],axis=-1)
 
                     preds.append(pred)
-                    x = concat([x[:,1:,...],concat([pred[:,:1,...],b[:,i:i+self.seq_out,...]],axis=-1)],axis=1) if self.recurrent else concat([pred,b],axis=-1)
+                    x = concat([x[:,1:,...],concat([pred[:,:1,...],b[:,i:i+self.seq_out,:,:1]],axis=-1)],axis=1) if self.recurrent else concat([pred,b[...,:1]],axis=-1)
                     if self.use_edge:
                         edge_preds.append(edge_pred)
                         if self.act:
@@ -469,7 +471,7 @@ class Emulator:
                 if self.norm:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
-                    q_w = self.get_flood(preds_re_norm,b)
+                    q_w = self.get_flood(preds_re_norm,b[...,:1])
                     q_w = q_w/self.norm_y[...,-1]
                 else:
                     q_w = self.get_flood(preds,b)
@@ -531,7 +533,8 @@ class Emulator:
             else:
                 ex,ey = None,None
             train_loss = self.fit_eval(x,a,b,y,ex,ey)
-            train_losses.append(train_loss)
+            if epoch >= 500:
+                train_losses.append(train_loss)
 
             # Validation
             if _dataloaded:
@@ -549,7 +552,8 @@ class Emulator:
             else:
                 ex,ey = None,None
             test_loss = self.fit_eval(x,a,b,y,ex,ey,fit=False)
-            test_losses.append(test_loss)
+            if epoch >= 500:
+                test_losses.append(test_loss)
 
             # Log output
             log = "Epoch {}/{} Train loss: {:.4f} Test loss: {:.4f}".format(epoch,epochs,train_loss,sum(test_loss))
@@ -631,8 +635,8 @@ class Emulator:
                     if self.norm:
                         y = self.normalize(y,'y',True)
 
-                    q_w,y = self.constrain(y,b_i)
-                    x = np.concatenate([x[1:],np.concatenate([y[:1],b_i],axis=-1)],axis=0) if self.recurrent else np.concatenate([y,b_i],axis=-1)
+                    q_w,y = self.constrain(y,b_i[...,:1])
+                    x = np.concatenate([x[1:],np.concatenate([y[:1],b_i[...,:1]],axis=-1)],axis=0) if self.recurrent else np.concatenate([y,b_i[...,:1]],axis=-1)
                     qws.append(q_w)
                     ys.append(y)
                     if self.use_edge:
@@ -680,7 +684,7 @@ class Emulator:
 
                 if self.norm:
                     y = self.normalize(y,'y',True)
-                q_w,y = self.constrain(y,bi)
+                q_w,y = self.constrain(y,bi[...,:1])
                 # q_w = self.get_flood(y,bi)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             preds.append(y)
@@ -746,15 +750,15 @@ class Emulator:
                 y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
             if self.norm:
                 y = self.normalize(y,'y',True)
-            q_w,y = self.constrain(y,b)
+            q_w,y = self.constrain(y,b[...,:1])
 
             if self.recurrent and self.seq_in > self.seq_out:    
                 x = np.concatenate([x[:,self.seq_out-self.seq_in:,...],
-                                    np.concatenate([y,b],axis=-1)],axis=1)
+                                    np.concatenate([y,b[...,:1]],axis=-1)],axis=1)
                 if self.use_edge:
                     ex = np.concatenate([ex[:,self.seq_out-self.seq_in:,...],np.concatenate([ey,ae],axis=-1) if self.act else ey],axis=1)
             else:
-                x = np.concatenate([y,b],axis=-1)
+                x = np.concatenate([y,b[...,:1]],axis=-1)
                 if self.use_edge:
                     ex = np.concatenate([ey,ae],axis=-1)
 
@@ -777,7 +781,7 @@ class Emulator:
             h = self.hmax * f + h * ~f
             y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
         else:
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (self.hmax > 0)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
             if self.epsilon > 0:
                 q_w *= ((self.hmax - h) < self.epsilon)
             y = np.stack([h,q_us,q_ds],axis=-1)
@@ -792,7 +796,7 @@ class Emulator:
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
             h = np.clip(h,0,self.hmax)
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (self.hmax > 0)
+            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
             if self.epsilon > 0:
                 q_w *= ((self.hmax - h) < self.epsilon)
                 
