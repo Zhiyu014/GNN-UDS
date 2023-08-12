@@ -113,6 +113,7 @@ rainfall:
   filedir: ./envs/network/RedChicoSur/
   MIET: 4
   gage: P-1
+  tide: False
 
 # if time-variant outlet boundary
 tide: False

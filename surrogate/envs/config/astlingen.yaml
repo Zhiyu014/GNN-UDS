@@ -183,6 +183,7 @@ rainfall:
     - 01/01/2000
     - 12/31/2009
   replace_rain: False
+  tide: False
 
 # if time-variant outlet boundary
 tide: False

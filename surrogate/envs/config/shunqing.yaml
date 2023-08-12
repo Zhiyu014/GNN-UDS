@@ -64,6 +64,7 @@ rainfall:
   filedir: ./envs/network/shunqing/
   MIET: 1
   gage: RainGage
+  tide: False
 
 # if time-variant outlet boundary
 tide: False

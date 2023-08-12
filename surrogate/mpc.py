@@ -143,6 +143,7 @@ def initialize(x0,xl,xu,pop_size,prob):
 def get_runoff(env,event,rate=False,tide=False):
     _ = env.reset(event,global_state=True)
     runoffs = []
+    t0 = env.env.methods['simulation_time']()
     done = False
     while not done:
         done = env.step()
@@ -153,11 +154,12 @@ def get_runoff(env,event,rate=False,tide=False):
         else:
             runoff = env.state()[...,-1:]
         if tide:
-            t = env.state()[...,:1]
-            runoff = np.concatenate([runoff,t],axis=-1)
+            ti = env.state()[...,:1]
+            runoff = np.concatenate([runoff,ti],axis=-1)
         runoffs.append(runoff)
+    ts = [t0]+env.data_log['simulation_time'][:-1]
     runoff = np.array(runoffs)
-    return runoff
+    return ts,runoff
 
 def pred_simu(y,file,args,r=None):
     n_step = args.prediction['control_horizon']//args.control_interval
@@ -232,12 +234,14 @@ if __name__ == '__main__':
     mp.set_start_method('spawn')    # use gpu in multiprocessing
     # de = {'env':'astlingen',
     #       'processes':5,
-    #       'pop_size':64,
-    #       'sampling':0.4,
-    #       'termination':['n_eval','256'],
+    #       'pop_size':128,
+    #     #   'sampling':0.4,
+    #       'termination':['n_gen',200],
     #       'surrogate':True,
-    #       'model_dir':'./model/astlingen/10s_20k_act_edge_res_norm_flood',
-    #       'result_dir':'./results/astlingen/10s_20k_mpc_edge_res_norm_flood'}
+    #       'rain_dir':'./envs/config/ast_test5_events.csv',
+    #       'model_dir':'./model/astlingen/30s_20k_edgef_res_norm_flood_gat',
+    #       'result_dir':'./results/astlingen/30s_20k_mpc_edgef_res_norm_flood_gat'}
+    # config['rain_dir'] = de['rain_dir']
     # for k,v in de.items():
     #     setattr(args,k,v)
 
@@ -278,12 +282,16 @@ if __name__ == '__main__':
         name = os.path.basename(event).strip('.inp')
         t0 = time.time()
         if args.surrogate:
-            runoff = get_runoff(env,event,tide=args.tide)
+            ts,runoff = get_runoff(env,event,tide=args.tide)
+            tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
+            tss.index = pd.to_datetime(tss.index)
             horizon = args.prediction['eval_horizon']//args.interval
             runoff = np.stack([np.concatenate([runoff[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
                                 for idx,s in enumerate(runoff)])
         elif args.prediction['no_runoff']:
-            runoff_rate = get_runoff(env,event,True)
+            ts,runoff_rate = get_runoff(env,event,True)
+            tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
+            tss.index = pd.to_datetime(tss.index)
             horizon = args.prediction['eval_horizon']//args.interval
             runoff_rate = np.stack([np.concatenate([runoff_rate[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff_rate.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
                                 for idx,s in enumerate(runoff_rate)])
@@ -310,10 +318,8 @@ if __name__ == '__main__':
                         f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     margs.state = state
-                    if i < runoff.shape[0]:                      
-                        margs.runoff = runoff[i]
-                    else:
-                        continue
+                    t = env.env.methods['simulation_time']()
+                    margs.runoff = runoff[int(tss.asof(t)['Index'])]
                     if margs.use_edge:
                         margs.edge_state = edge_state
                     # use multiprocessing in emulation to avoid memory accumulation
@@ -325,10 +331,8 @@ if __name__ == '__main__':
                 else:
                     eval_file = env.get_eval_file(args.prediction['no_runoff'])
                     if args.prediction['no_runoff']:
-                        if i < runoff_rate.shape[0]:
-                            args.runoff_rate = runoff_rate[i,...,0]
-                        else:
-                            continue
+                        t = env.env.methods['simulation_time']()
+                        args.runoff_rate = runoff_rate[int(tss.asof(t)['Index']),...,0]
                     setting = run_ea(args,eval_file=eval_file,setting=setting)
                 done = env.step(setting)
             else:

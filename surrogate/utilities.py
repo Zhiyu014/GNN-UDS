@@ -76,7 +76,12 @@ def generate_split_file(base_inp_file,
         timeseries_file = arg['rainfall_timeseries']
     tsf = pd.read_csv(timeseries_file,index_col=0)
     tsf['datetime'] = tsf['date']+' '+tsf['time']
-    tsf['datetime'] = tsf['datetime'].apply(lambda dt:datetime.strptime(dt, '%m/%d/%Y %H:%M:%S'))
+    # tsf['datetime'] = tsf['datetime'].apply(lambda dt:datetime.strptime(dt, '%m/%d/%Y %H:%M:%S'))
+    tsf.index = pd.to_datetime(tsf['datetime'])
+    if arg.get('tide',False):
+        tidets = pd.read_csv(arg['tide'],index_col=0)
+        tidets['datetime'] = tidets['date']+' '+tidets['time']
+        tidets.index = pd.to_datetime(tidets['datetime'])
 
     if event_file is None:
         event_file = arg.get('rainfall_events',splitext(timeseries_file)[0]+'_events.csv')
@@ -122,15 +127,25 @@ def generate_split_file(base_inp_file,
         if exists(file) == True and replace_rain == False:
             continue
 
-        rain = tsf[start_time < tsf['datetime']]
-        rain = rain[rain['datetime'] < end_time]
-        raindata = [[[date+' '+time,vol]
+        # rain = tsf[start_time < tsf['datetime']]
+        # rain = rain[rain['datetime'] < end_time]
+        rain = tsf[start_time:end_time]
+        raindata = {col:[[date+' '+time,vol]
          for date,time,vol in zip(rain['date'],rain['time'],rain[col])]
-          for col in rain.columns if col not in ['date','time','datetime']]
+          for col in rain.columns if col not in ['date','time','datetime']}
 
-        for idx,rg in enumerate(inp.RAINGAGES.values()):
+        for rg in inp.RAINGAGES.values():
             ts = rg.Timeseries
-            inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[idx])
+            inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[ts])
+
+        if arg.get('tide',False):
+            tide = tidets[start_time:end_time]
+            tidedata = {col:[[date+' '+time,vol]
+            for date,time,vol in zip(tide['date'],tide['time'],tide[col])]
+            for col in tide.columns if tide not in ['date','time','datetime']}
+            for td in set(inp.OUTFALLS.frame['Data']):
+                inp.TIMESERIES[td] = TimeseriesData(td,tidedata[td])
+
 
         inp.OPTIONS['START_DATE'] = start_time.date()
         inp.OPTIONS['END_DATE'] = end_time.date()
