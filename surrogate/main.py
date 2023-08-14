@@ -135,7 +135,7 @@ if __name__ == "__main__":
         setattr(args,k,v)
     args.use_edge = args.use_edge or args.edge_fusion
 
-    dG = DataGenerator(env,args.seq_in,args.seq_out,args.recurrent,args.act,args.if_flood,args.use_edge,args.data_dir)
+    dG = DataGenerator(env,args.data_dir,args)
     
     if args.simulate:
         if not os.path.exists(args.data_dir):
