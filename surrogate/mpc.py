@@ -38,6 +38,7 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
+    parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
     args = parser.parse_args()
     if config is not None:
@@ -277,6 +278,7 @@ if __name__ == '__main__':
             if k == 'model_dir':
                 continue
             setattr(margs,k,v)
+        setattr(margs,'epsilon',args.epsilon)
         env_args = env.get_args(margs.directed,margs.length,margs.order)
         for k,v in env_args.items():
             setattr(margs,k,v)
