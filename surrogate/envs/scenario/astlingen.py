@@ -587,7 +587,7 @@ class astlingen(scenario):
         asp = self.config['action_space']
         if mode.lower() == 'rand':
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
-        elif mode.lower().startwith('conti'):
+        elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
         elif mode.lower() == 'bc':
             return [table[1] for table in asp.values()]

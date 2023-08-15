@@ -12,5 +12,4 @@ resnet: true
 result_dir: 30s_20k_res_norm_gat
 seq_in: 30
 seq_out: 30
-simulate: true
 test: true

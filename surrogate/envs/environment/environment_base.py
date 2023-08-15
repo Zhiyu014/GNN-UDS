@@ -13,12 +13,15 @@ from pyswmm.swmm5 import PySWMM
 
 class env_base(environment):
     """Environment subclassed from the original environment in pystorms
+    Flow unit should be CMS (m3/s)
 
     Added: 
     ----------
     swmm_stride
     save_hotstart
     _isFinished
+    _log
+    ini_log
 
     
     Attributes
@@ -47,16 +50,23 @@ class env_base(environment):
         super().__init__(config, ctrl, binary)
         self._isFinished = False
         self._advance_seconds = None
-        
+        self.log = self.ini_log(self.sim._model.curSimTime)
+        self.sec_per_day = 3600.0 * 24.0
+                             
         # for state and performance
         self.methods.update({'fulldepth':self._getNodefullDepth,
+                             'depthN_avg':self._getNodeAvgDepth,
                              'cumflooding':self._getCumFlooding,
                              'cuminflow':self._getNodeCumInflow,
                              'totalinflow':self._getNodeTotalInflow,
                              'totaloutflow':self._getNodeTotalOutflow,
+                             'totaloutflow_vol':self._getNodeCumOutflow,
                              'lateralinflow':self._getNodeLateralInflow,
-                             'cum_lateral_inflow':self._getNodeLateralInflowVol,
+                             'cumlateralinflow':self._getNodeLateralInflowVol,
+                             'depthL_avg':self._getLinkAvgDepth,
+                             'volumeL_avg':self._getLinkAvgVolume,
                              'flow':self._getLinkFlow,
+                             'flow_vol':self._getLinkCumFlow,
                              'setting':self._getLinkSetting,
                              'rainfall':self._getGageRainfall})
 
@@ -70,7 +80,7 @@ class env_base(environment):
         actions : list or array of dict
             actions to take as an array (1 x n)
         advance_seconds : int
-            seconds for swmm to stride forward
+            seconds for swmm to stride forward, must larger than routing step!
         Returns:
         -------
         done : boolean
@@ -97,10 +107,23 @@ class env_base(environment):
         # take the step !
         # add the swmm_stride option for a longer control step
         if self._advance_seconds is None:
-            time = self.sim._model.swmm_step()
+            elapsed_time = self.sim._model.swmm_step()
         else:
-            time = self.sim._model.swmm_stride(self._advance_seconds)
-        done = False if time > 0 else True
+            # time = self.sim._model.swmm_stride(self._advance_seconds)
+            # src from the func swmm_stride
+            ctime = self.sim._model.curSimTime
+            self.log = self.ini_log(ctime)
+            advanceDays = self._advance_seconds / self.sec_per_day
+            eps = advanceDays * 0.00001
+            elapsed_time = 0
+            while self.sim._model.curSimTime <= ctime + advanceDays - eps:
+                elapsed_time = self.sim._model.swmm_step()
+                self._log(elapsed_time)
+                if elapsed_time == 0:
+                    break
+                self.sim._model.curSimTime = elapsed_time
+            
+        done = False if elapsed_time > 0 else True
         return done
 
     def terminate(self):
@@ -131,7 +154,37 @@ class env_base(environment):
         # get the state
         state = self._state()
         self._isFinished = False
+        self.log = self.ini_log(self.sim._model.curSimTime)
         return state
+
+    def ini_log(self,etime):
+        log = {'elapsed_time':[etime]}
+        for col in ['states','global_state','performance_targets','flood']:
+            for item in self.config.get(col,[]):
+                obj,attr = item[0],item[1]
+                if '_' in attr and attr not in log:
+                    log[attr] = {}
+                    if obj == 'nodes':
+                        objs = self._getNodeIdList()
+                    elif obj == 'links':
+                        objs = self._getLinkIdList()
+                    else:
+                        objs = [obj]
+                    for obj in objs:
+                        log[attr][obj] = []
+        return log
+    
+    def _log(self,etime):
+        self.log['elapsed_time'].append(etime)
+        for attr in self.log.keys():
+            if attr == 'elapsed_time':
+                continue
+            for obj in self.log[attr].keys():
+                self.log[attr][obj].append(self.methods[attr.split('_')[0]](obj))
+    
+    def _get_step_value(self,attr,ID):
+        return [max(t,0)*v*self.sec_per_day
+                 for t,v in zip(np.diff(self.log['elapsed_time']),self.log[attr][ID])]
 
     # ------ Get necessary Params  ----------------------------------------------
 
@@ -140,8 +193,14 @@ class env_base(environment):
 
     # ------ Get necessary results  ----------------------------------------------
 
-    # def _getNodeIdList(self):
-    #     return self.sim._model.getObjectIDList(tkai.ObjectType.NODE.value)
+    def _getNodeIdList(self):
+        return self.sim._model.getObjectIDList(tkai.ObjectType.NODE.value)
+
+    def _getLinkIdList(self):
+        return self.sim._model.getObjectIDList(tkai.ObjectType.LINK.value)
+
+    def _getNodeAvgDepth(self,ID):
+        return np.mean(self._get_step_value('depthN_avg',ID))
 
     def _getFlooding(self,ID):
         # Flooding rate
@@ -168,23 +227,34 @@ class env_base(environment):
         
     def _getNodeTotalOutflow(self,ID):
         # Outflow rate * step
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['interval'] * 60
+        # return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value) * self.config['interval'] * 60
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value)
         
+    def _getNodeCumOutflow(self,ID):
+        return sum(self._get_step_value('totaloutflow_vol',ID))
+    
     def _getNodeLateralInflow(self,ID):
         # Lateral inflow rate
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value) * self.config['interval'] * 60
+        # return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value) * self.config['interval'] * 60
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newLatFlow.value)
 
     def _getNodeLateralInflowVol(self,ID):
         # Cumulative lateral inflow volume
         return self.sim._model.node_statistics(ID)['lateral_infow_vol']
+
+    def _getLinkAvgDepth(self,ID):
+        return np.mean(self._get_step_value('depthL_avg',ID))
     
-    def _getLinkFlow(self,_linkid):
-        return self.sim._model.getLinkResult(_linkid,
-                                            tkai.LinkResults.newFlow.value) * self.config['interval'] * 60
+    def _getLinkAvgVolume(self,ID):
+        return np.mean(self._get_step_value('volumeL_avg',ID))
+
+    def _getLinkFlow(self,ID):
+        # return self.sim._model.getLinkResult(ID,tkai.LinkResults.newFlow.value) * self.config['interval'] * 60
+        return self.sim._model.getLinkResult(ID,tkai.LinkResults.newFlow.value)
     
-    def _getLinkSetting(self,_linkid):
-        return self.sim._model.getLinkResult(_linkid,
-                                            tkai.LinkResults.setting.value)
+    def _getLinkCumFlow(self,ID):
+        return sum(self._get_step_value('flow_vol',ID))
+
 
     def _getGageRainfall(self,ID):
         # For Cumrainfall state

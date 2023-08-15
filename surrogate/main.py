@@ -91,19 +91,19 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'shunqing',
-    #             'data_dir':'./envs/data/shunqing/1s/',
+    #             'env':'hague',
+    #             'data_dir':'./envs/data/hague/edge/',
     #             'act':False,
-    #             'model_dir':'./model/shunqing/10s_res_norm/',
-    #             'batch_size':64,
+    #             'model_dir':'./model/shunqing/12s_20k_res_norm_flood_gcn/',
+    #             'batch_size':32,
     #             'epochs':5000,
     #             'resnet':True,
     #             'norm':True,
     #             'roll':False,
-    #             'use_edge':False,'edge_fusion':False,
+    #             'use_edge':True,'edge_fusion':True,
     #             'balance':False,
-    #             'seq_in':10,'seq_out':10,
-    #             'if_flood':False,
+    #             'seq_in':12,'seq_out':12,
+    #             'if_flood':True,
     #             'conv':'GCN',
     #             'recurrent':'Conv1D'}
     # for k,v in train_de.items():
