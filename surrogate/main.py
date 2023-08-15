@@ -53,7 +53,6 @@ def parser(config=None):
     parser.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
     parser.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
-    # TODO: seq out
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--if_flood',action='store_true',help='if classify flooding or not')
@@ -93,9 +92,9 @@ if __name__ == "__main__":
 
     # train_de = {'train':True,
     #             'env':'shunqing',
-    #             'data_dir':'./envs/data/shunqing/edge/',
+    #             'data_dir':'./envs/data/shunqing/1s/',
     #             'act':False,
-    #             'model_dir':'./model/shunqing/5s_20k_res_norm_flood_nn/',
+    #             'model_dir':'./model/shunqing/10s_res_norm/',
     #             'batch_size':64,
     #             'epochs':5000,
     #             'resnet':True,
@@ -103,9 +102,9 @@ if __name__ == "__main__":
     #             'roll':False,
     #             'use_edge':False,'edge_fusion':False,
     #             'balance':False,
-    #             'seq_in':5,'seq_out':5,
-    #             'if_flood':True,
-    #             'conv':'False',
+    #             'seq_in':10,'seq_out':10,
+    #             'if_flood':False,
+    #             'conv':'GCN',
     #             'recurrent':'Conv1D'}
     # for k,v in train_de.items():
     #     setattr(args,k,v)

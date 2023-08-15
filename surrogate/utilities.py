@@ -96,7 +96,8 @@ def generate_split_file(base_inp_file,
         events = events[events['Precipitation'].apply(lambda x:precip_range[0]<=x<=precip_range[1])]
     if date_range is not None:
         date_range = [datetime.strptime(date,'%m/%d/%Y') for date in date_range]
-        events['Date'] = events['Date'].apply(lambda date:datetime.strptime(date,'%m/%d/%Y'))
+        events['Date'] = pd.to_datetime(events['Date'])
+        # events['Date'] = events['Date'].apply(lambda date:datetime.strptime(date,'%m/%d/%Y'))
         events = events[events['Date'].apply(lambda x:date_range[0]<=x<=date_range[1])]
 
     filedir = arg.get('filedir') if filedir is None else filedir
@@ -117,10 +118,13 @@ def generate_split_file(base_inp_file,
     #     return files
 
     files = list()
-    for start,end in zip(events['Start'],events['End']):
+    events['Start'] = pd.to_datetime(events['Start'])
+    events['End'] = pd.to_datetime(events['End'])
+    for start_time,end_time in zip(events['Start'],events['End']):
         # Formulate the simulation periods
-        start_time = datetime.strptime(start,'%m/%d/%Y %H:%M:%S')
-        end_time = datetime.strptime(end,'%m/%d/%Y %H:%M:%S') + timedelta(minutes = MIET)   
+        # start_time = datetime.strptime(start,'%m/%d/%Y %H:%M:%S')
+        # end_time = datetime.strptime(end,'%m/%d/%Y %H:%M:%S') + timedelta(minutes = MIET)   
+        end_time += timedelta(minutes=MIET)
 
         file = filedir%start_time.strftime('%m_%d_%Y_%H')
         files.append(file)
@@ -130,8 +134,8 @@ def generate_split_file(base_inp_file,
         # rain = tsf[start_time < tsf['datetime']]
         # rain = rain[rain['datetime'] < end_time]
         rain = tsf[start_time:end_time]
-        raindata = {col:[[date+' '+time,vol]
-         for date,time,vol in zip(rain['date'],rain['time'],rain[col])]
+        raindata = {col:[(dt,vol)
+         for dt,vol in zip(rain.index,rain[col])]
           for col in rain.columns if col not in ['date','time','datetime']}
 
         for rg in inp.RAINGAGES.values():
@@ -140,9 +144,9 @@ def generate_split_file(base_inp_file,
 
         if arg.get('tide',False):
             tide = tidets[start_time:end_time]
-            tidedata = {col:[[date+' '+time,vol]
-            for date,time,vol in zip(tide['date'],tide['time'],tide[col])]
-            for col in tide.columns if tide not in ['date','time','datetime']}
+            tidedata = {col:[(dt,vol)
+            for dt,vol in zip(tide.index,tide[col])]
+            for col in tide.columns if col not in ['date','time','datetime']}
             for td in set(inp.OUTFALLS.frame['Data']):
                 inp.TIMESERIES[td] = TimeseriesData(td,tidedata[td])
 

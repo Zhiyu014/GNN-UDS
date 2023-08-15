@@ -10,7 +10,7 @@ import argparse,yaml
 from envs import get_env
 from pymoo.optimize import minimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
-from pymoo.operators.sampling.rnd import IntegerRandomSampling
+from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
@@ -34,6 +34,7 @@ def parser(config=None):
     parser.add_argument('--crossover',nargs='+',type=float,default=[1.0,3.0],help='crossover rate')
     parser.add_argument('--mutation',nargs='+',type=float,default=[1.0,3.0],help='mutation rate')
     parser.add_argument('--termination',nargs='+',type=str,default=['n_eval','256'],help='Iteration termination criteria')
+    parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
@@ -62,20 +63,29 @@ class mpc_problem(Problem):
             self.emul.load(margs.model_dir)
             self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
         self.n_act = len(args.action_space)
-        self.actions = [{i:v for i,v in enumerate(val)}
-                         for val in args.action_space.values()]
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
         self.n_step = args.prediction['control_horizon']//args.control_interval
         self.r_step = args.control_interval//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
-            
-        super().__init__(n_var=self.n_var, n_obj=self.n_obj,
-                         xl = np.array([0 for _ in range(self.n_var)]),
-                         xu = np.array([len(v)-1 for _ in range(self.n_step)
-                            for v in self.actions]),
-                         vtype=int)
+        if args.continuous:
+            # self.actions = [(min(val),max(val))
+            #                 for val in args.action_space.values()]
+            super().__init__(n_var=self.n_var, n_obj=self.n_obj,
+                            xl = np.array([min(v) for _ in range(self.n_step)
+                                            for v in args.action_space.values()]),
+                            xu = np.array([max(v) for _ in range(self.n_step)
+                                           for v in args.action_space.values()]),
+                            vtype=float)
+        else:
+            self.actions = [{i:v for i,v in enumerate(val)}
+                            for val in args.action_space.values()]            
+            super().__init__(n_var=self.n_var, n_obj=self.n_obj,
+                            xl = np.array([0 for _ in range(self.n_var)]),
+                            xu = np.array([len(v)-1 for _ in range(self.n_step)
+                                for v in self.actions]),
+                            vtype=int)
 
     def pred_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
@@ -92,14 +102,14 @@ class mpc_problem(Problem):
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
-            done = env.step([self.actions[i][act] for i,act in enumerate(yi)])
+            done = env.step([act if self.args.continuous else self.actions[i][act] for i,act in enumerate(yi)])
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
     
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
-        settings = np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
+        settings = y if self.args.continuous else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
         settings = np.concatenate([np.repeat(settings[:,i:i+1,...],self.r_step,axis=1) for i in range(self.n_step)],axis=1)
         if settings.shape[1] < self.runoff.shape[0]:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -131,14 +141,6 @@ class mpc_problem(Problem):
             pool.join()
             F = [r.get() for r in res]
             out['F'] = np.array(F)
-
-def initialize(x0,xl,xu,pop_size,prob):
-    x0 = np.reshape(x0,-1)
-    population = [x0]
-    for _ in range(pop_size-1):
-        xi = [np.random.randint(xl[idx],xu[idx]+1) if np.random.random()<prob else x for idx,x in enumerate(x0)]
-        population.append(xi)
-    return np.array(population)
 
 def get_runoff(env,event,rate=False,tide=False):
     _ = env.reset(event,global_state=True)
@@ -185,6 +187,15 @@ def pred_simu(y,file,args,r=None):
         idx += 1
     return np.array(perf)
 
+def initialize(x0,xl,xu,pop_size,prob,conti=False):
+    x0 = np.reshape(x0,-1)
+    population = [x0]
+    for _ in range(pop_size-1):
+        xi = [np.random.uniform(xl[idx],xu[idx]) if conti else np.random.randint(xl[idx],xu[idx]+1)\
+               if np.random.random()<prob else x for idx,x in enumerate(x0)]
+        population.append(xi)
+    return np.array(population)
+
 def run_ea(args,margs=None,eval_file=None,setting=None):
     print('Running ga')
     if margs is not None:
@@ -196,11 +207,11 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
 
     if args.use_current and setting is not None:
         setting *= prob.n_step
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling)
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.continuous)
     else:
-        sampling = IntegerRandomSampling()
-    crossover = SBX(*args.crossover,vtype=int,repair=RoundingRepair())
-    mutation = PM(*args.mutation,vtype=int,repair=RoundingRepair())
+        sampling = FloatRandomSampling() if args.continuous else IntegerRandomSampling()
+    crossover = SBX(*args.crossover,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
+    mutation = PM(*args.mutation,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
     termination = get_termination(*args.termination)
 
     method = GA(pop_size = args.pop_size,
