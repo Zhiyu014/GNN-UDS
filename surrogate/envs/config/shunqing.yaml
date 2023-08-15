@@ -13,13 +13,15 @@ global_state:
     - depthN
   - !!python/tuple
     - nodes
-    - totalinflow
+    - cuminflow
+    # - totalinflow
   - !!python/tuple
     - nodes
-    - totaloutflow
+    - totaloutflow_vol
   - !!python/tuple
     - nodes
-    - lateralinflow
+    - cumlateralinflow
+    # - lateral_inflow
   - !!python/tuple
     - links
     - depthL
@@ -28,7 +30,7 @@ global_state:
     - volumeL
   - !!python/tuple
     - links
-    - flow
+    - flow_vol
   - !!python/tuple
     - links
     - setting

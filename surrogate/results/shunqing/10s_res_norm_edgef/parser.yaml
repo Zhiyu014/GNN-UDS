@@ -1,0 +1,14 @@
+batch_size: 64
+conv: GAT
+data_dir: 1s_edge
+edge_fusion: true
+epochs: 20000
+model_dir: 10s_res_norm_edgef
+norm: true
+rain_suffix: test_bpswmm
+resnet: true
+result_dir: 10s_res_norm_edgef
+seq_in: 10
+seq_out: 10
+test: true
+use_edge: true

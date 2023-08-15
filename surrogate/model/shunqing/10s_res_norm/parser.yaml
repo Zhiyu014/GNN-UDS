@@ -1,0 +1,10 @@
+batch_size: 128
+conv: GAT
+data_dir: 1s
+epochs: 20000
+model_dir: 10s_res_norm
+norm: true
+resnet: true
+seq_in: 10
+seq_out: 10
+train: true

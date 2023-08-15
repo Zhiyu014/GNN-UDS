@@ -1,0 +1,109 @@
+# Configuration file for scenario hague
+# name of scearnio
+env_name: hague
+# if env contains actions
+act: True
+# time step (min)
+interval: 5
+# control time step (min)
+control_interval: 15
+# state definitions
+# global state definitions
+global_state:
+  - !!python/tuple
+    - nodes
+    - depthN
+  - !!python/tuple
+    - nodes
+    # - totalinflow
+    - cuminflow
+  - !!python/tuple
+    - nodes
+    - totaloutflow_vol
+  - !!python/tuple
+    - nodes
+    # - lateralinflow
+    - cumlateralinflow
+  - !!python/tuple
+    - links
+    - depthL
+  - !!python/tuple
+    - links
+    - volumeL
+  - !!python/tuple
+    - links
+    - flow_vol
+  - !!python/tuple
+    - links
+    - setting
+
+# Action space
+action_space:
+  R1:
+    !!python/tuple
+    - 0
+    - 0.5
+    - 1.0
+  R3:
+    !!python/tuple
+    - 0
+    - 0.5
+    - 1.0
+
+# Performance Targets
+performance_targets:
+  # CSOs to river
+  - !!python/tuple
+    - "st1"
+    - cumflooding
+    - 1
+  - !!python/tuple
+    - "st1"
+    - depthN
+    - 1
+  - !!python/tuple
+    - "F134101"
+    - cumflooding
+    - 1
+  - !!python/tuple
+    - "F134101"
+    - depthN
+    - 1
+
+# Flooding volume in each node
+flood:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+
+# Rainfall scenario parameters
+rainfall:
+  func: generate_split_file
+  filedir: ./envs/network/hague/hague
+  rainfall_timeseries: ./envs/config/hg_rain.csv # rainfall timeseries data
+  rainfall_events: ./envs/config/hg_train_events.csv # rainfall timeseries data
+  MIET: 0 # minimum interevent time (min) already considered in event division
+  duration_range:  # rainfall duration sampling range (min)
+    - 180
+    - 100000
+  precipitation_range: # rainfall precipitation sampling range (mm)
+    - 5
+    - 15
+  date_range: # rainfall precipitation sampling range (mm)
+    - 01/01/2010
+    - 12/31/2019
+  replace_rain: False
+  tide: ./envs/config/hg_tide.csv
+
+# if time-variant outlet boundary
+tide: True
+
+# Model predictive control parameters
+prediction:
+  control_horizon: 120  # Control horizon (min)
+  eval_horizon: 120 # Evaluation horizon (min)
+  no_runoff: True # if excludes runoff module and use external data
+  hsf_dir: hsf # file path to save the hotstart file
+  eval_dir: eval # file path to save the evaluation file
+  suffix: mpc_eval_ # suffix of the evaluation file
+  

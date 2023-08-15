@@ -1,0 +1,3 @@
+data_dir: 1s_edge
+simulate: true
+use_edge: true

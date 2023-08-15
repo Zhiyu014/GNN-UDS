@@ -111,7 +111,7 @@ class Emulator:
         B_in = Input(shape=bound_shape)
         inp = [X_in,B_in]
         if conv:
-            Adj_in = Input(self.n_node,)
+            Adj_in = Input(shape=(self.n_node,self.n_node,))
             inp += [Adj_in]
             # maybe problematic for directed graph, use GeneralConv instead
             if 'GCN' in conv:
@@ -137,7 +137,7 @@ class Emulator:
             else:
                 raise AssertionError("Unknown Convolution layer %s"%str(conv))
             if self.act and self.use_adj:
-                A_in = Input(self.n_node,)
+                A_in = Input(shape=(self.n_node,self.n_node,))
                 inp += [A_in]
         else:
             net = Dense
@@ -147,7 +147,7 @@ class Emulator:
             E_in = Input(shape=edge_state_shape)
             inp += [E_in]
             if conv:
-                Eadj_in = Input(self.n_edge,)
+                Eadj_in = Input(shape=(self.n_edge,self.n_edge,))
                 inp += [Eadj_in]
             if self.act:
                 AE_in = Input(shape=edge_state_shape[:-1]+(1,))
