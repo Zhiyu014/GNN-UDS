@@ -1,0 +1,14 @@
+act: rand
+batch_size: 128
+conv: GAT
+data_dir: 1s_edge_act10_rain50
+epochs: 20000
+model_dir: 30s_20k_res_norm_gat
+n_tp_layer: 4
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 30
+seq_out: 30
+simulate: true
+train: true

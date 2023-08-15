@@ -53,7 +53,6 @@ def parser(config=None):
     parser.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
     parser.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
-    # TODO: seq out
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--if_flood',action='store_true',help='if classify flooding or not')
