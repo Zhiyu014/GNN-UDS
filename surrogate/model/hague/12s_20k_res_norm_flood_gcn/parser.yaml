@@ -1,7 +1,6 @@
-batch_size: 32
+batch_size: 64
 conv: GCN
 data_dir: edge
-edge_fusion: true
 epochs: 20000
 if_flood: true
 length: 500.0
@@ -12,4 +11,3 @@ resnet: true
 seq_in: 12
 seq_out: 12
 train: true
-use_edge: true
