@@ -264,13 +264,20 @@ class shunqing(scenario):
             inp = read_inp_file(self.config['swmm_input'])
             args['is_outfall'] = np.array([1 if sec == 'OUTFALLS' else 0 for sec in NODE_SECTIONS
                                            for _ in getattr(getattr(inp,sec,[]),'values',[])])
-            args['hmax'] = np.array([getattr(node,'MaxDepth',0) for sec in NODE_SECTIONS
+            args['hmax'] = np.array([getattr(node,'MaxDepth',0)+getattr(node,'SurDepth',0) for sec in NODE_SECTIONS
                                       for node in getattr(getattr(inp,sec,[]),'values',[])])
+            if args['global_state'][0][-1] == 'head':
+                args['hmin'] = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
+                                      for node in getattr(getattr(inp,sec,[]),'values',[])])
+                args['hmax'] += args['hmin']
             # It seems that a tidal outfall may have large full depth hmax above the maximum tide level
             # args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
             args['is_outfall'] = np.array([self.env._is_Outfall(node) for node in nodes])
-            args['hmax'] = np.array([self.env.methods['fulldepth'](node) for node in nodes])
+            args['hmax'] = np.array([self.env.methods['fulldepth'](node)+self.env.methods['surdepth'](node) for node in nodes])
+            if args['global_state'][0][-1] == 'head':
+                args['hmin'] = np.array([self.env.methods['invertelev'](node) for node in nodes])
+                args['hmax'] += args['hmin']
 
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])

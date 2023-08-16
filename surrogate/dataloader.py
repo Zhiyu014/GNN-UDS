@@ -216,24 +216,40 @@ class DataGenerator:
         norm[...,1] = norm[...,1] - norm[...,3]
         while len(norm.shape) > 2:
             norm = norm.max(axis=0)
+        if self.env.config['global_state'][0][-1] == 'head':
+            norm_h = np.tile(np.float32(norm[...,0].max()+1e-6),(norm.shape[0],1))
+        else:
+            norm_h = norm[...,0:1]+1e-6
         norm_b = (norm[...,-2:-1] + 1e-6).astype(np.float32)
         if self.env.config['tide']:
-            norm_b = np.concatenate([norm_b,norm[...,0:1]*self.is_outfall+1e-6],axis=-1).astype(np.float32)
-                    
+            norm_b = np.concatenate([norm_b,norm_h],axis=-1).astype(np.float32)
         if self.if_flood:
-            norm_x = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
-            norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+            norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
+            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         else:
-            norm_x = norm[...,:-1]+1e-6
-            norm_y = np.concatenate([norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+            norm_x = np.concatenate([norm_h,norm[...,1:-1]+1e-6],axis=-1)
+            norm_y = np.concatenate([norm_h,norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
+        if self.env.config['global_state'][0][-1] == 'head':
+            norm_hmin = np.tile(np.float32(norm[...,0].min()),(norm.shape[0],1))
+            if self.env.config['tide']:
+                norm_b = np.stack([norm_b,np.concatenate([np.zeros_like(norm_b[...,:1],dtype=np.float32),norm_hmin],axis=-1)])
+            else:
+                norm_b = np.stack([norm_b,np.zeros_like(norm_b,dtype=np.float32)])
+            norm_x = np.stack([norm_x,np.concatenate([norm_hmin,np.zeros_like(norm_x[...,1:],dtype=np.float32)],axis=-1)])
+            norm_y = np.stack([norm_y,np.concatenate([norm_hmin,np.zeros_like(norm_y[...,1:],dtype=np.float32)],axis=-1)])
+        else:
+            norm_b = np.stack([norm_b,np.zeros_like(norm_b,dtype=np.float32)])
+            norm_x = np.stack([norm_x,np.zeros_like(norm_x,dtype=np.float32)])
+            norm_y = np.stack([norm_y,np.zeros_like(norm_y,dtype=np.float32)])
+
         if self.use_edge:
             norm_e = np.abs(self.edge_states.copy())
             while len(norm_e.shape) > 2:
                 norm_e = norm_e.max(axis=0)
             norm_e = np.concatenate([norm_e[:,:-1]+1e-6,norm_e[:,-1:]],axis=-1) if self.act else norm_e+1e-6
-            
+            norm_e = np.stack([norm_e,np.zeros_like(norm_e,dtype=np.float32)])
             # norm_e_min = self.edge_states.copy()
             # while len(norm_e_min.shape) > 2:
             #     norm_e_min = norm_e_min.min(axis=0)

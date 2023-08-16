@@ -54,8 +54,12 @@ class env_base(environment):
         self.sec_per_day = 3600.0 * 24.0
                              
         # for state and performance
-        self.methods.update({'fulldepth':self._getNodefullDepth,
+        self.methods.update({'invertelev':self._getNodeinvertElev,
+                             'fulldepth':self._getNodefullDepth,
+                             'surdepth':self._getNodesurDepth,
                              'depthN_avg':self._getNodeAvgDepth,
+                             'head':self._getNodeHead,
+                             'head_avg':self._getNodeAvgHead,
                              'cumflooding':self._getCumFlooding,
                              'cuminflow':self._getNodeCumInflow,
                              'totalinflow':self._getNodeTotalInflow,
@@ -187,9 +191,14 @@ class env_base(environment):
                  for t,v in zip(np.diff(self.log['elapsed_time']),self.log[attr][ID])]
 
     # ------ Get necessary Params  ----------------------------------------------
+    def _getNodeinvertElev(self,ID):
+        return self.sim._model.getNodeParam(ID,tkai.NodeParams.invertElev.value)
 
     def _getNodefullDepth(self,ID):
         return self.sim._model.getNodeParam(ID,tkai.NodeParams.fullDepth.value)
+    
+    def _getNodesurDepth(self,ID):
+        return self.sim._model.getNodeParam(ID,tkai.NodeParams.surDepth.value)
 
     # ------ Get necessary results  ----------------------------------------------
 
@@ -203,6 +212,13 @@ class env_base(environment):
         dat = self.log['depthN_avg'][ID]
         return np.mean(dat) if len(dat) > 0 else self.methods['depthN'](ID)
 
+    def _getNodeHead(self,ID):
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.newHead.value)
+
+    def _getNodeAvgHead(self,ID):
+        dat = self.log['head_avg'][ID]
+        return np.mean(dat) if len(dat) > 0 else self.methods['head'](ID)
+    
     def _getFlooding(self,ID):
         # Flooding rate
         return self.sim._model.getNodeResult(ID,tkai.NodeResults.overflow.value)

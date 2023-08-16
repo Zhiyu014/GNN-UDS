@@ -12,7 +12,7 @@ control_interval: 15
 global_state:
   - !!python/tuple
     - nodes
-    - depthN
+    - head
   - !!python/tuple
     - nodes
     # - totalinflow
