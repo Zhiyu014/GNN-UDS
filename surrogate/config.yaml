@@ -190,6 +190,7 @@ hague:
   # train args
   train: False
   load_model: False
+  # there exists external flow to outfall, so edge_fusion donot work well
   edge_fusion: False
   use_adj: False
   model_dir: ./model/hague/

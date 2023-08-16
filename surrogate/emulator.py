@@ -88,6 +88,7 @@ class Emulator:
             self.act_edges = getattr(args,"act_edges")
             self.use_adj = getattr(args,"use_adj",False)
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
+        self.hmin = getattr(args,"hmin",np.array([0 for _ in range(self.n_node)]))
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
@@ -414,10 +415,10 @@ class Emulator:
                         node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),tf.clip_by_value(edge_flow,0,np.inf)) + tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),-tf.clip_by_value(edge_flow,-np.inf,0))
                         node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),tf.clip_by_value(edge_flow,0,np.inf)) + tf.matmul(tf.clip_by_value(self.node_edge,0,1),-tf.clip_by_value(edge_flow,-np.inf,0))
                         if self.norm:
-                            node_outflow *= tf.cast(self.norm_y[:,2:3]>1e-3,tf.float32)
-                            node_inflow *= tf.cast(self.norm_y[:,1:2]>1e-3,tf.float32)
-                            node_outflow /= self.norm_y[:,2:3]
-                            node_inflow /= self.norm_y[:,1:2]
+                            node_outflow *= tf.cast(self.norm_y[0,:,2:3]>1e-3,tf.float32)
+                            node_inflow *= tf.cast(self.norm_y[0,:,1:2]>1e-3,tf.float32)
+                            node_outflow /= self.norm_y[0,:,2:3]
+                            node_inflow /= self.norm_y[0,:,1:2]
                             # node_outflow = tf.clip_by_value(node_outflow,-10,10)
                             # node_inflow = tf.clip_by_value(node_inflow,-10,10)
                         pred = concat([pred[...,:1],node_inflow,node_outflow,pred[...,1:]],axis=-1)
@@ -458,10 +459,10 @@ class Emulator:
                     node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),tf.clip_by_value(edge_flow,0,np.inf)) + tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),-tf.clip_by_value(edge_flow,-np.inf,0))
                     node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),tf.clip_by_value(edge_flow,0,np.inf)) + tf.matmul(tf.clip_by_value(self.node_edge,0,1),-tf.clip_by_value(edge_flow,-np.inf,0))
                     if self.norm:
-                        node_outflow *= tf.cast(self.norm_y[:,2:3]>1e-3,tf.float32)
-                        node_inflow *= tf.cast(self.norm_y[:,1:2]>1e-3,tf.float32)
-                        node_outflow /= self.norm_y[:,2:3]
-                        node_inflow /= self.norm_y[:,1:2]
+                        node_outflow *= tf.cast(self.norm_y[0,:,2:3]>1e-3,tf.float32)
+                        node_inflow *= tf.cast(self.norm_y[0,:,1:2]>1e-3,tf.float32)
+                        node_outflow /= self.norm_y[0,:,2:3]
+                        node_inflow /= self.norm_y[0,:,1:2]
                         # node_outflow = tf.clip_by_value(node_outflow,-10,10)
                         # node_inflow = tf.clip_by_value(node_inflow,-10,10)
                     preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
@@ -472,7 +473,7 @@ class Emulator:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
                     q_w = self.get_flood(preds_re_norm,b[...,:1])
-                    q_w = q_w/self.norm_y[...,-1]
+                    q_w = q_w/self.norm_y[0,:,-1]
                 else:
                     q_w = self.get_flood(preds,b)
                 # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
@@ -628,8 +629,8 @@ class Emulator:
                         node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.clip(self.node_edge,0,1),-np.clip(ey[...,-1:],-np.inf,0))
                         
                         if self.norm:
-                            node_outflow = node_outflow*(self.norm_y[:,2:3]>1e-3)/self.norm_y[:,2:3]
-                            node_inflow = node_inflow*(self.norm_y[:,1:2]>1e-3)/self.norm_y[:,1:2]
+                            node_outflow = node_outflow*(self.norm_y[0,:,2:3]>1e-3)/self.norm_y[0,:,2:3]
+                            node_inflow = node_inflow*(self.norm_y[0,:,1:2]>1e-3)/self.norm_y[0,:,1:2]
                         y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
 
                     if self.norm:
@@ -678,8 +679,8 @@ class Emulator:
                     node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))
                     node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.clip(self.node_edge,0,1),-np.clip(ey[...,-1:],-np.inf,0))
                     if self.norm:
-                        node_outflow = node_outflow*(self.norm_y[:,2:3]>1e-3)/self.norm_y[:,2:3]
-                        node_inflow = node_inflow*(self.norm_y[:,1:2]>1e-3)/self.norm_y[:,1:2]
+                        node_outflow = node_outflow*(self.norm_y[0,:,2:3]>1e-3)/self.norm_y[0,:,2:3]
+                        node_inflow = node_inflow*(self.norm_y[0,:,1:2]>1e-3)/self.norm_y[0,:,1:2]
                     y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
 
                 if self.norm:
@@ -745,8 +746,8 @@ class Emulator:
                 node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))
                 node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.clip(self.node_edge,0,1),-np.clip(ey[...,-1:],-np.inf,0))
                 if self.norm:
-                    node_outflow = node_outflow*(self.norm_y[:,2:3]>1e-3)/self.norm_y[:,2:3]
-                    node_inflow = node_inflow*(self.norm_y[:,1:2]>1e-3)/self.norm_y[:,1:2]
+                    node_outflow = node_outflow*(self.norm_y[0,:,2:3]>1e-3)/self.norm_y[0,:,2:3]
+                    node_inflow = node_inflow*(self.norm_y[0,:,1:2]>1e-3)/self.norm_y[0,:,1:2]
                 y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
             if self.norm:
                 y = self.normalize(y,'y',True)
@@ -774,7 +775,7 @@ class Emulator:
     def constrain(self,y,r):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
-        h = np.clip(h,0,self.hmax)
+        h = np.clip(h,self.hmin,self.hmax)
         if self.if_flood:
             f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
@@ -795,7 +796,7 @@ class Emulator:
             f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
-            h = np.clip(h,0,self.hmax)
+            h = np.clip(h,self.hmin,self.hmax)
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
             if self.epsilon > 0:
                 q_w *= ((self.hmax - h) < self.epsilon)
@@ -815,7 +816,10 @@ class Emulator:
     def normalize(self,dat,item,inverse=False):
         dim = dat.shape[-1]
         normal = getattr(self,'norm_%s'%item)
-        return dat * normal[:,:dim] if inverse else dat/normal[:,:dim]
+        if inverse:
+            return dat * (normal[0,:,:dim]-normal[1,:,:dim]) + normal[1,:,:dim]
+        else:
+            return (dat - normal[1,:,:dim])/(normal[0,:,:dim]-normal[1,:,:dim])
 
 
 
