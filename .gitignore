@@ -150,8 +150,6 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-surrogate/envs/data/shunqing/X.npy
-surrogate/envs/data/shunqing/Y.npy
 *.out
 *.rpt
 *.out
@@ -162,6 +160,14 @@ surrogate/envs/data/shunqing/Y.npy
 surrogate/envs/network/shunqing/bpswmm_101.out
 surrogate/envs/network/shunqing/bpswmm_101.rpt
 *.npy
+!norm_x.npy
+!norm_y.npy
+!norm_e.npy
+!norm_b.npy
+!train_loss.npy
+!test_loss.npy
+!train_id.npy
+!test_id.npy
 *.out
 *.rpt
 *.rpt

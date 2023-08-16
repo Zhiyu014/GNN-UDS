@@ -200,7 +200,8 @@ class env_base(environment):
         return self.sim._model.getObjectIDList(tkai.ObjectType.LINK.value)
 
     def _getNodeAvgDepth(self,ID):
-        return np.mean(self._get_step_value('depthN_avg',ID))
+        dat = self.log['depthN_avg'][ID]
+        return np.mean(dat) if len(dat) > 0 else self.methods['depthN'](ID)
 
     def _getFlooding(self,ID):
         # Flooding rate
@@ -215,8 +216,9 @@ class env_base(environment):
     
     def _getNodeTotalInflow(self,ID):
         # Inflow rate
-        return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value) * self.config['interval'] * 60
-    
+        # return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value) * self.config['interval'] * 60
+        return self.sim._model.getNodeResult(ID,tkai.NodeResults.totalinflow.value)
+
     def _getNodeCumInflow(self,ID):
         # Cumulative inflow volume
         if ID == 'system':
@@ -243,10 +245,12 @@ class env_base(environment):
         return self.sim._model.node_statistics(ID)['lateral_infow_vol']
 
     def _getLinkAvgDepth(self,ID):
-        return np.mean(self._get_step_value('depthL_avg',ID))
+        dat = self.log['depthL_avg'][ID]
+        return np.mean(dat) if len(dat) > 0 else self.methods['depthL'](ID)
     
     def _getLinkAvgVolume(self,ID):
-        return np.mean(self._get_step_value('volumeL_avg',ID))
+        dat = self.log['volumeL_avg'][ID]
+        return np.mean(dat) if len(dat) > 0 else self.methods['volumeL'](ID)
 
     def _getLinkFlow(self,ID):
         # return self.sim._model.getLinkResult(ID,tkai.LinkResults.newFlow.value) * self.config['interval'] * 60
