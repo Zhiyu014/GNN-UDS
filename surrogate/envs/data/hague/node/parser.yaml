@@ -1,0 +1,3 @@
+data_dir: node
+rain_dir: hg_train_events.csv
+simulate: true

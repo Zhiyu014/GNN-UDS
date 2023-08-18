@@ -1,6 +1,6 @@
 batch_size: 64
 conv: GCN
-data_dir: edge
+data_dir: node
 epochs: 20000
 if_flood: true
 length: 500.0
