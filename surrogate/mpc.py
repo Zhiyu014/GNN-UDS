@@ -27,6 +27,10 @@ def parser(config=None):
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
 
+    parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
+    parser.add_argument('--control_interval',type=int,default=5,help='control interval')
+    parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
+
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
     parser.add_argument('--use_current',action="store_true",help='if use current setting as initial')
@@ -34,7 +38,6 @@ def parser(config=None):
     parser.add_argument('--crossover',nargs='+',type=float,default=[1.0,3.0],help='crossover rate')
     parser.add_argument('--mutation',nargs='+',type=float,default=[1.0,3.0],help='mutation rate')
     parser.add_argument('--termination',nargs='+',type=str,default=['n_eval','256'],help='Iteration termination criteria')
-    parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
@@ -66,8 +69,8 @@ class mpc_problem(Problem):
         self.n_act = len(args.action_space)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
-        self.n_step = args.prediction['control_horizon']//args.control_interval
-        self.r_step = args.control_interval//args.interval
+        self.n_step = args.prediction['control_horizon']//args.setting_duration
+        self.r_step = args.setting_duration//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
         if args.continuous:
@@ -165,8 +168,8 @@ def get_runoff(env,event,rate=False,tide=False):
     return ts,runoff
 
 def pred_simu(y,file,args,r=None):
-    n_step = args.prediction['control_horizon']//args.control_interval
-    r_step = args.control_interval//args.interval
+    n_step = args.prediction['control_horizon']//args.setting_duration
+    r_step = args.setting_duration//args.interval
     e_hrz = args.prediction['eval_horizon'] // args.interval
     actions = list(args.action_space.values())
 
@@ -238,7 +241,7 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     ctrls = res.X
     ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
     del prob
-    return ctrls[0]
+    return ctrls
     
 
 if __name__ == '__main__':
@@ -347,9 +350,13 @@ if __name__ == '__main__':
                         t = env.env.methods['simulation_time']()
                         args.runoff_rate = runoff_rate[int(tss.asof(t)['Index']),...,0]
                     setting = run_ea(args,eval_file=eval_file,setting=setting)
-                done = env.step(setting)
+                j = 0
+                done = env.step(setting[j])
+            elif i*args.interval % args.setting_duration == 0:
+                j += 1
+                done = env.step(setting[j])
             else:
-                done = env.step()
+                done = env.step(setting[j])
             state = env.state(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)
@@ -358,7 +365,7 @@ if __name__ == '__main__':
             perfs.append(env.flood())
             objects.append(env.objective())
             edge_states.append(edge_state[-1] if args.surrogate else edge_state)
-            settings.append(setting)
+            settings.append(setting[j])
             i += 1
             print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
         t2 = time.time()

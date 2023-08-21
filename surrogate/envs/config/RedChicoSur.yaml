@@ -6,7 +6,7 @@ act: True
 # time step (min)
 interval: 1
 # control time step (min)
-control_interval: 5
+# control_interval: 5
 # state definitions
 # global state definitions
 global_state:
