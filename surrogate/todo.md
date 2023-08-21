@@ -2,8 +2,10 @@
 # shunqing
 
 1. **Prediction**
-    - [ ] Conv-NN comparison
-    - [x] Change depthN to head: norm_hmin bug fixed
+    - [x] Conv-NN comparison
+    - [x] Change depthN to head: 
+        - norm_hmin bug fixed
+        - cannot predict depth well with large norm range
 
 # astlingen
 

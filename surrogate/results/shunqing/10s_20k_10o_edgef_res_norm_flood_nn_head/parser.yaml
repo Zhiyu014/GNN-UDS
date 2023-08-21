@@ -1,6 +1,8 @@
+batch_size: 64
 conv: 'False'
 data_dir: edge_head
 edge_fusion: true
+epochs: 20000
 if_flood: true
 model_dir: 10s_20k_10o_edgef_res_norm_flood_nn_head
 n_tp_layer: 3
@@ -9,7 +11,6 @@ order: 10
 rain_suffix: test_bpswmm_
 recurrent: Conv1D
 resnet: true
-result_dir: 10s_20k_10o_edgef_res_norm_flood_nn_head
 seq_in: 10
 seq_out: 10
 test: true
