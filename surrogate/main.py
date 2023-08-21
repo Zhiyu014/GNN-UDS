@@ -110,19 +110,20 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # test_de = {'test':True,
-    #            'env':'astlingen',
-    #            'act':'bc',
-    #            'model_dir':'./model/astlingen/10s_20k_act_edge_res_norm_flood/',
+    #            'env':'hague',
+    #            'act':False,
+    #            'model_dir':'./model/hague/12s_20k_res_norm_flood_gcn/',
     #            'resnet':True,
     #            'norm':True,
-    #            'seq_in':10,
-    #            'seq_out':10,
+    #            'seq_in':12,
+    #            'seq_out':12,
     #            'if_flood':True,
-    #            'use_edge':True,
+    #            'use_edge':False,
     #            'balance':False,
-    #            'conv':'GAT',
+    #            'conv':'GCN',
     #            'recurrent':'Conv1D',
-    #            'result_dir':'./results/astlingen/10s_20k_bc_edge_res_norm_flood/'}
+    #            'result_dir':'./results/hague/12s_20k_res_norm_flood_gcn/',
+    #            'rain_dir':'./envs/config/hg_test_events.csv'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
@@ -218,8 +219,8 @@ if __name__ == "__main__":
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
             if args.tide:
-                t = states[args.seq_out:,...,:1] * args.is_outfall
-                r = np.concatenate([r,t],axis=-1)
+                t = states[args.seq_out:,...,0] * args.is_outfall
+                r = np.concatenate([r,np.expand_dims(t,axis=-1)],axis=-1)
                 
             # states = states[...,:-1]
             if args.if_flood:

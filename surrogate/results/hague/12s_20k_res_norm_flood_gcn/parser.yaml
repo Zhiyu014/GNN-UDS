@@ -1,0 +1,15 @@
+batch_size: 64
+conv: GCN
+data_dir: node
+epochs: 20000
+if_flood: true
+length: 500.0
+model_dir: 12s_20k_res_norm_flood_gcn
+norm: true
+rain_dir: hg_test_events.csv
+recurrent: Conv1D
+resnet: true
+result_dir: 12s_20k_res_norm_flood_gcn
+seq_in: 12
+seq_out: 12
+test: true

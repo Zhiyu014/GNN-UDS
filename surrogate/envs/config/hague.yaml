@@ -81,14 +81,14 @@ rainfall:
   func: generate_split_file
   filedir: ./envs/network/hague/hague
   rainfall_timeseries: ./envs/config/hg_rain.csv # rainfall timeseries data
-  rainfall_events: ./envs/config/hg_train_events.csv # rainfall timeseries data
+  rainfall_events: ./envs/config/hg_train50_events.csv # rainfall timeseries data
   MIET: 0 # minimum interevent time (min) already considered in event division
   duration_range:  # rainfall duration sampling range (min)
     - 180
     - 100000
   precipitation_range: # rainfall precipitation sampling range (mm)
-    - 5
-    - 15
+    - 10
+    - 100
   date_range: # rainfall precipitation sampling range (mm)
     - 01/01/2010
     - 12/31/2019
