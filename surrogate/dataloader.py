@@ -232,7 +232,7 @@ class DataGenerator:
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
         if self.env.config['global_state'][0][-1] == 'head':
-            norm_hmin = np.tile(np.float32(norm[...,0].min()),(norm.shape[0],1))
+            norm_hmin = np.tile(np.float32(self.states[...,0].min()),(norm.shape[0],1))
             if self.env.config['tide']:
                 norm_b = np.stack([norm_b,np.concatenate([np.zeros_like(norm_b[...,:1],dtype=np.float32),norm_hmin],axis=-1)])
             else:

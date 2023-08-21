@@ -10,7 +10,7 @@ interval: 1
 global_state:
   - !!python/tuple
     - nodes
-    - depthN
+    - head
   - !!python/tuple
     - nodes
     - cuminflow
