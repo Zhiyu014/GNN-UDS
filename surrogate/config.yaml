@@ -154,6 +154,8 @@ astlingen:
   result_dir: ./results/astlingen/
 
   # MPC args
+  control_interval: 5
+  setting_duration: 5
   pop_size: 32
   use_current: False
   sampling: 0.4
@@ -223,6 +225,8 @@ hague:
   result_dir: ./results/hague/
 
   # MPC args
+  control_interval: 30
+  setting_duration: 15
   pop_size: 32
   use_current: False
   sampling: 0.4
