@@ -12,8 +12,8 @@ interval: 1
 global_state:
   - !!python/tuple
     - nodes
-    # - head
-    - depthN
+    - head
+    # - depthN
   - !!python/tuple
     - nodes
     # - totalinflow
