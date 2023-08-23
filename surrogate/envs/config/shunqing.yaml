@@ -11,6 +11,7 @@ global_state:
   - !!python/tuple
     - nodes
     - head
+    # - depthN
   - !!python/tuple
     - nodes
     - cuminflow

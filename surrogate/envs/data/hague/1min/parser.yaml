@@ -1,0 +1,4 @@
+data_dir: 1min
+rain_dir: hg_train_events.csv
+simulate: true
+use_edge: true

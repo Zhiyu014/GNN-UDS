@@ -330,8 +330,8 @@ if __name__ == '__main__':
             if i*args.interval % args.control_interval == 0:
                 if args.surrogate:
                     if margs.if_flood:
-                        f = (flood>0).astype(int)
-                        f = np.eye(2)[f].squeeze(-2)
+                        f = (flood>0).astype(float)
+                        # f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     margs.state = state
                     t = env.env.methods['simulation_time']()

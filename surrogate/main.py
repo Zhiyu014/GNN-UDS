@@ -201,15 +201,16 @@ if __name__ == "__main__":
                     edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
+                pre_step = rain_arg.get('pre_time',0) // args.interval
                 res = dG.simulate(event,act=args.act,hotstart=False)
-                states,perfs,settings = [r for r in res[:3]]
+                states,perfs,settings = [r[pre_step:] if r is not None else None for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
                 if args.use_edge:
-                    edge_states = res[-1]
+                    edge_states = res[-1][pre_step:]
                     np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
             seq = max(args.seq_in,args.seq_out) if args.recurrent else False
@@ -224,8 +225,8 @@ if __name__ == "__main__":
                 
             # states = states[...,:-1]
             if args.if_flood:
-                f = (perfs>0).astype(int)
-                f = np.eye(2)[f].squeeze(-2)
+                f = (perfs>0).astype(float)
+                # f = np.eye(2)[f].squeeze(-2)
                 states = np.concatenate([states[...,:-1],f,states[...,-1:]],axis=-1)
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             states = states[:-args.seq_out]
@@ -266,7 +267,7 @@ if __name__ == "__main__":
             loss = [emul.mse(emul.normalize(pred[...,:3],'y'),emul.normalize(true[...,:3],'y'))]
             los_str += "Node: {:.4f} ".format(loss[-1])
             if args.if_flood:
-                loss += [emul.cce(pred[...,-3:-1],true[...,-3:-1])]
+                loss += [emul.bce(pred[...,-2:-1],true[...,-2:-1])]
                 los_str += "if_flood: {:.4f} ".format(loss[-1])
             if args.use_edge:
                 loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
