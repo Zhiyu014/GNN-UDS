@@ -262,6 +262,8 @@ class RedChicoSur(scenario):
                 args['hmin'] = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
                                       for node in getattr(getattr(inp,sec,[]),'values',[])])
                 args['hmax'] += args['hmin']
+            else:
+                args['hmin'] = np.zeros_like(args['hmax'])
             # It seems that a tidal outfall may have large full depth hmax above the maximum tide level
             # args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
@@ -270,6 +272,8 @@ class RedChicoSur(scenario):
             if args['global_state'][0][-1] == 'head':
                 args['hmin'] = np.array([self.env.methods['invertelev'](node) for node in nodes])
                 args['hmax'] += args['hmin']
+            else:
+                args['hmin'] = np.zeros_like(args['hmax'])
 
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])

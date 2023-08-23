@@ -3,7 +3,7 @@ from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract
 from tensorflow.keras import activations
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy
+from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
 from tensorflow.keras import mixed_precision
 import numpy as np
 import os
@@ -65,7 +65,7 @@ class Emulator:
         self.balance = getattr(args,"balance",0)
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
-            self.n_in += 2
+            self.n_in += 1
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         self.epsilon = getattr(args,"epsilon",0.1)
 
@@ -95,7 +95,8 @@ class Emulator:
         self.model = self.build_network(self.conv,resnet,self.recurrent)
         self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
         self.mse = MeanSquaredError()
-        self.cce = CategoricalCrossentropy()
+        self.bce = BinaryCrossentropy()
+        # self.cce = CategoricalCrossentropy()
 
         self.ratio = getattr(args,"ratio",0.8)
         self.batch_size = getattr(args,"batch_size",256)
@@ -316,13 +317,13 @@ class Emulator:
 
         out_shape = self.n_out if conv else self.n_out * self.n_node
         # (B,T_out,N,H) (B,T_out,H) --> (B,T_out,N,n_out)
-        out = Dense(out_shape,activation='tanh' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
+        out = Dense(out_shape,activation='hard_sigmoid' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
-            out_shape = 2 if conv else 2 * self.n_node
-            flood = Dense(out_shape,activation='linear')(x)
-            flood = reshape(flood,(-1,self.seq_out,self.n_node,2))
-            flood = Softmax()(flood)
+            out_shape = 1 if conv else 1 * self.n_node
+            flood = Dense(out_shape,activation='sigmoid')(x)
+            flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
+            # flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
 
         if self.use_edge:
@@ -476,14 +477,26 @@ class Emulator:
                     q_w = q_w/self.norm_y[0,:,-1]
                 else:
                     q_w = self.get_flood(preds,b)
-                # loss += self.balance_alpha * self.mse(y[...,-1],q_w)
-                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],expand_dims(q_w,axis=-1)],axis=-1))
+                q_w = expand_dims(q_w,axis=-1)
+            # narrow down norm range of water head
+            if self.norm and self.hmin.max() > 0:
+                # preds = concat([expand_dims(self.head_to_depth(self.normalize(preds,'y',True)[...,0]),axis=-1),
+                #                 preds[...,1:]],axis=-1)
+                # y = concat([expand_dims(self.head_to_depth(self.normalize(y,'y',True)[...,0]),axis=-1),
+                #             y[...,1:]],axis=-1)
+                # or use sample weights
+                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/(self.hmax-self.hmin)
+                preds = concat([preds[...,:1]*tf.cast(wei,tf.float32),preds[...,1:]],axis=-1)
+                y = concat([y[...,:1]*tf.cast(wei,tf.float32),y[...,1:]],axis=-1)
+            if self.balance:
+                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1))
             else:
                 loss = self.mse(y[...,:3],preds[...,:3])
             if not fit:
                 loss = [loss]
             if self.if_flood:
-                loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
+                loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
+                # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
                 loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]
         if fit:
@@ -777,10 +790,12 @@ class Emulator:
         r = np.squeeze(r,axis=-1)
         h = np.clip(h,self.hmin,self.hmax)
         if self.if_flood:
-            f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            f = y[...,-1] > 0.5
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
             h = self.hmax * f + h * ~f
-            y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
+            # y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
+            y = np.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
         else:
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
             if self.epsilon > 0:
@@ -793,7 +808,8 @@ class Emulator:
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
         if self.if_flood:
-            f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            f = y[...,-1] > 0.5
             q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
         else:
             h = np.clip(h,self.hmin,self.hmax)
@@ -805,6 +821,10 @@ class Emulator:
         # return tf.sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
         return q_w
     
+    def head_to_depth(self,h):
+        h = tf.clip_by_value(h,self.hmin,self.hmax)
+        return (h-self.hmin)/(self.hmax-self.hmin)
+
     def set_norm(self,norm_x,norm_b,norm_y,norm_e=None):
         setattr(self,'norm_x',norm_x)
         setattr(self,'norm_b',norm_b)

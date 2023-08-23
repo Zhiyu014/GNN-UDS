@@ -4,7 +4,7 @@ env_name: hague
 # if env contains actions
 act: True
 # time step (min)
-interval: 5
+interval: 1
 # control time step (min)
 # control_interval: 15
 # state definitions
