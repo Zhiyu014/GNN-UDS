@@ -16,6 +16,7 @@ class DataGenerator:
         self.use_edge = getattr(args,"use_edge",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
+        self.setting_duration = getattr(args,"setting_duration",5)
         if self.act:
             self.action_table = env.config['action_space']
             # self.adj = env.get_adj()
@@ -36,7 +37,7 @@ class DataGenerator:
             if hotstart:
                 eval_file = self.env.get_eval_file()
                 _ = swmm5_run(eval_file)
-            setting = self.env.controller(state,act) if act and i % (self.env.config['control_interval']//self.env.config['interval']) == 0 else setting
+            setting = self.env.controller(state,act) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.flood(seq=seq)

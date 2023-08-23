@@ -1,7 +1,7 @@
 act: rand
 batch_size: 64
 conv: GAT
-data_dir: 1s_edge_act10_rain50
+data_dir: 1s_edge_act10_rain50_head
 edge_fusion: true
 epochs: 20000
 if_flood: true

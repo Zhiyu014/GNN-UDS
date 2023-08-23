@@ -1,0 +1,8 @@
+control_interval: 15
+pop_size: 128
+processes: 8
+rain_dir: ast_test5_events.csv
+result_dir: 60s_20k_mpc_edgef_res_norm_flood_simu
+termination:
+- n_gen
+- 100
