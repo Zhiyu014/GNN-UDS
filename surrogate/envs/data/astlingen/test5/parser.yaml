@@ -1,0 +1,4 @@
+act: efd
+data_dir: test5
+rain_dir: ast_test5_events.csv
+simulate: true

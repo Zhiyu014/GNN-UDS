@@ -25,6 +25,7 @@ def parser(config=None):
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
     parser.add_argument('--act',type=str,default='False',help='if and what control actions')
+    parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
     parser.add_argument('--use_edge',action='store_true',help='if models edge attrs')
@@ -68,7 +69,7 @@ def parser(config=None):
         parser.set_defaults(**hyps[args.env])
     args = parser.parse_args()
 
-    config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k)}
+    config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k,v)}
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyps[args.env][k],v))
