@@ -1,3 +1,4 @@
 data_dir: edge_head
+rain_suffix: bpswmm_
 simulate: true
 use_edge: true

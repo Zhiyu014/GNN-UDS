@@ -335,13 +335,16 @@ class Emulator:
         model = Model(inputs=inp, outputs=out)
         return model
 
-    def get_adj_action(self,a):
+    def get_adj_action(self,a,g=False):
         # (B,T,N_act) --> (B,T,N,N)
         def get_act(s):
             adj = self.adj.copy()
             adj[tuple(self.act_edges.T)] = s
             return adj
-        adj = np.apply_along_axis(get_act,-1,a)
+        if g:
+            adj = tf.gather(a,tf.cast(get_act(range(a.shape[-1])),tf.int32),axis=-1)
+        else:
+            adj = np.apply_along_axis(get_act,-1,a)
 
         if 'GCN' in self.conv:
             adj = GCNConv.preprocess(adj)
@@ -351,7 +354,7 @@ class Emulator:
             adj = adj.astype(int)
         return adj
 
-    def get_action(self,a):
+    def get_action(self,a,g=False):
         def set_outflow(s):
             out = np.ones(self.n_node)
             out[self.act_edges[:,0]] = s
@@ -360,17 +363,24 @@ class Emulator:
             out = np.ones(self.n_node)
             out[self.act_edges[:,1]] = s
             return out
-        a_out = np.apply_along_axis(set_outflow,-1,a)
-        a_in = np.apply_along_axis(set_inflow,-1,a)
+        if g:
+            a_out = tf.gather(a,tf.cast(set_outflow(range(a.shape[-1])),tf.int32),axis=-1)
+            a_in = tf.gather(a,tf.cast(set_inflow(range(a.shape[-1])),tf.int32),axis=-1)
+        else:
+            a_out = np.apply_along_axis(set_outflow,-1,a)
+            a_in = np.apply_along_axis(set_inflow,-1,a)
         return a_out,a_in
     
-    def get_edge_action(self,a):
+    def get_edge_action(self,a,g=False):
         act_edges = np.squeeze([np.where((self.edges==act_edge).all(1))[0] for act_edge in self.act_edges])
         def set_edge_action(s):
             out = np.ones(self.n_edge)
             out[act_edges] = s
             return out
-        return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
+        if g:
+            return tf.expand_dims(tf.gather(a,tf.cast(set_edge_action(range(a.shape[-1])),tf.int32),axis=-1),axis=-1)
+        else:
+            return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
 
     def fit_eval(self,x,a,b,y,ex=None,ey=None,fit=True):
         if self.act:
@@ -485,9 +495,9 @@ class Emulator:
                 # y = concat([expand_dims(self.head_to_depth(self.normalize(y,'y',True)[...,0]),axis=-1),
                 #             y[...,1:]],axis=-1)
                 # or use sample weights
-                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/(self.hmax-self.hmin)
-                preds = concat([preds[...,:1]*tf.cast(wei,tf.float32),preds[...,1:]],axis=-1)
-                y = concat([y[...,:1]*tf.cast(wei,tf.float32),y[...,1:]],axis=-1)
+                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/(self.hmax-self.hmin).mean()
+                preds = concat([preds[...,:1] * wei,preds[...,1:]],axis=-1)
+                y = concat([y[...,:1] * wei,y[...,1:]],axis=-1)
             if self.balance:
                 loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1))
             else:
@@ -711,80 +721,102 @@ class Emulator:
 
     # No roll
     # TODO
-    def predict(self,states,runoff,a=None,edge_state=None):
+    def predict(self,states,b,a=None,edge_state=None):
         x = states[:,-self.seq_in:,...] if self.recurrent else states
         if edge_state is not None:
             ex = edge_state[:,-self.seq_in:,...] if self.recurrent else states
-        n_roll = runoff.shape[1] // self.seq_out
-        preds = []
+        assert b.shape[1] == self.seq_out
+        if self.act:
+            if self.use_adj:
+                adj = self.get_adj_action(a)
+            if self.use_edge:
+                ae = self.get_edge_action(a)
+            if not self.edge_fusion:
+                a_out,a_in = self.get_action(a)
+        inp = [self.normalize(x,'x'),self.normalize(b,'b')] if self.norm else [x,b]
+        # inp = [expand_dims(dat,0) for dat in inp]
+        if self.conv:
+            inp += [self.filter]
+            inp += [adj] if self.act and self.use_adj else []
         if self.use_edge:
-            edge_preds = []
-        for i in range(n_roll):
-            sc = slice(i*self.seq_out,(i+1)*self.seq_out)
-            b = runoff[:,sc,...]
-            if self.act:
-                if self.use_adj:
-                    adj = self.get_adj_action(a[:,sc,...])
-                if self.use_edge:
-                    ae = self.get_edge_action(a[:,sc,...])
-                if not self.edge_fusion:
-                    a_out,a_in = self.get_action(a[:,sc,...])
-            inp = [self.normalize(x,'x'),self.normalize(b,'b')] if self.norm else [x,b]
-            # inp = [expand_dims(dat,0) for dat in inp]
-            if self.conv:
-                inp += [self.filter]
-                inp += [adj] if self.act and self.use_adj else []
-            if self.use_edge:
-                # inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
-                inp += [self.normalize(ex,'e') if self.norm else ex]
-                inp += [self.edge_filter] if self.conv else []
-                inp += [ae] if self.act else []
-            y = self.model(inp)
-            if self.use_edge:
-                y,ey = y
-                # ey = squeeze(ey,0).numpy()
-                ey = ey.numpy()
-                if self.norm:
-                    ey = self.normalize(ey,'e',True)
-                ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
-            # y = squeeze(y,0).numpy()
-            y = y.numpy()
-            if self.act:
-                if self.use_edge:
-                    ey[...,-1:] *= ae
-                if not self.edge_fusion:
-                    y[...,2] *= a_out
-                    y[...,1] *= a_in
-            if self.use_edge and self.edge_fusion:
-                node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))
-                node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.clip(self.node_edge,0,1),-np.clip(ey[...,-1:],-np.inf,0))
-                if self.norm:
-                    node_outflow = node_outflow*(self.norm_y[0,:,2:3]>1e-3)/self.norm_y[0,:,2:3]
-                    node_inflow = node_inflow*(self.norm_y[0,:,1:2]>1e-3)/self.norm_y[0,:,1:2]
-                y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
+            # inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
+            inp += [self.normalize(ex,'e') if self.norm else ex]
+            inp += [self.edge_filter] if self.conv else []
+            inp += [ae] if self.act else []
+        y = self.model(inp)
+        if self.use_edge:
+            y,ey = y
+            ey = ey.numpy()
             if self.norm:
-                y = self.normalize(y,'y',True)
-            q_w,y = self.constrain(y,b[...,:1])
-
-            if self.recurrent and self.seq_in > self.seq_out:    
-                x = np.concatenate([x[:,self.seq_out-self.seq_in:,...],
-                                    np.concatenate([y,b[...,:1]],axis=-1)],axis=1)
-                if self.use_edge:
-                    ex = np.concatenate([ex[:,self.seq_out-self.seq_in:,...],np.concatenate([ey,ae],axis=-1) if self.act else ey],axis=1)
-            else:
-                x = np.concatenate([y,b[...,:1]],axis=-1)
-                if self.use_edge:
-                    ex = np.concatenate([ey,ae],axis=-1)
-
-            y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
-            preds.append(y)
+                ey = self.normalize(ey,'e',True)
+            ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
+        y = y.numpy()
+        if self.act:
             if self.use_edge:
-                edge_preds.append(ey)
-        if self.use_edge:
-            return np.concatenate(preds,axis=1),np.concatenate(edge_preds,axis=1)
-        else:
-            return np.concatenate(preds,axis=1)
+                ey[...,-1:] *= ae
+            if not self.edge_fusion:
+                y[...,2] *= a_out
+                y[...,1] *= a_in
+        if self.use_edge and self.edge_fusion:
+            node_outflow = np.matmul(np.clip(self.node_edge,0,1),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.abs(np.clip(self.node_edge,-1,0)),-np.clip(ey[...,-1:],-np.inf,0))
+            node_inflow = np.matmul(np.abs(np.clip(self.node_edge,-1,0)),np.clip(ey[...,-1:],0,np.inf)) + np.matmul(np.clip(self.node_edge,0,1),-np.clip(ey[...,-1:],-np.inf,0))
+            if self.norm:
+                node_outflow = node_outflow*(self.norm_y[0,:,2:3]>1e-3)/self.norm_y[0,:,2:3]
+                node_inflow = node_inflow*(self.norm_y[0,:,1:2]>1e-3)/self.norm_y[0,:,1:2]
+            y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
+        if self.norm:
+            y = self.normalize(y,'y',True)
+        q_w,y = self.constrain(y,b[...,:1])
+        y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
+        return y,ey if self.use_edge else y
 
+    def predict_tf(self,states,b,a=None,edge_state=None):
+        x = states[:,-self.seq_in:,...] if self.recurrent else states
+        if edge_state is not None:
+            ex = edge_state[:,-self.seq_in:,...] if self.recurrent else states
+        assert b.shape[1] == self.seq_out
+        if self.act:
+            if self.use_adj:
+                adj = self.get_adj_action(a,True)
+            if self.use_edge:
+                ae = self.get_edge_action(a,True)
+            if not self.edge_fusion:
+                a_out,a_in = self.get_action(a,True)
+        inp = [self.normalize(x,'x'),self.normalize(b,'b')] if self.norm else [x,b]
+        # inp = [expand_dims(dat,0) for dat in inp]
+        if self.conv:
+            inp += [self.filter]
+            inp += [adj] if self.act and self.use_adj else []
+        if self.use_edge:
+            # inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
+            inp += [self.normalize(ex,'e') if self.norm else ex]
+            inp += [self.edge_filter] if self.conv else []
+            inp += [ae] if self.act else []
+        y = self.model(inp)
+        if self.use_edge:
+            y,ey = y
+            if self.norm:
+                ey = self.normalize(ey,'e',True)
+            ey = tf.concat([tf.expand_dims(tf.clip_by_value(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
+        if self.act:
+            if self.use_edge:
+                ey = concat([ey[...,:-1],tf.multiply(ey[...,-1:],ae)],axis=-1)
+            if not self.edge_fusion:
+                y = concat([tf.stack([y[...,0],tf.multiply(y[...,1],a_in),tf.multiply(y[...,2],a_out)],axis=-1),y[...,3:]],axis=-1)
+
+        if self.use_edge and self.edge_fusion:
+            node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),tf.clip_by_value(ey[...,-1:],0,np.inf)) + tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),-tf.clip_by_value(ey[...,-1:],-np.inf,0))
+            node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),tf.clip_by_value(ey[...,-1:],0,np.inf)) + tf.matmul(tf.clip_by_value(self.node_edge,0,1),-tf.clip_by_value(ey[...,-1:],-np.inf,0))
+            if self.norm:
+                node_outflow *= tf.cast(self.norm_y[0,:,2:3]>1e-3,tf.float32)/self.norm_y[0,:,2:3]
+                node_inflow *= tf.cast(self.norm_y[0,:,1:2]>1e-3,tf.float32)/self.norm_y[0,:,1:2]
+            y = tf.concat([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
+        if self.norm:
+            y = self.normalize(y,'y',True)
+        q_w,y = self.constrain_tf(y,b[...,:1])
+        y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
+        return y,ey if self.use_edge else y
+        
     def constrain(self,y,r):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
@@ -801,6 +833,23 @@ class Emulator:
             if self.epsilon > 0:
                 q_w *= ((self.hmax - h) < self.epsilon)
             y = np.stack([h,q_us,q_ds],axis=-1)
+        return q_w,y
+    
+    def constrain_tf(self,y,r):
+        h,q_us,q_ds = [y[...,i] for i in range(3)]
+        r = tf.squeeze(r,axis=-1)
+        h = tf.clip_by_value(h,self.hmin,self.hmax)
+        if self.if_flood:
+            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            f = tf.cast(y[...,-1] > 0.5,tf.float32)
+            q_w = tf.clip_by_value(q_us + r - q_ds,0,np.inf) * f
+            h = self.hmax * f + h * (1-f)
+            y = tf.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
+        else:
+            q_w = tf.clip_by_value(q_us + r - q_ds,0,np.inf) * tf.cast(1-self.is_outfall,tf.float32)
+            if self.epsilon > 0:
+                q_w = q_w * tf.cast((self.hmax - h) < self.epsilon, tf.float32)
+            y = tf.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
     def get_flood(self,y,r):

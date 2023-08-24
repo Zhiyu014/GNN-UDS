@@ -229,7 +229,7 @@ class DataGenerator:
             norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         else:
             norm_x = np.concatenate([norm_h,norm[...,1:-1]+1e-6],axis=-1)
-            norm_y = np.concatenate([norm_h,norm[...,:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
         if self.env.config['global_state'][0][-1] == 'head':

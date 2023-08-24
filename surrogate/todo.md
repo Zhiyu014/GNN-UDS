@@ -7,16 +7,16 @@
         - [x] norm_hmin bug fixed
         - [ ] cannot predict depth well with large norm range
             - renorm and clip head in loss calculation
-            - set sample weights in mse calculation
+            - set weights in mse calculation: weird jumps in GAT
 
 # astlingen
 
 1. **Prediction**
     - [x] Conv-NN comparison
     - [x] if_flood comparison
-    - [ ] 60 step sequence: 
+    - [x] 60 step sequence: 
         - [x] Not well probably the normhmin bug
-        - [ ] Much better but water head bug same as shunqing
+        - [x] Much better but water head bug same as shunqing: Use depthN instead
 
 2. **MPC**
     - [x] Setting duration
