@@ -1,0 +1,6 @@
+act: rand
+data_dir: 1s_edge_act710_rain50
+rain_dir: ast_train50_events.csv
+repeats: 10
+simulate: true
+use_edge: true

@@ -314,6 +314,8 @@ if __name__ == '__main__':
 
 
         t1 = time.time()
+        print('Runoff time: {} s'.format(t1-t0))
+        opt_times = []
         state = env.reset(event,global_state=True,seq=margs.seq_in if args.surrogate else False)
         if args.surrogate and margs.if_flood:
             flood = env.flood(seq=margs.seq_in)
@@ -328,6 +330,7 @@ if __name__ == '__main__':
         done,i = False,0
         while not done:
             if i*args.interval % args.control_interval == 0:
+                t2 = time.time()
                 if args.surrogate:
                     if margs.if_flood:
                         f = (flood>0).astype(float)
@@ -350,6 +353,9 @@ if __name__ == '__main__':
                         t = env.env.methods['simulation_time']()
                         args.runoff_rate = runoff_rate[int(tss.asof(t)['Index']),...,0]
                     setting = run_ea(args,eval_file=eval_file,setting=setting)
+                t3 = time.time()
+                print('Optimization time: {} s'.format(t3-t2))
+                opt_times.append(t3-t2)
                 j = 0
                 done = env.step(setting[j])
             elif i*args.interval % args.setting_duration == 0:
@@ -368,8 +374,6 @@ if __name__ == '__main__':
             settings.append(setting[j])
             i += 1
             print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
-        t2 = time.time()
-        print('Runoff : {} s Simulation: {} s per step'.format(t1-t0,(t2-t1)/i))
         
         np.save(os.path.join(args.result_dir,name + '_%s_state.npy'%item),np.stack(states))
         np.save(os.path.join(args.result_dir,name + '_%s_perf.npy'%item),np.stack(perfs))
@@ -377,6 +381,6 @@ if __name__ == '__main__':
         np.save(os.path.join(args.result_dir,name + '_%s_settings.npy'%item),np.array(settings))
         np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.stack(edge_states))
 
-        results.loc[name] = [t1-t0,t2-t1,np.stack(perfs).sum()]
+        results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum()]
     results.to_csv(os.path.join(args.result_dir,'results_%s.csv'%item))
 
