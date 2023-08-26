@@ -1,4 +1,3 @@
-control_interval: 15
 model_dir: 60s_20k_act_edgef_res_norm_flood_gat_depth
 pop_size: 128
 rain_dir: ast_test5_events.csv

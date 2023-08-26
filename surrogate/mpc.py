@@ -1,10 +1,10 @@
 from emulator import Emulator # Emulator should be imported before env
 from utilities import get_inp_files
 import pandas as pd
-import os,time
+import os,time,gc
 import multiprocessing as mp
 import numpy as np
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 import argparse,yaml
 from envs import get_env
@@ -63,6 +63,7 @@ class mpc_problem(Problem):
         self.args = args
         self.file = eval_file
         if margs is not None:
+            tf.keras.backend.clear_session()    # to clear backend occupied models
             self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
             self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
@@ -240,13 +241,18 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     # else:
     ctrls = res.X
     ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
+    if margs is not None:
+        del prob.emul
     del prob
+    gc.collect()
+
     return ctrls
     
 
 if __name__ == '__main__':
     args,config = parser('config.yaml')
-    mp.set_start_method('spawn')    # use gpu in multiprocessing
+    # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
+    ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
     #       'processes':5,
     #       'pop_size':128,
@@ -342,11 +348,12 @@ if __name__ == '__main__':
                     if margs.use_edge:
                         margs.edge_state = edge_state
                     # use multiprocessing in emulation to avoid memory accumulation
-                    pool = mp.Pool(1)
-                    r = pool.apply_async(func=run_ea,args=(args,margs,None,setting,))
-                    pool.close()
-                    pool.join()
-                    setting = r.get()
+                    setting = run_ea(args,margs,None,setting)
+                    # pool = ctx.Pool(1)
+                    # r = pool.apply_async(func=run_ea,args=(args,margs,None,setting,))
+                    # pool.close()
+                    # pool.join()
+                    # setting = r.get()
                 else:
                     eval_file = env.get_eval_file(args.prediction['no_runoff'])
                     if args.prediction['no_runoff']:
