@@ -483,10 +483,13 @@ class Emulator:
                 if self.norm:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
-                    q_w = self.get_flood(preds_re_norm,b[...,:1])
+                    q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1])
+                    # q_w = self.get_flood(preds_re_norm,b[...,:1])
                     q_w = q_w/self.norm_y[0,:,-1]
+                    preds = self.normalize(preds_re_norm,'y')
                 else:
-                    q_w = self.get_flood(preds,b)
+                    q_w,preds = self.constrain_tf(preds,b[...,:1])
+                    # q_w = self.get_flood(preds,b[...,:1])
                 q_w = expand_dims(q_w,axis=-1)
             # narrow down norm range of water head
             if self.norm and self.hmin.max() > 0:
