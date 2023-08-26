@@ -1,10 +1,8 @@
-batch_size: 64
 conv: GAT
 data_dir: edge_head
 edge_fusion: true
-epochs: 20000
 if_flood: true
-model_dir: 10s_20k_10o_edgef_res_norm_flood_gat_head
+model_dir: 10s_20k_10o_edgef_res_norm_flood_gat_head/test
 n_tp_layer: 3
 norm: true
 order: 10

@@ -11,6 +11,7 @@ from envs import get_env
 from pymoo.optimize import minimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling
+from pymoo.operators.sampling.lhs import LatinHypercubeSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
@@ -214,7 +215,7 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
         setting *= prob.n_step
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.continuous)
     else:
-        sampling = FloatRandomSampling() if args.continuous else IntegerRandomSampling()
+        sampling = LatinHypercubeSampling() if args.continuous else IntegerRandomSampling()
     crossover = SBX(*args.crossover,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
     mutation = PM(*args.mutation,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
     termination = get_termination(*args.termination)

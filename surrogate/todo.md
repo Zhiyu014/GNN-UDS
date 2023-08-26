@@ -7,21 +7,28 @@
         - [x] norm_hmin bug fixed
         - [ ] cannot predict depth well with large norm range
             - renorm and clip head in loss calculation
-            - set sample weights in mse calculation
+            - set weights in mse calculation: weird jumps in GAT
+    - [x] if-flood comparison: no change
+    - [x] edge fusion comparison: no change
+    - [ ] loss using flooding volume (bal): if it increases flooding prediction in astlingen
+        - it truely rmse and mae but classification metrics are not good
+        - large error water head
+        - [ ] try on water depth in astlingen
 
 # astlingen
 
 1. **Prediction**
     - [x] Conv-NN comparison
     - [x] if_flood comparison
-    - [ ] 60 step sequence: 
+    - [x] 60 step sequence: 
         - [x] Not well probably the normhmin bug
-        - [ ] Much better but water head bug same as shunqing
+        - [x] Much better but water head bug same as shunqing: Use depthN instead
 
 2. **MPC**
     - [x] Setting duration
     - [ ] 101 tests of 30s
     - [ ] Test 15/30 control interval with 5 setting duration
+        - 15 ctrl_inte not work well with 60 prediction steps and 7 act
     - [ ] Genetic algorithm
         - [x] Discrete
         - [ ] Continuous
