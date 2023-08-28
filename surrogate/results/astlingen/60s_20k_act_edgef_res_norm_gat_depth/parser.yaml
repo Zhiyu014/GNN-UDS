@@ -1,0 +1,17 @@
+act: rand
+batch_size: 64
+conv: GAT
+data_dir: 1s_edge_act710_rain50
+edge_fusion: true
+epochs: 20000
+model_dir: 60s_20k_act_edgef_res_norm_gat_depth
+n_tp_layer: 4
+norm: true
+rain_dir: ast_test5_events.csv
+recurrent: Conv1D
+resnet: true
+result_dir: 60s_20k_act_edgef_res_norm_gat_depth
+seq_in: 60
+seq_out: 60
+test: true
+use_edge: true
