@@ -6,12 +6,13 @@ import multiprocessing as mp
 import numpy as np
 # os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
+from tensorflow.keras.optimizers import Adam
 import argparse,yaml
 from envs import get_env
 from pymoo.optimize import minimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling
-from pymoo.operators.sampling.lhs import LatinHypercubeSampling
+from pymoo.operators.sampling.lhs import LatinHypercubeSampling,sampling_lhs
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
@@ -95,7 +96,7 @@ class mpc_problem(Problem):
 
     def pred_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
-        y = np.concatenate([np.repeat(y[i:i+1,:],self.r_step,axis=0) for i in range(self.n_step)])
+        y = np.repeat(y,self.r_step,axis=0)
         if y.shape[0] < self.eval_hrz // self.step:
             y = np.concatenate([y,np.repeat(y[-1:,:],self.eval_hrz // self.step-y.shape[0],axis=0)],axis=0)
 
@@ -116,25 +117,27 @@ class mpc_problem(Problem):
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
         settings = y if self.args.continuous else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
-        settings = np.concatenate([np.repeat(settings[:,i:i+1,...],self.r_step,axis=1) for i in range(self.n_step)],axis=1)
+        settings = np.repeat(settings,self.r_step,axis=1)
         if settings.shape[1] < self.runoff.shape[0]:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
             settings = np.concatenate([settings,np.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
         state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
-        q_w = preds[0][...,-1] if self.emul.use_edge else preds[...,-1]
-        q_in = np.concatenate([state[:,-1:,:,1],preds[0][...,1]],axis=1) if self.emul.use_edge else np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
-        flood = [q_w[...,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
-                  for idx,attr,weight in self.args.performance_targets if attr == 'cumflooding']
-        inflow = [np.diff(q_in[...,self.args.elements['nodes'].index(idx)],axis=1).sum(axis=1) * weight
-                  for idx,attr,weight in self.args.performance_targets
-                    if attr == 'cuminflow' and 'WWTP' not in idx]
-        outflow = [q_in[:,1:,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
-                  for idx,attr,weight in self.args.performance_targets
-                    if attr == 'cuminflow' and 'WWTP' in idx]
-        # return q_w.sum(axis=1).sum(axis=1)
-        return sum(flood) + sum(inflow) + sum(outflow)
+        env = get_env(self.args.env)(initialize=False)
+        return env.objective_pred(preds[0] if self.args.use_edge else preds,state)
+        # q_w = preds[0][...,-1] if self.emul.use_edge else preds[...,-1]
+        # q_in = np.concatenate([state[:,-1:,:,1],preds[0][...,1]],axis=1) if self.emul.use_edge else np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
+        # flood = [q_w[...,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
+        #           for idx,attr,weight in self.args.performance_targets if attr == 'cumflooding']
+        # inflow = [np.diff(q_in[...,self.args.elements['nodes'].index(idx)],axis=1).sum(axis=1) * weight
+        #           for idx,attr,weight in self.args.performance_targets
+        #             if attr == 'cuminflow' and 'WWTP' not in idx]
+        # outflow = [q_in[:,1:,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
+        #           for idx,attr,weight in self.args.performance_targets
+        #             if attr == 'cuminflow' and 'WWTP' in idx]
+        # # return q_w.sum(axis=1).sum(axis=1)
+        # return sum(flood) + sum(inflow) + sum(outflow)
 
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -249,6 +252,84 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
 
     return ctrls
     
+class mpc_problem_gr:
+    def __init__(self,args,margs):
+        self.args = args
+        tf.keras.backend.clear_session()    # to clear backend occupied models
+        self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+        self.emul.load(margs.model_dir)
+        self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
+        self.n_act = len(args.action_space)
+        self.step = args.interval
+        self.eval_hrz = args.prediction['eval_horizon']
+        self.n_step = args.prediction['control_horizon']//args.setting_duration
+        self.r_step = args.setting_duration//args.interval
+        self.n_var = self.n_act*self.n_step
+        self.xl = np.array([min(v) for _ in range(self.n_step)
+                             for v in args.action_space.values()])
+        self.xu = np.array([max(v) for _ in range(self.n_step)
+                             for v in args.action_space.values()])
+
+    def pred_emu(self,y):
+        # y = tf.Variable(y)
+        state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
+        edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
+        with tf.GradientTape() as tape:
+            tape.watch(y)
+            y = tf.reshape(y,(-1,self.n_step,self.n_act))
+            settings = tf.repeat(y,self.r_step,axis=1)
+            if settings.shape[1] < self.runoff.shape[0]:
+                # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
+                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
+            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+            #TODO: np to tf in env.objective_pred
+            # env = get_env(self.args.env)(initialize=False)
+            # obj = env.objective_pred(preds[0] if self.args.use_edge else preds,state)
+            preds = preds[0] if self.use_edge else preds
+            q_w = preds[...,-1]
+            q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
+            flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
+                    for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
+            inflow = [tf.reduce_sum(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
+                    for idx,attr,weight in self.config['performance_targets']
+                        if attr == 'cuminflow' and 'WWTP' not in idx]
+            outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
+                    for idx,attr,weight in self.config['performance_targets']
+                        if attr == 'cuminflow' and 'WWTP' in idx]
+            obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+        grads = tape.gradient(obj,settings)
+        return obj,grads
+
+def run_gr(args,margs,setting=None):
+    prob = mpc_problem_gr(args,margs)
+    if args.use_current and setting is not None:
+        setting *= prob.n_step
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.continuous)
+    else:
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
+    optimizer = Adam(getattr(args,"learning_rate",1e-3))
+    def if_terminate(item,vm,rec):
+        if item == 'n_gen':
+            return rec[0] >= vm
+        elif item == 'obj':
+            return rec[1]   # TODO
+        elif item == 'grad':
+            return rec[2] <= vm
+        elif item == 'time':
+            return rec[3] >= vm
+
+    t0,rec = time.time(),[0,1e6,1e6,time.time()]
+    y = tf.Variable(sampling)
+    while if_terminate(*args.termination,rec):
+        obj,grads = prob.pred_emu(y)
+        y = optimizer.apply_gradients(zip(grads,y)) # How to regulate y in (xl,xu)
+        y = tf.clip_by_value(y,prob.xl,prob.xu)
+        rec[0] += 1
+        rec[1],rec[2] = min(rec[1],obj.numpy().mean()),min(rec[2],grads.numpy().mean())
+        rec[3] = time.time() - t0
+    ctrls = y[obj.numpy().argmax()].numpy().reshape((prob.n_step,prob.n_act)).tolist()
+    return ctrls
+
 
 if __name__ == '__main__':
     args,config = parser('config.yaml')
