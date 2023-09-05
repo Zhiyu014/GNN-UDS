@@ -1,0 +1,12 @@
+conv: GAT
+epochs: 20000
+if_flood: true
+length: 500.0
+model_dir: 10s_20k_res_norm_flood_gat/test
+norm: true
+rain_dir: hg_test_events.csv
+recurrent: Conv1D
+resnet: true
+seq_in: 10
+seq_out: 10
+test: true
