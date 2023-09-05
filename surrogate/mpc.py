@@ -270,6 +270,7 @@ class mpc_problem_gr:
         self.xu = np.array([max(v) for _ in range(self.n_step)
                              for v in args.action_space.values()])
 
+    @tf.function
     def pred_emu(self,y):
         # y = tf.Variable(y)
         state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
@@ -282,21 +283,21 @@ class mpc_problem_gr:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
                 settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            #TODO: np to tf in env.objective_pred
-            # env = get_env(self.args.env)(initialize=False)
-            # obj = env.objective_pred(preds[0] if self.args.use_edge else preds,state)
-            preds = preds[0] if self.use_edge else preds
-            q_w = preds[...,-1]
-            q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
-            flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
-                    for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-            inflow = [tf.reduce_sum(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
-                    for idx,attr,weight in self.config['performance_targets']
-                        if attr == 'cuminflow' and 'WWTP' not in idx]
-            outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
-                    for idx,attr,weight in self.config['performance_targets']
-                        if attr == 'cuminflow' and 'WWTP' in idx]
-            obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+            # TODO: np to tf in env.objective_pred
+            env = get_env(self.args.env)(initialize=False)
+            obj = env.objective_pred_tf(preds[0] if self.args.use_edge else preds,state)
+            # preds = preds[0] if self.use_edge else preds
+            # q_w = preds[...,-1]
+            # q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
+            # flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
+            #         for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
+            # inflow = [tf.reduce_sum(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
+            #         for idx,attr,weight in self.config['performance_targets']
+            #             if attr == 'cuminflow' and 'WWTP' not in idx]
+            # outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
+            #         for idx,attr,weight in self.config['performance_targets']
+            #             if attr == 'cuminflow' and 'WWTP' in idx]
+            # obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
         grads = tape.gradient(obj,settings)
         return obj,grads
 
