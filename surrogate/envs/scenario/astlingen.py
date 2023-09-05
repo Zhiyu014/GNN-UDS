@@ -266,6 +266,20 @@ class astlingen(scenario):
                     if attr == 'cuminflow' and 'WWTP' in idx]
         return sum(flood) + sum(inflow) + sum(outflow)
     
+    def objective_pred_tf(self,preds,state):
+        import tensorflow as tf
+        q_w = preds[...,-1]
+        q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
+        flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
+        inflow = [tf.reduce_sum(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' not in idx]
+        outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' in idx]
+        return tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+    
     def reset(self,swmm_file=None, global_state=True,seq=False):
         # clear the data log and reset the environment
         if swmm_file is not None:
