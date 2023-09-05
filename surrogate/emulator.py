@@ -360,13 +360,15 @@ class Emulator:
 
     def get_adj_action(self,a,g=False):
         # (B,T,N_act) --> (B,T,N,N)
-        def get_act(s):
-            adj = self.adj.copy()
-            adj[tuple(self.act_edges.T)] = s
-            return adj
         if g:
-            adj = tf.gather(a,tf.cast(get_act(range(a.shape[-1])),tf.int32),axis=-1)
+            out = np.zeros((self.n_node,self.n_node))
+            out[tuple(self.act_edges.T)] = range(1,a.shape[-1]+1)
+            adj = self.adj * tf.gather(tf.concat([tf.ones_like(a[...,:1]),a],axis=-1),tf.cast(out,tf.int32),axis=-1)
         else:
+            def get_act(s):
+                adj = self.adj.copy()
+                adj[tuple(self.act_edges.T)] = s
+                return adj
             adj = np.apply_along_axis(get_act,-1,a)
 
         if 'GCN' in self.conv:
@@ -374,35 +376,41 @@ class Emulator:
         elif 'Diff' in self.conv:
             adj = DiffusionConv.preprocess(adj)
         else:
-            adj = adj.astype(int)
+            adj = tf.cast(adj,tf.int32) if g else adj.astype(int)
         return adj
 
     def get_action(self,a,g=False):
-        def set_outflow(s):
-            out = np.ones(self.n_node)
-            out[self.act_edges[:,0]] = s
-            return out
-        def set_inflow(s):
-            out = np.ones(self.n_node)
-            out[self.act_edges[:,1]] = s
-            return out
         if g:
-            a_out = tf.gather(a,tf.cast(set_outflow(range(a.shape[-1])),tf.int32),axis=-1)
-            a_in = tf.gather(a,tf.cast(set_inflow(range(a.shape[-1])),tf.int32),axis=-1)
+            out_o = np.zeros(self.n_node)
+            out_i = np.zeros(self.n_node)
+            out_o[self.act_edges[:,0]] = range(1,a.shape[-1]+1)
+            out_i[self.act_edges[:,1]] = range(1,a.shape[-1]+1)
+            a_out = tf.gather(tf.concat([tf.ones_like(a[...,:1]),a],axis=-1),tf.cast(out_o,tf.int32),axis=-1)
+            a_in = tf.gather(tf.concat([tf.ones_like(a[...,:1]),a],axis=-1),tf.cast(out_i,tf.int32),axis=-1)
         else:
+            def set_outflow(s):
+                out = np.ones(self.n_node)
+                out[self.act_edges[:,0]] = s
+                return out
+            def set_inflow(s):
+                out = np.ones(self.n_node)
+                out[self.act_edges[:,1]] = s
+                return out
             a_out = np.apply_along_axis(set_outflow,-1,a)
             a_in = np.apply_along_axis(set_inflow,-1,a)
         return a_out,a_in
     
     def get_edge_action(self,a,g=False):
         act_edges = np.squeeze([np.where((self.edges==act_edge).all(1))[0] for act_edge in self.act_edges])
-        def set_edge_action(s):
-            out = np.ones(self.n_edge)
-            out[act_edges] = s
-            return out
         if g:
-            return tf.expand_dims(tf.gather(a,tf.cast(set_edge_action(range(a.shape[-1])),tf.int32),axis=-1),axis=-1)
+            out = np.zeros(self.n_edge)
+            out[act_edges] = range(1,a.shape[-1]+1)
+            return tf.expand_dims(tf.gather(tf.concat([tf.ones_like(a[...,:1]),a],axis=-1),tf.cast(out,tf.int32),axis=-1),axis=-1)
         else:
+            def set_edge_action(s):
+                out = np.ones(self.n_edge)
+                out[act_edges] = s
+                return out
             return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
 
     @tf.function
