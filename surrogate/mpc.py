@@ -4,7 +4,7 @@ import pandas as pd
 import os,time,gc
 import multiprocessing as mp
 import numpy as np
-# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 import argparse,yaml

@@ -338,7 +338,7 @@ class Emulator:
         out = Dense(out_shape,activation='hard_sigmoid' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
-            flood = Dense(out_shape,activation=self.activation)(x)
+            flood = Dense(self.embed_size//2,activation=self.activation)(x)
             flood = Dropout(0.5)(flood)
             out_shape = 1 if conv else 1 * self.n_node
             flood = Dense(out_shape,activation='sigmoid')(flood)
