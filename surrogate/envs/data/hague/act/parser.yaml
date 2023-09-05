@@ -1,5 +1,5 @@
 act: conti
 data_dir: act
-rain_dir: hg_train50_events.csv
+rain_dir: hg_train_events.csv
 repeats: 5
 simulate: true

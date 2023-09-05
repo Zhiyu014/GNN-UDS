@@ -13,7 +13,12 @@ import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-# mixed_precision.set_global_policy('mixed_float16')
+# tf=2.3.0
+# policy = mixed_precision.experimental.Policy('mixed_float16')
+# mixed_precision.experimental.set_policy(policy)
+# tf=2.6.0
+# policy = mixed_precision.Policy('mixed_float16')
+# mixed_precision.set_global_policy(policy)
 
 # - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?  TO reduce model
 #     - [pytorch implementation](https://github.com/LMissher/STGNN)
@@ -36,7 +41,9 @@ class NodeEdge(tf.keras.layers.Layer):
         super(NodeEdge,self).build(input_shape)
 
     def call(self,inputs):
-        return tf.matmul(self.w * self.inci + self.b, inputs)
+        # mat = self.w * tf.cast(self.inci,policy.compute_dtype) + self.b
+        mat = self.w * self.inci + self.b
+        return tf.matmul(mat, inputs)
     
 
 class Emulator:

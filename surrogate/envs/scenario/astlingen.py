@@ -253,6 +253,19 @@ class astlingen(scenario):
         else:
             return - __reward
 
+    def objective_pred(self,preds,state):
+        q_w = preds[...,-1]
+        q_in = np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
+        flood = [q_w[...,self.elements['nodes'].index(idx)].sum(axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
+        inflow = [np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1).sum(axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' not in idx]
+        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)].sum(axis=1) * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' in idx]
+        return sum(flood) + sum(inflow) + sum(outflow)
+    
     def reset(self,swmm_file=None, global_state=True,seq=False):
         # clear the data log and reset the environment
         if swmm_file is not None:
