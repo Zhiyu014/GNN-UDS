@@ -272,13 +272,12 @@ class mpc_problem_gr:
 
     @tf.function
     def pred_emu(self,y):
-        # y = tf.Variable(y)
-        state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
-        edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
+        state,runoff = tf.repeat(tf.expand_dims(self.state,0),y.shape[0],axis=0),tf.repeat(tf.expand_dims(self.runoff,0),y.shape[0],axis=0)
+        edge_state = tf.repeat(tf.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         with tf.GradientTape() as tape:
             tape.watch(y)
-            y = tf.reshape(y,(-1,self.n_step,self.n_act))
-            settings = tf.repeat(y,self.r_step,axis=1)
+            settings = tf.reshape(y,(-1,self.n_step,self.n_act))
+            settings = tf.repeat(settings,self.r_step,axis=1)
             if settings.shape[1] < self.runoff.shape[0]:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
                 settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
@@ -298,7 +297,7 @@ class mpc_problem_gr:
             #         for idx,attr,weight in self.config['performance_targets']
             #             if attr == 'cuminflow' and 'WWTP' in idx]
             # obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
-        grads = tape.gradient(obj,settings)
+        grads = tape.gradient(obj,y)
         return obj,grads
 
 def run_gr(args,margs,setting=None):

@@ -5,6 +5,7 @@ data_dir: act
 epochs: 20000
 if_flood: true
 model_dir: 60s_20k_conti_res_norm_flood_gat
+n_tp_layer: 6
 norm: true
 recurrent: Conv1D
 resnet: true

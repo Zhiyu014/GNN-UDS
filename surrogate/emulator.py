@@ -406,11 +406,11 @@ class Emulator:
     def fit_eval(self,x,a,b,y,ex=None,ey=None,fit=True):
         if self.act:
             if self.use_adj:
-                adj = self.get_adj_action(a)
+                adj = self.get_adj_action(a,True)
             if self.use_edge:
-                ae = self.get_edge_action(a)
+                ae = self.get_edge_action(a,True)
             if not self.edge_fusion:
-                a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a)
+                a_out,a_in = self.get_action(a[:,:self.seq_out,...] if self.recurrent else a,True)
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
             if self.roll:
@@ -536,9 +536,10 @@ class Emulator:
         if fit:
             grads = tape.gradient(loss, self.model.trainable_variables)
             self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
-            return loss.numpy()
-        else:
-            return [los.numpy() for los in loss]
+        #     return loss.numpy()
+        # else:
+        #     return [los.numpy() for los in loss]
+        return loss
 
 
     def update_net(self,dG,ratio=None,epochs=None,batch_size=None,train_ids=None):
@@ -555,13 +556,13 @@ class Emulator:
         else:
             test_ids = [ev for ev in range(n_events) if ev not in train_ids]
 
-        try:
-            train_datas = dG.prepare(seq,train_ids)
-            test_datas = dG.prepare(seq,test_ids)
-            _dataloaded = True
-        except:
-            print('Full data load failed, prepare per batch')
-            _dataloaded = False
+        # try:
+        #     train_datas = dG.prepare(seq,train_ids)
+        #     test_datas = dG.prepare(seq,test_ids)
+        #     _dataloaded = True
+        # except:
+        print('Full data load failed, prepare per batch')
+        _dataloaded = False
 
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
@@ -581,6 +582,7 @@ class Emulator:
             else:
                 ex,ey = None,None
             train_loss = self.fit_eval(x,a,b,y,ex,ey)
+            train_loss = train_loss.numpy()
             if epoch >= 500:
                 train_losses.append(train_loss)
 
@@ -600,6 +602,7 @@ class Emulator:
             else:
                 ex,ey = None,None
             test_loss = self.fit_eval(x,a,b,y,ex,ey,fit=False)
+            test_loss = [los.numpy() for los in test_loss]
             if epoch >= 500:
                 test_losses.append(test_loss)
 
@@ -655,7 +658,7 @@ class Emulator:
                         inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
                         inp += [self.edge_filter] if self.conv else []
                         inp += [ae[idx:idx+1,i:i+self.seq_out,...] if self.recurrent else ae[idx]] if self.act else []
-                    y = self.model(inp)
+                    y = self.model(inp,training=False)
 
                     if self.use_edge:
                         y,ey = y
@@ -745,7 +748,6 @@ class Emulator:
 
     # No roll
     # TODO
-    @tf.function
     def predict(self,states,b,a=None,edge_state=None):
         x = states[:,-self.seq_in:,...] if self.recurrent else states
         if edge_state is not None:
@@ -768,7 +770,7 @@ class Emulator:
             inp += [self.normalize(ex,'e') if self.norm else ex]
             inp += [self.edge_filter] if self.conv else []
             inp += [ae] if self.act else []
-        y = self.model(inp)
+        y = self.model(inp,training=False)
         if self.use_edge:
             y,ey = y
             ey = ey.numpy()
@@ -818,7 +820,7 @@ class Emulator:
             inp += [self.normalize(ex,'e') if self.norm else ex]
             inp += [self.edge_filter] if self.conv else []
             inp += [ae] if self.act else []
-        y = self.model(inp)
+        y = self.model(inp,training=False)
         if self.use_edge:
             y,ey = y
             if self.norm:
