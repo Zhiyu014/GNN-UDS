@@ -1,5 +1,5 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract,Dropout
 from tensorflow.keras import activations
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
@@ -13,7 +13,12 @@ import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-# mixed_precision.set_global_policy('mixed_float16')
+# tf=2.3.0
+# policy = mixed_precision.experimental.Policy('mixed_float16')
+# mixed_precision.experimental.set_policy(policy)
+# tf=2.6.0
+# policy = mixed_precision.Policy('mixed_float16')
+# mixed_precision.set_global_policy(policy)
 
 # - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?  TO reduce model
 #     - [pytorch implementation](https://github.com/LMissher/STGNN)
@@ -36,7 +41,9 @@ class NodeEdge(tf.keras.layers.Layer):
         super(NodeEdge,self).build(input_shape)
 
     def call(self,inputs):
-        return tf.matmul(self.w * self.inci + self.b, inputs)
+        # mat = self.w * tf.cast(self.inci,policy.compute_dtype) + self.b
+        mat = self.w * self.inci + self.b
+        return tf.matmul(mat, inputs)
     
 
 class Emulator:
@@ -60,6 +67,7 @@ class Emulator:
         self.kernel_size = getattr(args,"kernel_size",3)
         self.n_sp_layer = getattr(args,"n_sp_layer",3)
         self.n_tp_layer = getattr(args,"n_tp_layer",2)
+        self.dropout = getattr(args,'dropout',0.5)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
         self.balance = getattr(args,"balance",0)
@@ -160,13 +168,16 @@ class Emulator:
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
         x = reshape(X_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
         x = Dense(self.embed_size,activation='linear')(x) # Embedding
+        x = Dropout(0.2)(x)
         res = x[:,-1:,...] if recurrent else x  # Keep the identity original with no activation
         x = activation(x)
         b = reshape(B_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.b_in,)) if not conv else B_in
         b = Dense(self.embed_size//2,activation=self.activation)(b)  # Boundary Embedding (B,T_out,N,E)
+        b = Dropout(0.2)(b)
         if self.use_edge:
             e = reshape(E_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*self.e_in,)) if not conv else E_in
             e = Dense(self.embed_size,activation='linear')(e)  # Edge attr Embedding (B,T_in,N,E)
+            e = Dropout(0.2)(e)
             res_e = e[:,-1:,...] if recurrent else e
             e = activation(e)
             # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
@@ -174,6 +185,7 @@ class Emulator:
             if self.act:
                 ae = reshape(AE_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*1,)) if not conv else AE_in
                 ae = Dense(self.embed_size//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,E)
+                ae = Dropout(0.2)(ae)
 
         # Spatial block: Does spatial and temporal nets need combination one-by-one?
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
@@ -191,9 +203,11 @@ class Emulator:
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
+            x = Dropout(self.dropout)(x)
             if self.use_edge:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
+                e = Dropout(self.dropout)(e)
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
@@ -293,9 +307,11 @@ class Emulator:
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
+            x = Dropout(self.dropout)(x)
             if self.use_edge:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
+                e = Dropout(self.dropout)(e)
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         state_shape = (self.seq_out,) + state_shape[1:] if recurrent else state_shape
@@ -303,6 +319,7 @@ class Emulator:
         
         # resnet
         x_out = Dense(self.embed_size,activation='linear')(x)
+        x_out = Dropout(self.dropout)(x_out)
         x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if recurrent else Add()([res,x_out]) if resnet else x_out
         x = activation(x)   # if activation is needed here?
 
@@ -312,6 +329,7 @@ class Emulator:
             e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
             # resnet
             e_out = Dense(self.embed_size,activation='linear')(e)
+            e_out = Dropout(self.dropout)(e_out)
             e = Add()([cumsum(e_out,axis=1),tile(res_e,(1,self.seq_out,)+(1,)*len(res_e.shape[2:]))]) if recurrent else Add()([res_e,e_out]) if resnet else e_out
             e = activation(e)
 
@@ -320,8 +338,10 @@ class Emulator:
         out = Dense(out_shape,activation='hard_sigmoid' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
+            flood = Dense(self.embed_size//2,activation=self.activation)(x)
+            flood = Dropout(0.5)(flood)
             out_shape = 1 if conv else 1 * self.n_node
-            flood = Dense(out_shape,activation='sigmoid')(x)
+            flood = Dense(out_shape,activation='sigmoid')(flood)
             flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
             # flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
@@ -382,6 +402,7 @@ class Emulator:
         else:
             return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
 
+    @tf.function
     def fit_eval(self,x,a,b,y,ex=None,ey=None,fit=True):
         if self.act:
             if self.use_adj:
@@ -407,7 +428,7 @@ class Emulator:
                         inp += [ex]
                         inp += [self.edge_filter] if self.conv else []
                         inp += [ae[:,i:i+self.seq_out,...] if self.recurrent else ae] if self.act else []
-                    pred = self.model(inp)
+                    pred = self.model(inp,training=fit)
 
                     if self.use_edge:
                         pred,edge_pred = pred
@@ -454,7 +475,7 @@ class Emulator:
                     inp += [ex]
                     inp += [self.edge_filter] if self.conv else []
                     inp += [ae] if self.act else []
-                preds = self.model(inp)
+                preds = self.model(inp,training=fit)
 
                 if self.use_edge:
                     preds,edge_preds = preds
@@ -724,6 +745,7 @@ class Emulator:
 
     # No roll
     # TODO
+    @tf.function
     def predict(self,states,b,a=None,edge_state=None):
         x = states[:,-self.seq_in:,...] if self.recurrent else states
         if edge_state is not None:
@@ -773,6 +795,7 @@ class Emulator:
         y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey if self.use_edge else y
 
+    @tf.function
     def predict_tf(self,states,b,a=None,edge_state=None):
         x = states[:,-self.seq_in:,...] if self.recurrent else states
         if edge_state is not None:

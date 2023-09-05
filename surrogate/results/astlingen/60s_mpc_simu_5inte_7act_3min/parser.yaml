@@ -1,0 +1,7 @@
+pop_size: 128
+processes: 16
+rain_dir: ast_test5_events.csv
+result_dir: 60s_mpc_simu_5inte_7act_3min
+termination:
+- time
+- 00:03:00
