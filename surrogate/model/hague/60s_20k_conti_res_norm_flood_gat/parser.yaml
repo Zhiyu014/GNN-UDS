@@ -1,0 +1,13 @@
+act: conti
+batch_size: 16
+conv: GAT
+data_dir: act
+epochs: 20000
+if_flood: true
+model_dir: 60s_20k_conti_res_norm_flood_gat
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 60
+seq_out: 60
+train: true
