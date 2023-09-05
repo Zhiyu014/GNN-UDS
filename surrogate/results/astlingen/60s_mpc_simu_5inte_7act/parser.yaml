@@ -1,0 +1,7 @@
+pop_size: 128
+processes: 32
+rain_dir: ast_test5_ecents.csv
+result_dir: 60s_mpc_simu_5inte_7act
+termination:
+- n_gen
+- 100

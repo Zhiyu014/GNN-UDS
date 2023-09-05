@@ -1,5 +1,5 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract
+from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract,Dropout
 from tensorflow.keras import activations
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
@@ -320,8 +320,10 @@ class Emulator:
         out = Dense(out_shape,activation='hard_sigmoid' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
+            flood = Dense(self.embed_size//2,activation=self.activation)(x)
+            flood = Dropout(0.5)(flood)
             out_shape = 1 if conv else 1 * self.n_node
-            flood = Dense(out_shape,activation='sigmoid')(x)
+            flood = Dense(out_shape,activation='sigmoid')(flood)
             flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
             # flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
@@ -407,7 +409,7 @@ class Emulator:
                         inp += [ex]
                         inp += [self.edge_filter] if self.conv else []
                         inp += [ae[:,i:i+self.seq_out,...] if self.recurrent else ae] if self.act else []
-                    pred = self.model(inp)
+                    pred = self.model(inp,training=fit)
 
                     if self.use_edge:
                         pred,edge_pred = pred
@@ -454,7 +456,7 @@ class Emulator:
                     inp += [ex]
                     inp += [self.edge_filter] if self.conv else []
                     inp += [ae] if self.act else []
-                preds = self.model(inp)
+                preds = self.model(inp,training=fit)
 
                 if self.use_edge:
                     preds,edge_preds = preds

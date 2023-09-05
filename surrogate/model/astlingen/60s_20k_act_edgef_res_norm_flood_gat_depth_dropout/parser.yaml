@@ -1,0 +1,16 @@
+act: rand
+batch_size: 32
+conv: GAT
+data_dir: 1s_edge_act710_rain50
+edge_fusion: true
+epochs: 20000
+if_flood: true
+model_dir: 60s_20k_act_edgef_res_norm_flood_gat_depth_dropout
+n_tp_layer: 4
+norm: true
+recurrent: Conv1D
+resnet: true
+seq_in: 60
+seq_out: 60
+train: true
+use_edge: true
