@@ -34,6 +34,7 @@ shunqing:
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
+  dropout: 0.0
   activation: relu
   recurrent: GRU
   hidden_dim: 64
@@ -85,6 +86,7 @@ RedChicoSur:
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
+  dropout: 0.0
   activation: relu
   recurrent: GRU
   hidden_dim: 64
@@ -138,6 +140,7 @@ astlingen:
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
+  dropout: 0.0
   activation: relu
   recurrent: GRU
   hidden_dim: 64
@@ -209,6 +212,7 @@ hague:
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
+  dropout: 0.0
   activation: relu
   recurrent: GRU
   hidden_dim: 64

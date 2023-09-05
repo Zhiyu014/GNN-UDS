@@ -48,6 +48,7 @@ def parser(config=None):
     parser.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
     parser.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
+    parser.add_argument('--dropout',type=float,default=0.0,help='dropout rate')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
     parser.add_argument('--recurrent',type=str,default='GRU',help='recurrent type')
     parser.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')

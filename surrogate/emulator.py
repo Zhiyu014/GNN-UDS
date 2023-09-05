@@ -2,6 +2,7 @@ from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce
 from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,Softmax,Add,Subtract,Dropout
 from tensorflow.keras import activations
 from tensorflow.keras.models import Model
+from tensorflow.keras.regularizers import l1,l2
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
 from tensorflow.keras import mixed_precision
@@ -67,7 +68,7 @@ class Emulator:
         self.kernel_size = getattr(args,"kernel_size",3)
         self.n_sp_layer = getattr(args,"n_sp_layer",3)
         self.n_tp_layer = getattr(args,"n_tp_layer",2)
-        self.dropout = getattr(args,'dropout',0.5)
+        self.dropout = getattr(args,'dropout',0.0)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
         self.balance = getattr(args,"balance",0)
@@ -168,16 +169,16 @@ class Emulator:
         # (B,T,N,in) (B,N,in)--> (B,T,N*in) (B,N*in)
         x = reshape(X_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.n_in,)) if not conv else X_in
         x = Dense(self.embed_size,activation='linear')(x) # Embedding
-        x = Dropout(0.2)(x)
+        x = Dropout(0.2)(x) if self.dropout else x
         res = x[:,-1:,...] if recurrent else x  # Keep the identity original with no activation
         x = activation(x)
         b = reshape(B_in,(-1,)+tuple(state_shape[:-2])+(self.n_node*self.b_in,)) if not conv else B_in
         b = Dense(self.embed_size//2,activation=self.activation)(b)  # Boundary Embedding (B,T_out,N,E)
-        b = Dropout(0.2)(b)
+        b = Dropout(0.2)(b) if self.dropout else b
         if self.use_edge:
             e = reshape(E_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*self.e_in,)) if not conv else E_in
             e = Dense(self.embed_size,activation='linear')(e)  # Edge attr Embedding (B,T_in,N,E)
-            e = Dropout(0.2)(e)
+            e = Dropout(0.2)(e) if self.dropout else e
             res_e = e[:,-1:,...] if recurrent else e
             e = activation(e)
             # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
@@ -185,7 +186,7 @@ class Emulator:
             if self.act:
                 ae = reshape(AE_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*1,)) if not conv else AE_in
                 ae = Dense(self.embed_size//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,E)
-                ae = Dropout(0.2)(ae)
+                ae = Dropout(0.2)(ae) if self.dropout else ae
 
         # Spatial block: Does spatial and temporal nets need combination one-by-one?
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
@@ -203,11 +204,11 @@ class Emulator:
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,Adj_in] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
-            x = Dropout(self.dropout)(x)
+            x = Dropout(self.dropout)(x) if self.dropout else x
             if self.use_edge:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
-                e = Dropout(self.dropout)(e)
+                e = Dropout(self.dropout)(e) if self.dropout else e
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
@@ -307,11 +308,11 @@ class Emulator:
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
             x = [x,A] if conv else x
             x = net(self.embed_size,activation=self.activation)(x)
-            x = Dropout(self.dropout)(x)
+            x = Dropout(self.dropout)(x) if self.dropout else x
             if self.use_edge:
                 e = [e,Eadj_in] if conv else e
                 e = net(self.embed_size,activation=self.activation)(e)
-                e = Dropout(self.dropout)(e)
+                e = Dropout(self.dropout)(e) if self.dropout else e
 
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         state_shape = (self.seq_out,) + state_shape[1:] if recurrent else state_shape
@@ -319,7 +320,7 @@ class Emulator:
         
         # resnet
         x_out = Dense(self.embed_size,activation='linear')(x)
-        x_out = Dropout(self.dropout)(x_out)
+        x_out = Dropout(self.dropout)(x_out) if self.dropout else x_out
         x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if recurrent else Add()([res,x_out]) if resnet else x_out
         x = activation(x)   # if activation is needed here?
 
@@ -329,7 +330,7 @@ class Emulator:
             e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
             # resnet
             e_out = Dense(self.embed_size,activation='linear')(e)
-            e_out = Dropout(self.dropout)(e_out)
+            e_out = Dropout(self.dropout)(e_out) if self.dropout else e_out
             e = Add()([cumsum(e_out,axis=1),tile(res_e,(1,self.seq_out,)+(1,)*len(res_e.shape[2:]))]) if recurrent else Add()([res_e,e_out]) if resnet else e_out
             e = activation(e)
 
@@ -338,10 +339,12 @@ class Emulator:
         out = Dense(out_shape,activation='hard_sigmoid' if self.norm else 'linear')(x)   # if tanh is better than linear here when norm==True?
         out = reshape(out,(-1,self.seq_out,self.n_node,self.n_out))
         if self.if_flood:
-            flood = Dense(self.embed_size//2,activation=self.activation)(x)
-            flood = Dropout(0.5)(flood)
+            flood = Dense(self.embed_size//2,activation=self.activation,
+                          kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01),activity_regularizer=l1(0.01))(x)
+            flood = Dropout(self.dropout)(flood) if self.dropout else flood
             out_shape = 1 if conv else 1 * self.n_node
-            flood = Dense(out_shape,activation='sigmoid')(flood)
+            flood = Dense(out_shape,activation='sigmoid',
+                          kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01))(flood)
             flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
             # flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
@@ -567,11 +570,11 @@ class Emulator:
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
             # Training
-            if _dataloaded:
-                idxs = np.random.choice(range(train_datas[0].shape[0]),batch_size)
-                train_dats = [dat[idxs] if dat is not None else dat for dat in train_datas]
-            else:
-                train_dats = dG.prepare_batch(seq,train_ids,batch_size)
+            # if _dataloaded:
+            #     idxs = np.random.choice(range(train_datas[0].shape[0]),batch_size)
+            #     train_dats = [dat[idxs] if dat is not None else dat for dat in train_datas]
+            # else:
+            train_dats = dG.prepare_batch(seq,train_ids,batch_size)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
@@ -587,11 +590,11 @@ class Emulator:
                 train_losses.append(train_loss)
 
             # Validation
-            if _dataloaded:
-                idxs = np.random.choice(range(test_datas[0].shape[0]),batch_size)
-                test_dats = [dat[idxs] if dat is not None else dat for dat in test_datas]
-            else:
-                test_dats = dG.prepare_batch(seq,test_ids,batch_size)
+            # if _dataloaded:
+            #     idxs = np.random.choice(range(test_datas[0].shape[0]),batch_size)
+            #     test_dats = [dat[idxs] if dat is not None else dat for dat in test_datas]
+            # else:
+            test_dats = dG.prepare_batch(seq,test_ids,batch_size)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
