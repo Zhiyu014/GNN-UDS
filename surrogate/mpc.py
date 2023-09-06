@@ -37,11 +37,13 @@ def parser(config=None):
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
     parser.add_argument('--use_current',action="store_true",help='if use current setting as initial')
     parser.add_argument('--sampling',type=float,default=0.4,help='sampling rate')
+    parser.add_argument('--learning_rate',type=float,default=0.1,help='learning rate of gradient')
     parser.add_argument('--crossover',nargs='+',type=float,default=[1.0,3.0],help='crossover rate')
     parser.add_argument('--mutation',nargs='+',type=float,default=[1.0,3.0],help='mutation rate')
     parser.add_argument('--termination',nargs='+',type=str,default=['n_eval','256'],help='Iteration termination criteria')
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
+    parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -126,18 +128,6 @@ class mpc_problem(Problem):
         preds = self.emul.predict(state,runoff,settings,edge_state)
         env = get_env(self.args.env)(initialize=False)
         return env.objective_pred(preds[0] if self.args.use_edge else preds,state)
-        # q_w = preds[0][...,-1] if self.emul.use_edge else preds[...,-1]
-        # q_in = np.concatenate([state[:,-1:,:,1],preds[0][...,1]],axis=1) if self.emul.use_edge else np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
-        # flood = [q_w[...,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
-        #           for idx,attr,weight in self.args.performance_targets if attr == 'cumflooding']
-        # inflow = [np.diff(q_in[...,self.args.elements['nodes'].index(idx)],axis=1).sum(axis=1) * weight
-        #           for idx,attr,weight in self.args.performance_targets
-        #             if attr == 'cuminflow' and 'WWTP' not in idx]
-        # outflow = [q_in[:,1:,self.args.elements['nodes'].index(idx)].sum(axis=1) * weight
-        #           for idx,attr,weight in self.args.performance_targets
-        #             if attr == 'cuminflow' and 'WWTP' in idx]
-        # # return q_w.sum(axis=1).sum(axis=1)
-        # return sum(flood) + sum(inflow) + sum(outflow)
 
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -265,49 +255,42 @@ class mpc_problem_gr:
         self.n_step = args.prediction['control_horizon']//args.setting_duration
         self.r_step = args.setting_duration//args.interval
         self.n_var = self.n_act*self.n_step
+        self.optimizer = Adam(getattr(args,"learning_rate",1e-3))
         self.xl = np.array([min(v) for _ in range(self.n_step)
                              for v in args.action_space.values()])
         self.xu = np.array([max(v) for _ in range(self.n_step)
                              for v in args.action_space.values()])
+        
+    def initialize(self,sampling):
+        self.y = tf.Variable(sampling)
 
     @tf.function
-    def pred_emu(self,y):
-        state,runoff = tf.repeat(tf.expand_dims(self.state,0),y.shape[0],axis=0),tf.repeat(tf.expand_dims(self.runoff,0),y.shape[0],axis=0)
-        edge_state = tf.repeat(tf.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
+    def pred_fit(self):
+        assert getattr(self,'y',None) is not None
+        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.y.shape[0],axis=0),tf.float32)
+        runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.y.shape[0],axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.y.shape[0],axis=0),tf.float32) if self.edge_state is not None else None
         with tf.GradientTape() as tape:
-            tape.watch(y)
-            settings = tf.reshape(y,(-1,self.n_step,self.n_act))
-            settings = tf.repeat(settings,self.r_step,axis=1)
+            tape.watch(self.y)
+            settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
+            settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
             if settings.shape[1] < self.runoff.shape[0]:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
                 settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            # TODO: np to tf in env.objective_pred
             env = get_env(self.args.env)(initialize=False)
-            obj = env.objective_pred_tf(preds[0] if self.args.use_edge else preds,state)
-            # preds = preds[0] if self.use_edge else preds
-            # q_w = preds[...,-1]
-            # q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
-            # flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
-            #         for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-            # inflow = [tf.reduce_sum(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
-            #         for idx,attr,weight in self.config['performance_targets']
-            #             if attr == 'cuminflow' and 'WWTP' not in idx]
-            # outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
-            #         for idx,attr,weight in self.config['performance_targets']
-            #             if attr == 'cuminflow' and 'WWTP' in idx]
-            # obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
-        grads = tape.gradient(obj,y)
+            obj = env.objective_pred_tf(preds[0] if self.emul.use_edge else preds,state)
+        grads = tape.gradient(obj,self.y)
+        self.optimizer.apply_gradients(zip([grads],[self.y])) # How to regulate y in (xl,xu)
         return obj,grads
 
 def run_gr(args,margs,setting=None):
     prob = mpc_problem_gr(args,margs)
     if args.use_current and setting is not None:
         setting *= prob.n_step
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.continuous)
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
     else:
         sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
-    optimizer = Adam(getattr(args,"learning_rate",1e-3))
     def if_terminate(item,vm,rec):
         if item == 'n_gen':
             return rec[0] >= vm
@@ -319,15 +302,27 @@ def run_gr(args,margs,setting=None):
             return rec[3] >= vm
 
     t0,rec = time.time(),[0,1e6,1e6,time.time()]
-    y = tf.Variable(sampling)
-    while if_terminate(*args.termination,rec):
-        obj,grads = prob.pred_emu(y)
-        y = optimizer.apply_gradients(zip(grads,y)) # How to regulate y in (xl,xu)
-        y = tf.clip_by_value(y,prob.xl,prob.xu)
+    print('=======================================================================')
+    print(' n_gen |     grads     |     f_avg     |     f_min     |     g_min     ')
+    print('=======================================================================')
+    prob.initialize(sampling)
+    obj = tf.random.uniform((args.pop_size,))
+    while not if_terminate(*args.termination,rec):
+        obj,grads = prob.pred_fit()
         rec[0] += 1
-        rec[1],rec[2] = min(rec[1],obj.numpy().mean()),min(rec[2],grads.numpy().mean())
+        if obj.numpy().min() < rec[1]:
+            ctrls = np.clip(prob.y[obj.numpy().argmax()].numpy(),prob.xl,prob.xu)
+        rec[1],rec[2] = min(rec[1],obj.numpy().min()),grads.numpy().mean()
         rec[3] = time.time() - t0
-    ctrls = y[obj.numpy().argmax()].numpy().reshape((prob.n_step,prob.n_act)).tolist()
+        log = str(rec[0]).center(7)+'|'
+        log += str(round(grads.numpy().mean(),4)).center(15)+'|'
+        log += str(round(obj.numpy().mean(),4)).center(15)+'|'
+        log += str(round(obj.numpy().min(),4)).center(15)+'|'
+        log += str(round(rec[1],4)).center(15)
+        print(log)
+    # ctrls = np.clip(prob.y[obj.numpy().argmax()].numpy(),prob.xl,prob.xu)
+    ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
+    print('Best solution: ',ctrls)
     return ctrls
 
 
@@ -338,12 +333,14 @@ if __name__ == '__main__':
     # de = {'env':'astlingen',
     #       'processes':5,
     #       'pop_size':128,
-    #     #   'sampling':0.4,
+    #       'sampling':0.4,
+    #       'learning_rate':0.1,
     #       'termination':['n_gen',200],
     #       'surrogate':True,
+    #       'gradient':True,
     #       'rain_dir':'./envs/config/ast_test5_events.csv',
-    #       'model_dir':'./model/astlingen/30s_20k_edgef_res_norm_flood_gat',
-    #       'result_dir':'./results/astlingen/30s_20k_mpc_edgef_res_norm_flood_gat'}
+    #       'model_dir':'./model/astlingen/60s_20k_act_edgef_res_norm_flood_gat_depth',
+    #       'result_dir':'./results/astlingen/60s_20k_gmpc_edgef_res_norm_flood_gat_depth_7act'}
     # config['rain_dir'] = de['rain_dir']
     # for k,v in de.items():
     #     setattr(args,k,v)
@@ -429,8 +426,11 @@ if __name__ == '__main__':
                     margs.runoff = runoff[int(tss.asof(t)['Index'])]
                     if margs.use_edge:
                         margs.edge_state = edge_state
+                    if args.gradient:
+                        setting = run_gr(args,margs,setting)
+                    else:
+                        setting = run_ea(args,margs,None,setting)
                     # use multiprocessing in emulation to avoid memory accumulation
-                    setting = run_ea(args,margs,None,setting)
                     # pool = ctx.Pool(1)
                     # r = pool.apply_async(func=run_ea,args=(args,margs,None,setting,))
                     # pool.close()
