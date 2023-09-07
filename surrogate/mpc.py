@@ -233,13 +233,16 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     #     ctrls = res.X[chan.argmin()]
     # else:
     ctrls = res.X
-    ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
+    ctrls = ctrls.reshape((prob.n_step,prob.n_act))
+    if not args.act.startswith('conti'):
+        ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+
     if margs is not None:
         del prob.emul
     del prob
     gc.collect()
 
-    return ctrls
+    return ctrls.tolist()
     
 class mpc_problem_gr:
     def __init__(self,args,margs):
