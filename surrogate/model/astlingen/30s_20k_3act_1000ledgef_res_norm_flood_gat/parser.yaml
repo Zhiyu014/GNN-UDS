@@ -1,4 +1,4 @@
-act: conti
+act: rand3
 batch_size: 128
 conv: GAT
 data_dir: 1s_edge_act10_rain50
