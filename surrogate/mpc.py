@@ -332,7 +332,7 @@ if __name__ == '__main__':
     ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
     #       'processes':5,
-    #       'pop_size':128,
+    #       'pop_size':64,
     #       'sampling':0.4,
     #       'learning_rate':0.1,
     #       'termination':['n_gen',200],
@@ -371,6 +371,7 @@ if __name__ == '__main__':
         for k,v in env_args.items():
             setattr(margs,k,v)
         margs.use_edge = margs.use_edge or margs.edge_fusion
+        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = margs.seq_out * args.interval
 
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
