@@ -92,26 +92,26 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,
-    #             'env':'shunqing',
-    #             'order':10,
-    #             'data_dir':'./envs/data/shunqing/edge_head/',
-    #             'act':False,
-    #             'model_dir':'./model/shunqing/10s_20k_10o_edgef_res_norm_gat_head/',
-    #             'batch_size':16,
-    #             'epochs':5000,
-    #             'n_tp_layer':3,
-    #             'resnet':True,
-    #             'norm':True,
-    #             'roll':False,
-    #             'use_edge':True,'edge_fusion':True,
-    #             'balance':False,
-    #             'seq_in':5,'seq_out':5,
-    #             'if_flood':False,
-    #             'conv':'GCN',
-    #             'recurrent':'Conv1D'}
-    # for k,v in train_de.items():
-    #     setattr(args,k,v)
+    train_de = {'train':True,
+                'env':'astlingen',
+                'length':1000,
+                'data_dir':'./envs/data/astlingen/1s_edge_conti_rain50/',
+                'act':'conti',
+                'model_dir':'./model/shunqing/30s_20k_conti_1000ledgef_res_norm_flood_gat/',
+                'batch_size':128,
+                'epochs':5000,
+                'n_tp_layer':4,
+                'resnet':True,
+                'norm':True,
+                'roll':False,
+                'use_edge':True,'edge_fusion':True,
+                'balance':False,
+                'seq_in':30,'seq_out':30,
+                'if_flood':True,
+                'conv':'GAT',
+                'recurrent':'Conv1D'}
+    for k,v in train_de.items():
+        setattr(args,k,v)
 
     # test_de = {'test':True,
     #            'env':'hague',

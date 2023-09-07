@@ -439,7 +439,7 @@ class Emulator:
                         inp += [ex]
                         inp += [self.edge_filter] if self.conv else []
                         inp += [ae[:,i:i+self.seq_out,...] if self.recurrent else ae] if self.act else []
-                    pred = self.model(inp,training=fit)
+                    pred = self.model(inp,training=fit) if self.dropout else self.model(inp)
 
                     if self.use_edge:
                         pred,edge_pred = pred
@@ -486,7 +486,7 @@ class Emulator:
                     inp += [ex]
                     inp += [self.edge_filter] if self.conv else []
                     inp += [ae] if self.act else []
-                preds = self.model(inp,training=fit)
+                preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
 
                 if self.use_edge:
                     preds,edge_preds = preds
@@ -669,7 +669,7 @@ class Emulator:
                         inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
                         inp += [self.edge_filter] if self.conv else []
                         inp += [ae[idx:idx+1,i:i+self.seq_out,...] if self.recurrent else ae[idx]] if self.act else []
-                    y = self.model(inp,training=False)
+                    y = self.model(inp,training=False) if self.dropout else self.model(inp)
 
                     if self.use_edge:
                         y,ey = y
@@ -720,7 +720,7 @@ class Emulator:
                     inp += [expand_dims(self.normalize(ex,'e') if self.norm else ex,0)]
                     inp += [self.edge_filter] if self.conv else []
                     inp += [ae[idx:idx+1]] if self.act else []
-                y = self.model(inp,training=False)
+                y = self.model(inp,training=False) if self.dropout else self.model(inp)
 
                 if self.use_edge:
                     y,ey = y
@@ -781,7 +781,7 @@ class Emulator:
             inp += [self.normalize(ex,'e') if self.norm else ex]
             inp += [self.edge_filter] if self.conv else []
             inp += [ae] if self.act else []
-        y = self.model(inp,training=False)
+        y = self.model(inp,training=False) if self.dropout else self.model(inp)
         if self.use_edge:
             y,ey = y
             ey = ey.numpy()
@@ -831,7 +831,7 @@ class Emulator:
             inp += [self.normalize(ex,'e') if self.norm else ex]
             inp += [self.edge_filter] if self.conv else []
             inp += [ae] if self.act else []
-        y = self.model(inp,training=False)
+        y = self.model(inp,training=False) if self.dropout else self.model(inp)
         if self.use_edge:
             y,ey = y
             if self.norm:
