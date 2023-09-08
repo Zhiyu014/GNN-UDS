@@ -31,7 +31,8 @@ def parser(config=None):
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
-    parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
+    # parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
+    parser.add_argument('--act',type=str,default='False',help='if and what control actions')
 
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
@@ -78,9 +79,7 @@ class mpc_problem(Problem):
         self.r_step = args.setting_duration//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
-        if args.continuous:
-            # self.actions = [(min(val),max(val))
-            #                 for val in args.action_space.values()]
+        if args.act.startswith('conti'):
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([min(v) for _ in range(self.n_step)
                                             for v in args.action_space.values()]),
@@ -111,14 +110,14 @@ class mpc_problem(Problem):
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
-            done = env.step([act if self.args.continuous else self.actions[i][act] for i,act in enumerate(yi)])
+            done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
     
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
-        settings = y if self.args.continuous else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
+        settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
         settings = np.repeat(settings,self.r_step,axis=1)
         if settings.shape[1] < self.runoff.shape[0]:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -127,7 +126,7 @@ class mpc_problem(Problem):
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         env = get_env(self.args.env)(initialize=False)
-        return env.objective_pred(preds[0] if self.args.use_edge else preds,state)
+        return env.objective_pred(preds[0] if self.emul.use_edge else preds,state)
 
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -206,11 +205,11 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
 
     if args.use_current and setting is not None:
         setting *= prob.n_step
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.continuous)
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.act.startswith('conti'))
     else:
-        sampling = LatinHypercubeSampling() if args.continuous else IntegerRandomSampling()
-    crossover = SBX(*args.crossover,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
-    mutation = PM(*args.mutation,vtype=float if args.continuous else int,repair=None if args.continuous else RoundingRepair())
+        sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
+    crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
+    mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
     termination = get_termination(*args.termination)
 
     method = GA(pop_size = args.pop_size,
@@ -234,13 +233,16 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     #     ctrls = res.X[chan.argmin()]
     # else:
     ctrls = res.X
-    ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
+    ctrls = ctrls.reshape((prob.n_step,prob.n_act))
+    if not args.act.startswith('conti'):
+        ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+
     if margs is not None:
         del prob.emul
     del prob
     gc.collect()
 
-    return ctrls
+    return ctrls.tolist()
     
 class mpc_problem_gr:
     def __init__(self,args,margs):
@@ -332,7 +334,7 @@ if __name__ == '__main__':
     ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
     #       'processes':5,
-    #       'pop_size':128,
+    #       'pop_size':64,
     #       'sampling':0.4,
     #       'learning_rate':0.1,
     #       'termination':['n_gen',200],
@@ -346,11 +348,13 @@ if __name__ == '__main__':
     #     setattr(args,k,v)
 
     env = get_env(args.env)()
-    env_args = env.get_args(args.directed,args.length,args.order)
+    env_args = env.get_args(args.directed,args.length,args.order,args.act if args.act != 'False' else False)
     for k,v in env_args.items():
+        if k == 'act':
+            v = v and args.act != 'False' and args.act
         setattr(args,k,v)
     setattr(args,'elements',env.elements)
-    args.act = 'mpc'
+    # args.act = 'mpc'
 
     rain_arg = env.config['rainfall']
     if 'rain_dir' in config:
@@ -371,6 +375,7 @@ if __name__ == '__main__':
         for k,v in env_args.items():
             setattr(margs,k,v)
         margs.use_edge = margs.use_edge or margs.edge_fusion
+        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = margs.seq_out * args.interval
 
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
@@ -410,7 +415,7 @@ if __name__ == '__main__':
         edge_state = env.state_full(typ='links',seq=margs.seq_in if args.surrogate else False)
         edge_states = [edge_state[-1] if args.surrogate else edge_state]
         
-        setting = [1 for _ in env.config['action_space']]
+        setting = [1 for _ in args.action_space]
         settings = [setting]
         done,i = False,0
         while not done:

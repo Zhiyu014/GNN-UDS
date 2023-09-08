@@ -344,20 +344,14 @@ class astlingen(scenario):
         super()._logger()
 
 
-    def get_action_table(self,if_mac):
-        action_table = {}
-        actions = [len(v) for v in self.config['action_space'].values()]
-        site_combs = product(*[range(act) for act in actions])
-        for idx,site in enumerate(site_combs):
-            if if_mac:
-                action_table[site] = [v[site[i]]
-                    for i,v in enumerate(self.config['action_space'].values())]
-            else:
-                action_table[(idx,)] = [v[site[i]]
-                    for i,v in enumerate(self.config['action_space'].values())]
-        return action_table
+    def get_action_space(self,act='rand'):
+        asp = self.config['action_space'].copy()
+        if '3' in act:
+            asp = {k:tuple([v[ac] for ac in ac3]) 
+            for (k,v),ac3 in zip(asp.items(),[[0,1,-1],[0,3,-1],[0,1,-1],[0,2,-1]])}
+        return asp
 
-    def get_args(self,directed=False,length=0,order=1):
+    def get_args(self,directed=False,length=0,order=1,act=False):
         args = self.config.copy()
         # Rainfall timeseries & events files
         if not os.path.isfile(args['rainfall']['rainfall_timeseries']):
@@ -407,6 +401,8 @@ class astlingen(scenario):
             args['edge_index'] = self.get_edge_index(directed)  # n_node,n_node
             args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
+        if act and self.config['act']:
+            args['action_space'] = self.get_action_space(act)
         return args
 
 
@@ -623,12 +619,16 @@ class astlingen(scenario):
 
     def controller(self,state=None,mode='rand'):
         asp = self.config['action_space']
-        if mode.lower() == 'rand':
+        asp3 = {k:[v[ac] for ac in ac3]
+                 for (k,v),ac3 in zip(asp.items(),[[0,1,-1],[0,3,-1],[0,1,-1],[0,2,-1]])}
+        if mode.lower() == 'rand3':
+            return [table[np.random.randint(0,3)] for table in asp3.values()]
+        elif mode.lower().startswith('rand'):
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
         elif mode.lower() == 'bc':
-            return [table[1] for table in asp.values()]
+            return [table[1] for table in asp3.values()]
         elif mode.lower() == 'efd':
             state_idxs = {k:self.elements['nodes'].index(k.replace('V','T')) for k in asp}
             depth = {k:state[idx,0] for k,idx in state_idxs.items()}
@@ -639,7 +639,7 @@ class astlingen(scenario):
                 setting[k] = 2 * int(depth[k] >= max(depth.values())) +\
                     0 * int(depth[k] <= min(depth.values())) +\
                         1 * (1-int(depth[k] >= max(depth.values()))) * (1-int(depth[k] <= min(depth.values())))
-            setting = [v[setting[k]] for k,v in asp.items()]
+            setting = [v[setting[k]] for k,v in asp3.items()]
             return setting
         else:
             raise AssertionError("Unknown controller %s"%str(mode))
