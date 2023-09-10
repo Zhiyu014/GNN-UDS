@@ -32,7 +32,7 @@ def parser(config=None):
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
     # parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
-    parser.add_argument('--act',type=str,default='False',help='if and what control actions')
+    parser.add_argument('--act',type=str,default='rand',help='what control actions')
 
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
@@ -314,7 +314,7 @@ def run_gr(args,margs,setting=None):
         obj,grads = prob.pred_fit()
         rec[0] += 1
         if obj.numpy().min() < rec[1]:
-            ctrls = np.clip(prob.y[obj.numpy().argmax()].numpy(),prob.xl,prob.xu)
+            ctrls = np.clip(prob.y[obj.numpy().argmin()].numpy(),prob.xl,prob.xu)
         rec[1],rec[2] = min(rec[1],obj.numpy().min()),grads.numpy().mean()
         rec[3] = time.time() - t0
         log = str(rec[0]).center(7)+'|'
@@ -323,7 +323,6 @@ def run_gr(args,margs,setting=None):
         log += str(round(obj.numpy().min(),4)).center(15)+'|'
         log += str(round(rec[1],4)).center(15)
         print(log)
-    # ctrls = np.clip(prob.y[obj.numpy().argmax()].numpy(),prob.xl,prob.xu)
     ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
     return ctrls
@@ -335,24 +334,24 @@ if __name__ == '__main__':
     ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
     #       'processes':5,
-    #       'pop_size':64,
+    #       'pop_size':128,
     #       'sampling':0.4,
     #       'learning_rate':0.1,
     #       'termination':['n_gen',200],
     #       'surrogate':True,
     #       'gradient':True,
     #       'rain_dir':'./envs/config/ast_test5_events.csv',
-    #       'model_dir':'./model/astlingen/60s_20k_act_edgef_res_norm_flood_gat_depth',
-    #       'result_dir':'./results/astlingen/60s_20k_gmpc_edgef_res_norm_flood_gat_depth_7act'}
+    #       'model_dir':'./model/astlingen/30s_20k_conti_1000ledgef_res_norm_flood_gat',
+    #       'result_dir':'./results/astlingen/gmpc_test'}
     # config['rain_dir'] = de['rain_dir']
     # for k,v in de.items():
     #     setattr(args,k,v)
 
     env = get_env(args.env)()
-    env_args = env.get_args(args.directed,args.length,args.order,args.act if args.act != 'False' else False)
+    env_args = env.get_args(args.directed,args.length,args.order,args.act)
     for k,v in env_args.items():
         if k == 'act':
-            v = v and args.act != 'False' and args.act
+            v = v and args.act
         setattr(args,k,v)
     setattr(args,'elements',env.elements)
     # args.act = 'mpc'
