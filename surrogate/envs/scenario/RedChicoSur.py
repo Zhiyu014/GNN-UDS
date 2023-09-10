@@ -65,22 +65,22 @@ class RedChicoSur(scenario):
 
         # Log the performance
         __performance = []
-        for typ, attribute, weight in self.config["performance_targets"]:
+        for typ, attribute, _ in self.config["performance_targets"]:
             if typ in ['nodes','links','subcatchments']:
                 features = self.elements[typ]
                 __volume = [self.env.methods[attribute](ID) for ID in features]
                 if 'cum' in attribute:
                     __lastvolume = [self.data_log[attribute][ID][-2] if len(self.data_log[attribute][ID])>1 else 0 for ID in features]
-                    __perf = np.array(__volume) - np.array(__lastvolume) * weight
+                    __perf = np.array(__volume) - np.array(__lastvolume)
                 else:
-                    __perf = np.array(__volume) * weight
+                    __perf = np.array(__volume)
             else:
                 __volume = self.env.methods[attribute](typ)
                 if 'cum' in attribute:
                     __lastvolume = self.data_log[attribute][typ][-2] if len(self.data_log[attribute][typ])>1 else 0
-                    __perf = __volume - __lastvolume * weight
+                    __perf = __volume - __lastvolume
                 else:
-                    __perf = __volume * weight
+                    __perf = __volume
             __performance.append(__perf)
         __performance = np.array(__performance).T if typ in ['nodes','links','subcatchments'] else np.array(__performance)
 
