@@ -181,9 +181,10 @@ def pred_simu(y,file,args,r=None):
             for node,ri in zip(env.elements['nodes'],r[idx]):
                 env.env._setNodeInflow(node,ri)
         done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
-        perf.append(env.flood())
+        # perf.append(env.flood())
         idx += 1
-    return np.array(perf)
+    # return np.array(perf)
+    return env.objective(idx).sum()
 
 def initialize(x0,xl,xu,pop_size,prob,conti=False):
     x0 = np.reshape(x0,-1)

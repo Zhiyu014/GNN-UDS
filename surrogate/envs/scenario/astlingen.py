@@ -78,22 +78,22 @@ class astlingen(scenario):
 
         # Log the performance
         __performance = []
-        for typ, attribute, weight in self.config["performance_targets"]:
+        for typ, attribute, _ in self.config["performance_targets"]:
             if typ in ['nodes','links','subcatchments']:
                 features = self.elements[typ]
                 __volume = [self.env.methods[attribute](ID) for ID in features]
                 if 'cum' in attribute:
                     __lastvolume = [self.data_log[attribute][ID][-2] if len(self.data_log[attribute][ID])>1 else 0 for ID in features]
-                    __perf = np.array(__volume) - np.array(__lastvolume) * weight
+                    __perf = np.array(__volume) - np.array(__lastvolume)
                 else:
-                    __perf = np.array(__volume) * weight
+                    __perf = np.array(__volume)
             else:
                 __volume = self.env.methods[attribute](typ)
                 if 'cum' in attribute:
                     __lastvolume = self.data_log[attribute][typ][-2] if len(self.data_log[attribute][typ])>1 else 0
-                    __perf = __volume - __lastvolume * weight
+                    __perf = __volume - __lastvolume
                 else:
-                    __perf = __volume * weight
+                    __perf = __volume
             __performance.append(__perf)
         __performance = np.array(__performance).T if typ in ['nodes','links','subcatchments'] else np.array(__performance)
 
@@ -258,7 +258,7 @@ class astlingen(scenario):
         q_in = np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
         flood = [q_w[...,self.elements['nodes'].index(idx)].sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1).sum(axis=1) * weight
+        inflow = [np.abs(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)).sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' not in idx]
         outflow = [q_in[:,1:,self.elements['nodes'].index(idx)].sum(axis=1) * weight
@@ -272,7 +272,7 @@ class astlingen(scenario):
         q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
         flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [tf.reduce_sum(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1),axis=1) * weight
+        inflow = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)),axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' not in idx]
         outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
