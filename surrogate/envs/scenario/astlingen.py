@@ -365,12 +365,14 @@ class astlingen(scenario):
         if not hasattr(self,'env') or self.env._isFinished:
             inp = read_inp_file(self.config['swmm_input'])
             args['is_outfall'] = np.array([1 if sec == 'OUTFALLS' else 0 for sec in NODE_SECTIONS
-                                           for _ in getattr(getattr(inp,sec,[]),'values',[])])
+                                           for _ in getattr(inp,sec,dict()).values()])
+            args['is_storage'] = np.array([1 if sec == 'STORAGE' else 0 for sec in NODE_SECTIONS
+                                           for _ in getattr(inp,sec,dict()).values()])
             args['hmax'] = np.array([getattr(node,'MaxDepth',0)+getattr(node,'SurDepth',0) for sec in NODE_SECTIONS
-                                      for node in getattr(getattr(inp,sec,[]),'values',[])])
+                                      for node in getattr(inp,sec,dict()).values()])
             if args['global_state'][0][-1] == 'head':
                 args['hmin'] = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
-                                      for node in getattr(getattr(inp,sec,[]),'values',[])])
+                                      for node in getattr(inp,sec,dict()).values()])
                 args['hmax'] += args['hmin']
             else:
                 args['hmin'] = np.zeros_like(args['hmax'])
@@ -378,12 +380,16 @@ class astlingen(scenario):
             # args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
             args['is_outfall'] = np.array([self.env._is_Outfall(node) for node in nodes])
+            args['is_storage'] = np.array([self.env._is_Storage(node) for node in nodes])
             args['hmax'] = np.array([self.env.methods['fulldepth'](node)+self.env.methods['surdepth'](node) for node in nodes])
             if args['global_state'][0][-1] == 'head':
                 args['hmin'] = np.array([self.env.methods['invertelev'](node) for node in nodes])
                 args['hmax'] += args['hmin']
             else:
                 args['hmin'] = np.zeros_like(args['hmax'])
+        inp = read_inp_file(self.config['swmm_input'])
+        args['area'] = np.array([inp.CURVES[node.Curve].points[0][1] if sec == 'STORAGE' else 0.0
+                                  for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
 
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
