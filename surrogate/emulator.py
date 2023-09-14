@@ -97,7 +97,8 @@ class Emulator:
             self.act_edges = getattr(args,"act_edges")
             self.use_adj = getattr(args,"use_adj",False)
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
-        self.hmin = getattr(args,"hmin",np.array([0 for _ in range(self.n_node)]))
+        self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
+        self.area = getattr(args,"area",np.array([0.0 for _ in range(self.n_node)]))
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
@@ -515,12 +516,12 @@ class Emulator:
                 if self.norm:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
-                    q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1])
+                    q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1],self.normalize(x[:,-1:,:,0],'x',True))
                     # q_w = self.get_flood(preds_re_norm,b[...,:1])
                     q_w = q_w/self.norm_y[0,:,-1]
                     preds = self.normalize(preds_re_norm,'y')
                 else:
-                    q_w,preds = self.constrain_tf(preds,b[...,:1])
+                    q_w,preds = self.constrain_tf(preds,b[...,:1],x[:,-1:,:,0])
                     # q_w = self.get_flood(preds,b[...,:1])
                 q_w = expand_dims(q_w,axis=-1)
             # narrow down norm range of water head
@@ -697,7 +698,7 @@ class Emulator:
                     if self.norm:
                         y = self.normalize(y,'y',True)
 
-                    q_w,y = self.constrain(y,b_i[...,:1])
+                    q_w,y = self.constrain(y,b_i[...,:1],x[-1:,:,0])
                     x = np.concatenate([x[1:],np.concatenate([y[:1],b_i[...,:1]],axis=-1)],axis=0) if self.recurrent else np.concatenate([y,b_i[...,:1]],axis=-1)
                     qws.append(q_w)
                     ys.append(y)
@@ -746,7 +747,7 @@ class Emulator:
 
                 if self.norm:
                     y = self.normalize(y,'y',True)
-                q_w,y = self.constrain(y,bi[...,:1])
+                q_w,y = self.constrain(y,bi[...,:1],x[-1:,:,0])
                 # q_w = self.get_flood(y,bi)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
             preds.append(y)
@@ -804,7 +805,7 @@ class Emulator:
             y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
         if self.norm:
             y = self.normalize(y,'y',True)
-        q_w,y = self.constrain(y,b[...,:1])
+        q_w,y = self.constrain(y,b[...,:1],x[:,-1:,:,0])
         y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey if self.use_edge else y
 
@@ -852,61 +853,62 @@ class Emulator:
             y = tf.concat([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
         if self.norm:
             y = self.normalize(y,'y',True)
-        q_w,y = self.constrain_tf(y,b[...,:1])
+        q_w,y = self.constrain_tf(y,b[...,:1],x[:,-1:,:,0])
         y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey if self.use_edge else y
         
-    def constrain(self,y,r):
+    def constrain(self,y,r,h0):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
         h = np.clip(h,self.hmin,self.hmax)
+        # dv = self.area * np.diff(np.concatenate([h0,h],axis=1),axis=1) if self.area.max() > 0 else 0.0
+        dv = 0.0
+        q_w = np.clip(q_us + r - q_ds - dv,0,np.inf) * (1-self.is_outfall)
         if self.if_flood:
             # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = y[...,-1] > 0.5
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
+            q_w *= f
             h = self.hmax * f + h * ~f
             # y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
             y = np.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
         else:
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
             if self.epsilon > 0:
                 q_w *= ((self.hmax - h) < self.epsilon)
             y = np.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
-    def constrain_tf(self,y,r):
+    def constrain_tf(self,y,r,h0):
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = tf.squeeze(r,axis=-1)
         h = tf.clip_by_value(h,self.hmin,self.hmax)
+        # dv = self.area * tf.experimental.numpy.diff(tf.concat([h0,h],axis=1),axis=1) if self.area.max() > 0 else 0.0
+        dv = 0.0
+        q_w = tf.clip_by_value(q_us + r - q_ds - dv,0,np.inf) * tf.cast(1-self.is_outfall,tf.float32)
         if self.if_flood:
             # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = tf.cast(y[...,-1] > 0.5,tf.float32)
-            q_w = tf.clip_by_value(q_us + r - q_ds,0,np.inf) * f
+            q_w *= f
             h = self.hmax * f + h * (1-f)
             y = tf.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
         else:
-            q_w = tf.clip_by_value(q_us + r - q_ds,0,np.inf) * tf.cast(1-self.is_outfall,tf.float32)
             if self.epsilon > 0:
                 q_w = q_w * tf.cast((self.hmax - h) < self.epsilon, tf.float32)
             y = tf.stack([h,q_us,q_ds],axis=-1)
         return q_w,y
     
-    def get_flood(self,y,r):
+    def get_flood(self,y,r,h0):
         # B,T,N
         h,q_us,q_ds = [y[...,i] for i in range(3)]
         r = np.squeeze(r,axis=-1)
+        h = np.clip(h,self.hmin,self.hmax)
+        # dv = self.area * np.diff(np.concatenate([h0,h],axis=1),axis=1) if self.area.max() > 0 else 0.0
+        dv = 0.0
+        q_w = np.clip(q_us + r - q_ds - dv,0,np.inf) * (1-self.is_outfall)
         if self.if_flood:
-            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = y[...,-1] > 0.5
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * f
-        else:
-            h = np.clip(h,self.hmin,self.hmax)
-            q_w = np.clip(q_us + r - q_ds,0,np.inf) * (1-self.is_outfall)
-            if self.epsilon > 0:
-                q_w *= ((self.hmax - h) < self.epsilon)
-                
-        # err = q_us + r - q_ds - q_w
-        # return tf.sqrt(self.mse(q_us + r, q_ds + q_w))/reduce_mean(q_us + r)
+            q_w *= f
+        elif self.epsilon > 0:
+            q_w *= ((self.hmax - h) < self.epsilon)
         return q_w
     
     def head_to_depth(self,h):
