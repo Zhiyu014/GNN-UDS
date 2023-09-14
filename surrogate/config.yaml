@@ -159,6 +159,7 @@ astlingen:
   # MPC args
   control_interval: 5
   setting_duration: 5
+  horizon: 60
   pop_size: 32
   use_current: False
   sampling: 0.4
@@ -231,6 +232,7 @@ hague:
   # MPC args
   control_interval: 30
   setting_duration: 15
+  horizon: 60
   pop_size: 32
   use_current: False
   sampling: 0.4

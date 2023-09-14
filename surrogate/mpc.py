@@ -31,6 +31,7 @@ def parser(config=None):
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
+    parser.add_argument('--horizon',type=int,default=60,help='control horizon')
     # parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
 
@@ -376,6 +377,8 @@ if __name__ == '__main__':
             setattr(margs,k,v)
         margs.use_edge = margs.use_edge or margs.edge_fusion
         args.prediction['eval_horizon'] = args.prediction['control_horizon'] = margs.seq_out * args.interval
+    else:
+        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
 
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
