@@ -7,7 +7,7 @@ epochs: 20000
 if_flood: true
 length: 1000.0
 model_dir: 30s_20k_conti_1000ledgef_res_norm_flood_gat
-n_tp_layer: 4
+n_tp_layer: 6
 norm: true
 recurrent: Conv1D
 resnet: true
