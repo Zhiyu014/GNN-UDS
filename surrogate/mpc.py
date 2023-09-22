@@ -18,6 +18,7 @@ from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
 from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
+from pymoo.core.callback import Callback
 HERE = os.path.dirname(__file__)
 
 def parser(config=None):
@@ -63,6 +64,52 @@ def parser(config=None):
 
     print('MPC configs: {}'.format(args))
     return args,config
+
+def get_runoff(env,event,rate=False,tide=False):
+    _ = env.reset(event,global_state=True)
+    runoffs = []
+    t0 = env.env.methods['simulation_time']()
+    done = False
+    while not done:
+        done = env.step()
+        if rate:
+            runoff = np.array([[env.env._getNodeLateralinflow(node)
+                        if not env.env._isFinished else 0.0]
+                       for node in env.elements['nodes']])
+        else:
+            runoff = env.state()[...,-1:]
+        if tide:
+            ti = env.state()[...,:1]
+            runoff = np.concatenate([runoff,ti],axis=-1)
+        runoffs.append(runoff)
+    ts = [t0]+env.data_log['simulation_time'][:-1]
+    runoff = np.array(runoffs)
+    return ts,runoff
+
+def pred_simu(y,file,args,r=None):
+    n_step = args.prediction['control_horizon']//args.setting_duration
+    r_step = args.setting_duration//args.interval
+    e_hrz = args.prediction['eval_horizon'] // args.interval
+    actions = list(args.action_space.values())
+
+    y = y.reshape(n_step,len(args.action_space))
+    y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
+    if y.shape[0] < e_hrz:
+        y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
+    
+    env = get_env(args.env_name)(swmm_file = file)
+    done = False
+    idx = 0
+    perf = []
+    while not done and idx < y.shape[0]:
+        if args.prediction['no_runoff']:
+            for node,ri in zip(env.elements['nodes'],r[idx]):
+                env.env._setNodeInflow(node,ri)
+        done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
+        # perf.append(env.flood())
+        idx += 1
+    # return np.array(perf)
+    return env.objective(idx).sum()
 
 class mpc_problem(Problem):
     def __init__(self,args,eval_file=None,margs=None):
@@ -141,51 +188,14 @@ class mpc_problem(Problem):
             F = [r.get() for r in res]
             out['F'] = np.array(F)
 
-def get_runoff(env,event,rate=False,tide=False):
-    _ = env.reset(event,global_state=True)
-    runoffs = []
-    t0 = env.env.methods['simulation_time']()
-    done = False
-    while not done:
-        done = env.step()
-        if rate:
-            runoff = np.array([[env.env._getNodeLateralinflow(node)
-                        if not env.env._isFinished else 0.0]
-                       for node in env.elements['nodes']])
-        else:
-            runoff = env.state()[...,-1:]
-        if tide:
-            ti = env.state()[...,:1]
-            runoff = np.concatenate([runoff,ti],axis=-1)
-        runoffs.append(runoff)
-    ts = [t0]+env.data_log['simulation_time'][:-1]
-    runoff = np.array(runoffs)
-    return ts,runoff
+class BestCallback(Callback):
 
-def pred_simu(y,file,args,r=None):
-    n_step = args.prediction['control_horizon']//args.setting_duration
-    r_step = args.setting_duration//args.interval
-    e_hrz = args.prediction['eval_horizon'] // args.interval
-    actions = list(args.action_space.values())
+    def __init__(self) -> None:
+        super().__init__()
+        self.data["best"] = []
 
-    y = y.reshape(n_step,len(args.action_space))
-    y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
-    if y.shape[0] < e_hrz:
-        y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
-    
-    env = get_env(args.env_name)(swmm_file = file)
-    done = False
-    idx = 0
-    perf = []
-    while not done and idx < y.shape[0]:
-        if args.prediction['no_runoff']:
-            for node,ri in zip(env.elements['nodes'],r[idx]):
-                env.env._setNodeInflow(node,ri)
-        done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
-        # perf.append(env.flood())
-        idx += 1
-    # return np.array(perf)
-    return env.objective(idx).sum()
+    def notify(self, algorithm):
+        self.data["best"].append(algorithm.pop.get("F").min())
 
 def initialize(x0,xl,xu,pop_size,prob,conti=False):
     x0 = np.reshape(x0,-1)
@@ -223,6 +233,7 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     res = minimize(prob,
                    method,
                    termination = termination,
+                   callback=BestCallback(),
                    verbose = True)
     print("Best solution found: %s" % res.X)
     print("Function value: %s" % res.F)
@@ -239,12 +250,14 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     if not args.act.startswith('conti'):
         ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
 
+    vals = res.algorithm.callback.data["best"]
+
     if margs is not None:
         del prob.emul
     del prob
     gc.collect()
 
-    return ctrls.tolist()
+    return ctrls.tolist(),vals
     
 class mpc_problem_gr:
     def __init__(self,args,margs):
@@ -305,7 +318,7 @@ def run_gr(args,margs,setting=None):
         elif item == 'time':
             return rec[3] >= vm
 
-    t0,rec = time.time(),[0,1e6,1e6,time.time()]
+    t0,rec,vals = time.time(),[0,1e6,1e6,time.time()],[]
     print('=======================================================================')
     print(' n_gen |     grads     |     f_avg     |     f_min     |     g_min     ')
     print('=======================================================================')
@@ -318,6 +331,7 @@ def run_gr(args,margs,setting=None):
             ctrls = np.clip(prob.y[obj.numpy().argmin()].numpy(),prob.xl,prob.xu)
         rec[1],rec[2] = min(rec[1],obj.numpy().min()),grads.numpy().mean()
         rec[3] = time.time() - t0
+        vals.append(obj.numpy().min())
         log = str(rec[0]).center(7)+'|'
         log += str(round(grads.numpy().mean(),4)).center(15)+'|'
         log += str(round(obj.numpy().mean(),4)).center(15)+'|'
@@ -326,7 +340,7 @@ def run_gr(args,margs,setting=None):
         print(log)
     ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
-    return ctrls
+    return ctrls,vals
 
 
 if __name__ == '__main__':
@@ -420,7 +434,7 @@ if __name__ == '__main__':
         
         setting = [1 for _ in args.action_space]
         settings = [setting]
-        done,i = False,0
+        done,i,valss = False,0,[]
         while not done:
             if i*args.interval % args.control_interval == 0:
                 t2 = time.time()
@@ -435,9 +449,9 @@ if __name__ == '__main__':
                     if margs.use_edge:
                         margs.edge_state = edge_state
                     if args.gradient:
-                        setting = run_gr(args,margs,setting)
+                        setting,vals = run_gr(args,margs,setting)
                     else:
-                        setting = run_ea(args,margs,None,setting)
+                        setting,vals = run_ea(args,margs,None,setting)
                     # use multiprocessing in emulation to avoid memory accumulation
                     # pool = ctx.Pool(1)
                     # r = pool.apply_async(func=run_ea,args=(args,margs,None,setting,))
@@ -449,7 +463,8 @@ if __name__ == '__main__':
                     if args.prediction['no_runoff']:
                         t = env.env.methods['simulation_time']()
                         args.runoff_rate = runoff_rate[int(tss.asof(t)['Index']),...,0]
-                    setting = run_ea(args,eval_file=eval_file,setting=setting)
+                    setting,vals = run_ea(args,eval_file=eval_file,setting=setting)
+                valss.append(vals)
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
@@ -477,6 +492,7 @@ if __name__ == '__main__':
         np.save(os.path.join(args.result_dir,name + '_%s_object.npy'%item),np.array(objects))
         np.save(os.path.join(args.result_dir,name + '_%s_settings.npy'%item),np.array(settings))
         np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.stack(edge_states))
+        np.save(os.path.join(args.result_dir,name + '_%s_vals.npy'%item),np.array(valss))
 
         results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum()]
     results.to_csv(os.path.join(args.result_dir,'results_%s.csv'%item))
