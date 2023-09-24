@@ -468,6 +468,9 @@ if __name__ == '__main__':
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
+                # Only used to keep the same condition to test internal model efficiency
+                setting = [env.controller(mode='bc')
+                            for _ in range(args.prediction['control_horizon']//args.setting_duration)]
                 j = 0
                 done = env.step(setting[j])
             elif i*args.interval % args.setting_duration == 0:
