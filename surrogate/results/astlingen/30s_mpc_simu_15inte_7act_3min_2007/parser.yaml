@@ -1,0 +1,10 @@
+act: rand
+control_interval: 15
+horizon: 30
+pop_size: 128
+processes: 4
+rain_dir: ast_test2007_events.csv
+result_dir: 30s_mpc_simu_15inte_7act_3min_2007
+termination:
+- n_gen
+- 8
