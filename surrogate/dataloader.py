@@ -128,11 +128,15 @@ class DataGenerator:
             res.append(r)
         return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
-    def prepare_batch(self,seq=0,event=None,batch_size=32):
+    def get_data_idxs(self,seq=0,event=None):
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
         event_idxs = [np.split(data, np.where(np.diff(data) != 1)[0]+1) for data in event_idxs]
         event_idxs = np.concatenate([np.concatenate([dat[seq:-seq-1] for dat in data],axis=0) for data in event_idxs],axis=0)
+        return event_idxs
+        
+
+    def prepare_batch(self,event_idxs,seq=0,batch_size=32):
         idxs = np.random.choice(event_idxs,batch_size,replace=False)
         if seq > 0:
             ixs = np.apply_along_axis(lambda t:np.arange(t-seq+1,t+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
