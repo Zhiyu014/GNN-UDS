@@ -1,0 +1,7 @@
+act: conti
+data_dir: 1s_edge_conti50_rain50
+processes: 4
+rain_dir: ast_train50_events.csv
+repeats: 10
+simulate: true
+use_edge: true

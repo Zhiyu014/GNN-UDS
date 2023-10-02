@@ -129,31 +129,53 @@ class DataGenerator:
         return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
     def prepare_batch(self,seq=0,event=None,batch_size=32):
-        res = []
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
-        numbs = sum([idx.shape[0] for idx in event_idxs])
-        event_batch = np.random.choice(range(len(event_idxs)),batch_size,p=[idx.shape[0]/numbs for idx in event_idxs])
-        for idx in event_batch:
-            lm,um = event_idxs[idx].min(),event_idxs[idx].max()+1
-            ix = np.random.randint(lm+seq,um-seq-1)
-            # sli = slice(max(ix-seq+1,lm),min(ix+seq+1,um))
-            if seq > 0:
-                states = (self.states[ix-seq+1:ix+1],self.states[ix+1:ix+seq+1])
-                perfs = (self.perfs[ix-seq+1:ix+1],self.perfs[ix+1:ix+seq+1])
-                edge_states = (self.edge_states[ix-seq+1:ix+1],self.edge_states[ix+1:ix+seq+1]) if self.use_edge else None
-                settings = self.settings[ix+1:ix+seq+1] if self.settings is not None else None
-            else:
-                states,perfs = (self.states[ix],self.states[ix+1]),(self.perfs[ix],self.perfs[ix+1])
-                edge_states = (self.edge_states[ix],self.edge_states[ix+1]) if self.use_edge else None
-                settings = self.settings[ix+1] if self.settings is not None else None
-            x,b,y = self.state_split_batch(states,perfs)
-            ex,ey = self.edge_state_split_batch(edge_states) if self.use_edge else (None,None)
-            if self.settings is not None:
-                settings = settings[:self.seq_out,...] if self.recurrent else settings
-            r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
-            res.append(r)
-        return [np.stack([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
+        event_idxs = [np.split(data, np.where(np.diff(data) != 1)[0]+1) for data in event_idxs]
+        event_idxs = np.concatenate([np.concatenate([dat[seq:-seq-1] for dat in data],axis=0) for data in event_idxs],axis=0)
+        idxs = np.random.choice(event_idxs,batch_size,replace=False)
+        if seq > 0:
+            ixs = np.apply_along_axis(lambda t:np.arange(t-seq+1,t+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
+            iys = np.apply_along_axis(lambda t:np.arange(t+1,t+seq+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
+            states = (np.take(self.states,ixs,axis=0),np.take(self.states,iys,axis=0))
+            perfs = (np.take(self.perfs,ixs,axis=0),np.take(self.perfs,iys,axis=0))
+            edge_states = (np.take(self.edge_states,ixs,axis=0),np.take(self.edge_states,iys,axis=0))
+            settings = np.take(self.settings,iys,axis=0) if self.settings is not None else None
+        else:
+            states,perfs = (self.states[idxs],self.states[idxs+1]),(self.perfs[idxs],self.perfs[idxs+1])
+            edge_states = (self.edge_states[idxs],self.edge_states[idxs+1]) if self.use_edge else None
+            settings = self.settings[idxs+1] if self.settings is not None else None
+        x,b,y = self.state_split_batch(states,perfs)
+        ex,ey = self.edge_state_split_batch(edge_states) if self.use_edge else (None,None)
+        if self.settings is not None:
+            settings = settings[:,:self.seq_out,...] if self.recurrent else settings
+        return [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
+    
+
+        # res = []
+        # numbs = sum([idx.shape[0] for idx in event_idxs])
+        # event_batch = np.random.choice(range(len(event_idxs)),batch_size,p=[idx.shape[0]/numbs for idx in event_idxs])
+        # for idx in event_batch:
+        #     # lm,um = event_idxs[idx].min(),event_idxs[idx].max()+1
+        #     # ix = np.random.randint(lm+seq,um-seq-1)
+        #     ix = np.random.choice(event_idxs[idx])
+        #     # sli = slice(max(ix-seq+1,lm),min(ix+seq+1,um))
+        #     if seq > 0:
+        #         states = (self.states[ix-seq+1:ix+1],self.states[ix+1:ix+seq+1])
+        #         perfs = (self.perfs[ix-seq+1:ix+1],self.perfs[ix+1:ix+seq+1])
+        #         edge_states = (self.edge_states[ix-seq+1:ix+1],self.edge_states[ix+1:ix+seq+1]) if self.use_edge else None
+        #         settings = self.settings[ix+1:ix+seq+1] if self.settings is not None else None
+        #     else:
+        #         states,perfs = (self.states[ix],self.states[ix+1]),(self.perfs[ix],self.perfs[ix+1])
+        #         edge_states = (self.edge_states[ix],self.edge_states[ix+1]) if self.use_edge else None
+        #         settings = self.settings[ix+1] if self.settings is not None else None
+        #     x,b,y = self.state_split_batch(states,perfs)
+        #     ex,ey = self.edge_state_split_batch(edge_states) if self.use_edge else (None,None)
+        #     if self.settings is not None:
+        #         settings = settings[:self.seq_out,...] if self.recurrent else settings
+        #     r = [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
+        #     res.append(r)
+        # return [np.stack([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
     def state_split_batch(self,states,perfs):
         h,q_totin,q_ds,r = [states[0][...,i] for i in range(4)]
@@ -176,16 +198,16 @@ class DataGenerator:
             X,Y = np.concatenate([X[...,:-1],f1,X[...,-1:]],axis=-1),np.concatenate([Y,f2],axis=-1)
         Y = np.concatenate([Y,perfs[1]],axis=-1)
         if self.recurrent:
-            X = X[-self.seq_in:,...]
-            B = B[:self.seq_out,...]
-            Y = Y[:self.seq_out,...]
+            X = X[:,-self.seq_in:,...]
+            B = B[:,:self.seq_out,...]
+            Y = Y[:,:self.seq_out,...]
         return X,B,Y
 
     def edge_state_split_batch(self,edge_states):
         ex = edge_states[0]
         ey = edge_states[1][...,:-1]
         if self.recurrent:
-            ex,ey = ex[-self.seq_in:,...],ey[:self.seq_out,...]
+            ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
 
     def save(self,data_dir=None):
