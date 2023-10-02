@@ -575,6 +575,8 @@ class Emulator:
         # except:
         print('Full data load failed, prepare per batch')
         _dataloaded = False
+        train_idxs = dG.get_data_idxs(seq,train_ids)
+        test_idxs = dG.get_data_idxs(seq,test_ids)
 
         train_losses,test_losses = [],[]
         for epoch in range(epochs):
@@ -583,7 +585,7 @@ class Emulator:
             #     idxs = np.random.choice(range(train_datas[0].shape[0]),batch_size)
             #     train_dats = [dat[idxs] if dat is not None else dat for dat in train_datas]
             # else:
-            train_dats = dG.prepare_batch(seq,train_ids,batch_size)
+            train_dats = dG.prepare_batch(train_idxs,seq,batch_size)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
@@ -603,7 +605,7 @@ class Emulator:
             #     idxs = np.random.choice(range(test_datas[0].shape[0]),batch_size)
             #     test_dats = [dat[idxs] if dat is not None else dat for dat in test_datas]
             # else:
-            test_dats = dG.prepare_batch(seq,test_ids,batch_size)
+            test_dats = dG.prepare_batch(test_idxs,seq,batch_size)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             if self.norm:
                 x,b,y = [self.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
