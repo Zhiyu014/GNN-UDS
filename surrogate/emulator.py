@@ -220,61 +220,49 @@ class Emulator:
         # Recurrent block: No need for b and ae temporal nets
         if recurrent:
             # Model the spatio-temporal differences
-            # x = Subtract()([x,concat([tf.zeros_like(x[:,0:1,...]),x[:,1:,...]],axis=1)])
-            # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E)
-            x = transpose(x,[0,2,1,3]) if conv else x
-            b = transpose(b,[0,2,1,3]) if conv else b
-            if self.use_edge:
-                # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
-                e = transpose(e,[0,2,1,3]) if conv else e
-                if self.act:
-                    ae = transpose(ae,[0,2,1,3]) if conv else ae
             if recurrent == 'Conv1D':
                 x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
-                b_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:]) for i in range(self.n_tp_layer)]
+                # b_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:]) for i in range(self.n_tp_layer)]
                 if self.use_edge:
                     e_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
-                    if self.act:
-                        ae_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=ae.shape[-2:]) for i in range(self.n_tp_layer)]
+                    # if self.act:
+                    #     ae_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=ae.shape[-2:]) for i in range(self.n_tp_layer)]
             elif recurrent == 'GRU':
                 x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-                b_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
+                # b_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
                 if self.use_edge:
                     e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-                    if self.act:
-                        ae_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
+                    # if self.act:
+                    #     ae_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
             else:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
             
-            # (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
-            x = reshape(x,(-1,self.seq_in,x.shape[-1])) if conv else x
-            b = reshape(b,(-1,self.seq_out,b.shape[-1])) if conv else b
+            # x = Subtract()([x,concat([tf.zeros_like(x[:,0:1,...]),x[:,1:,...]],axis=1)])
+            # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
+            x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_in,x.shape[-1])) if conv else x
+            # b = reshape(transpose(b,[0,2,1,3]),(-1,self.seq_out,b.shape[-1])) if conv else b
             # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
             for i in range(self.n_tp_layer):
                 x = x_tem_nets[i](x)
-                b = b_tem_nets[i](b)
+                # b = b_tem_nets[i](b)
             x = x[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-            # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H)
-            x = reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)) if conv else x
-            x = transpose(x,[0,2,1,3]) if conv else x
-            b = b[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-            b = reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1])) if conv else b
-            # (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
-            b = transpose(b,[0,2,1,3]) if conv else b
+            # b = b[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+            # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+            x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
+            # b = transpose(reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1])),[0,2,1,3]) if conv else b
             if self.use_edge:
-                e = reshape(e,(-1,self.seq_in,e.shape[-1])) if conv else e
+                # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
+                e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_in,e.shape[-1])) if conv else e
                 for i in range(self.n_tp_layer):
                     e = e_tem_nets[i](e)
                 e = e[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-                e = reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])) if conv else e
-                e = transpose(e,[0,2,1,3]) if conv else e
-                if self.act:
-                    ae = reshape(ae,(-1,self.seq_out,ae.shape[-1]))
-                    for i in range(self.n_tp_layer):
-                        ae = ae_tem_nets[i](ae)
-                    ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-                    ae = reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1])) if conv else ae
-                    ae = transpose(ae,[0,2,1,3]) if conv else ae
+                e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
+                # if self.act:
+                #     ae = reshape(transpose(ae,[0,2,1,3]),(-1,self.seq_out,ae.shape[-1])) if conv else ae
+                #     for i in range(self.n_tp_layer):
+                #         ae = ae_tem_nets[i](ae)
+                #     ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+                #     ae = transpose(reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1])),[0,2,1,3]) if conv else ae
 
 
         # Boundary in: Add or concat? maybe add makes more sense
@@ -282,7 +270,7 @@ class Emulator:
         x = concat([x,b],axis=-1)
         # x = Add()([x,b])
         if self.use_edge and self.act:
-            # ae = Dense(self.hidden_dim//2,activation=self.activation)(AE_in)  # Control Embedding (B,T_out,N,H)
+            # ae = Dense(self.hidden_dim//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,H)
             e = concat([e,ae],axis=-1)
             # e = Add()([e,ae])
 
@@ -318,18 +306,43 @@ class Emulator:
         # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
         state_shape = (self.seq_out,) + state_shape[1:] if recurrent else state_shape
         x = reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],)) if conv else reshape(x,(-1,)+state_shape[:-2]+(x.shape[-1],)) 
-        
-        # resnet
-        x_out = Dense(self.embed_size,activation='linear')(x)
-        x_out = Dropout(self.dropout)(x_out) if self.dropout else x_out
-        x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if recurrent else Add()([res,x_out]) if resnet else x_out
-        x = activation(x)   # if activation is needed here?
-
         if self.use_edge:
             # (B*T,N,E) (B*T,E) (B,N,E) (B,E) --> (B,T,N,E) (B,T,E) (B,N,E) (B,E)
             edge_state_shape = (self.seq_out,) + edge_state_shape[1:] if recurrent else edge_state_shape
             e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
-            # resnet
+
+        # Recurrent block 2: T_out --> T_out
+        if recurrent:
+            # Model the spatio-temporal differences
+            if recurrent == 'Conv1D':
+                x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
+                if self.use_edge:
+                    e_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
+            elif recurrent == 'GRU':
+                x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+                if self.use_edge:
+                    e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+
+            # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
+            x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_out,x.shape[-1])) if conv else x
+            # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
+            for i in range(self.n_tp_layer):
+                x = x_tem_nets[i](x)
+            # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+            x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
+            if self.use_edge:
+                # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
+                e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_out,e.shape[-1])) if conv else e
+                for i in range(self.n_tp_layer):
+                    e = e_tem_nets[i](e)
+                e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
+        
+        # Resnet
+        x_out = Dense(self.embed_size,activation='linear')(x)
+        x_out = Dropout(self.dropout)(x_out) if self.dropout else x_out
+        x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if recurrent else Add()([res,x_out]) if resnet else x_out
+        x = activation(x)   # if activation is needed here?
+        if self.use_edge:
             e_out = Dense(self.embed_size,activation='linear')(e)
             e_out = Dropout(self.dropout)(e_out) if self.dropout else e_out
             e = Add()([cumsum(e_out,axis=1),tile(res_e,(1,self.seq_out,)+(1,)*len(res_e.shape[2:]))]) if recurrent else Add()([res_e,e_out]) if resnet else e_out
@@ -492,11 +505,11 @@ class Emulator:
                 if self.use_edge:
                     preds,edge_preds = preds
 
-                if self.act:
-                    if self.use_edge:
-                        edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
-                    if not self.edge_fusion:
-                        preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+                # if self.act:
+                #     if self.use_edge:
+                #         edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
+                #     if not self.edge_fusion:
+                #         preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
 
                 if self.use_edge and self.edge_fusion:
                     edge_flow = self.normalize(edge_preds,'e',True)[...,-1:] if self.norm else edge_preds[...,-1:]
