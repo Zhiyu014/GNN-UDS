@@ -27,14 +27,20 @@
 2. **MPC**
     - [x] Setting duration
     - [ ] 101 tests of 30s
-    - [ ] Test no flood
-    - [ ] Test 15/30 control interval with 5 setting duration
+    - [ ] if_flood overfitting problem
+        - [x] Test no flood
+        - related to control action (no act no overfitting)
+        - [x] Try remove ae tcn
+        - [x] Try remove ae net entirely
+        - [ ] Try not regulate the flow
+        - [x] Try adding another temporal network after spatial conv and remove b_tcn/ae_tcn
+    - [x] Test 15/30 control interval with 5 setting duration
         - 15 ctrl_inte not work well with 60 prediction steps and 7 act
         - 5 ctrl_inte is better
-    - [ ] Genetic algorithm
+    - [x] Genetic algorithm
         - [x] Discrete
-        - [ ] Continuous
-    - [ ] inversion of NN in continuous action space
+        - [x] Continuous
+    - [x] inversion of NN in continuous action space
         - training with continuous controller
         - LHS sampling
         - Gradient descent of each control action
