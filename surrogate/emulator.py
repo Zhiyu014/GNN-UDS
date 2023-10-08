@@ -105,8 +105,9 @@ class Emulator:
         self.model = self.build_network(self.conv,resnet,self.recurrent)
         self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
         self.mse = MeanSquaredError()
-        self.bce = BinaryCrossentropy()
-        # self.cce = CategoricalCrossentropy()
+        if self.if_flood:
+            self.bce = BinaryCrossentropy()
+            # self.cce = CategoricalCrossentropy()
 
         self.ratio = getattr(args,"ratio",0.8)
         self.batch_size = getattr(args,"batch_size",256)
@@ -356,12 +357,12 @@ class Emulator:
             # flood = Dense(self.embed_size//2,activation=self.activation,
             #               kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01),activity_regularizer=l1(0.01))(x)
             # flood = Dropout(self.dropout)(flood) if self.dropout else flood
-            out_shape = 2 if conv else 2 * self.n_node
-            # flood = Dense(out_shape,activation='sigmoid')(x)
+            out_shape = 1 if conv else 1 * self.n_node
+            flood = Dense(out_shape,activation='sigmoid')(x)
                         #   kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01)
-            flood = Dense(out_shape,activation='linear')(x)
-            flood = reshape(flood,(-1,self.seq_out,self.n_node,2))
-            flood = Softmax()(flood)
+            # flood = Dense(out_shape,activation='linear')(x)
+            flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
+            # flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
 
         if self.use_edge:
@@ -556,8 +557,8 @@ class Emulator:
             if not fit:
                 loss = [loss]
             if self.if_flood:
-                # loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
-                loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
+                loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
+                # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
                 edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
                 loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]

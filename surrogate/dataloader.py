@@ -81,8 +81,8 @@ class DataGenerator:
         Y = np.stack([h[n_spl:],q_us[n_spl:],q_ds[n_spl:]],axis=-1)
 
         if self.if_flood:
-            f = (perfs>0).astype(int)
-            f = np.eye(2)[f].squeeze(-2)
+            f = (perfs>0).astype(float)
+            # f = np.eye(2)[f].squeeze(-2)
             X,Y = np.concatenate([X[...,:-1],f[:-n_spl],X[...,-1:]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
         Y = np.concatenate([Y,perfs[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
@@ -195,10 +195,10 @@ class DataGenerator:
             B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
 
         if self.if_flood:
-            f1 = (perfs[0]>0).astype(int)
-            f1 = np.eye(2)[f1].squeeze(-2)
-            f2 = (perfs[1]>0).astype(int)
-            f2 = np.eye(2)[f2].squeeze(-2)
+            f1 = (perfs[0]>0).astype(float)
+            # f1 = np.eye(2)[f1].squeeze(-2)
+            f2 = (perfs[1]>0).astype(float)
+            # f2 = np.eye(2)[f2].squeeze(-2)
             X,Y = np.concatenate([X[...,:-1],f1,X[...,-1:]],axis=-1),np.concatenate([Y,f2],axis=-1)
         Y = np.concatenate([Y,perfs[1]],axis=-1)
         if self.recurrent:
@@ -252,8 +252,8 @@ class DataGenerator:
         if self.env.config['tide']:
             norm_b = np.concatenate([norm_b,norm_h],axis=-1).astype(np.float32)
         if self.if_flood:
-            norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
-            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(2,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+            norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
+            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,),dtype=np.float32),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         else:
             norm_x = np.concatenate([norm_h,norm[...,1:-1]+1e-6],axis=-1)
             norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
