@@ -74,7 +74,7 @@ class Emulator:
         self.balance = getattr(args,"balance",0)
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
-            self.n_in += 1
+            self.n_in += 2
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         self.epsilon = getattr(args,"epsilon",0.1)
 
@@ -315,26 +315,26 @@ class Emulator:
         if recurrent:
             # Model the spatio-temporal differences
             if recurrent == 'Conv1D':
-                x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
+                x_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
                 if self.use_edge:
-                    e_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
+                    e_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
             elif recurrent == 'GRU':
-                x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+                x_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
                 if self.use_edge:
-                    e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+                    e_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
 
             # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
             x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_out,x.shape[-1])) if conv else x
             # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
             for i in range(self.n_tp_layer):
-                x = x_tem_nets[i](x)
+                x = x_tem_nets2[i](x)
             # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
             x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
             if self.use_edge:
                 # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
                 e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_out,e.shape[-1])) if conv else e
                 for i in range(self.n_tp_layer):
-                    e = e_tem_nets[i](e)
+                    e = e_tem_nets2[i](e)
                 e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
         
         # Resnet
@@ -356,11 +356,12 @@ class Emulator:
             # flood = Dense(self.embed_size//2,activation=self.activation,
             #               kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01),activity_regularizer=l1(0.01))(x)
             # flood = Dropout(self.dropout)(flood) if self.dropout else flood
-            out_shape = 1 if conv else 1 * self.n_node
-            flood = Dense(out_shape,activation='sigmoid')(x)
+            out_shape = 2 if conv else 2 * self.n_node
+            # flood = Dense(out_shape,activation='sigmoid')(x)
                         #   kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01)
-            flood = reshape(flood,(-1,self.seq_out,self.n_node,1))
-            # flood = Softmax()(flood)
+            flood = Dense(out_shape,activation='linear')(x)
+            flood = reshape(flood,(-1,self.seq_out,self.n_node,2))
+            flood = Softmax()(flood)
             out = concat([out,flood],axis=-1)
 
         if self.use_edge:
@@ -505,11 +506,11 @@ class Emulator:
                 if self.use_edge:
                     preds,edge_preds = preds
 
-                # if self.act:
-                #     if self.use_edge:
-                #         edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
-                #     if not self.edge_fusion:
-                #         preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+                if self.act:
+                    if self.use_edge:
+                        edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
+                    if not self.edge_fusion:
+                        preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
 
                 if self.use_edge and self.edge_fusion:
                     edge_flow = self.normalize(edge_preds,'e',True)[...,-1:] if self.norm else edge_preds[...,-1:]
@@ -547,6 +548,7 @@ class Emulator:
                 wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/(self.hmax-self.hmin).mean()
                 preds = concat([preds[...,:1] * wei,preds[...,1:]],axis=-1)
                 y = concat([y[...,:1] * wei,y[...,1:]],axis=-1)
+            preds = tf.clip_by_value(preds,0,1) # avoid large loss value
             if self.balance:
                 loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1))
             else:
@@ -554,9 +556,10 @@ class Emulator:
             if not fit:
                 loss = [loss]
             if self.if_flood:
-                loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
-                # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
+                # loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
+                loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
+                edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
                 loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]
         if fit:
             grads = tape.gradient(loss, self.model.trainable_variables)
@@ -900,7 +903,7 @@ class Emulator:
         dv = 0.0
         q_w = tf.clip_by_value(q_us + r - q_ds - dv,0,np.inf) * tf.cast(1-self.is_outfall,tf.float32)
         if self.if_flood:
-            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
+            # f = tf.cast(tf.argmax(y[...,-2:],axis=-1),tf.float32)
             f = tf.cast(y[...,-1] > 0.5,tf.float32)
             q_w *= f
             h = self.hmax * f + h * (1-f)
@@ -920,6 +923,7 @@ class Emulator:
         dv = 0.0
         q_w = np.clip(q_us + r - q_ds - dv,0,np.inf) * (1-self.is_outfall)
         if self.if_flood:
+            # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = y[...,-1] > 0.5
             q_w *= f
         elif self.epsilon > 0:
