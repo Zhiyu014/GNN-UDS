@@ -74,7 +74,7 @@ class Emulator:
         self.balance = getattr(args,"balance",0)
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
-            self.n_in += 2
+            self.n_in += 1
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         self.epsilon = getattr(args,"epsilon",0.1)
 
@@ -560,7 +560,7 @@ class Emulator:
                 loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
                 # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
-                edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
+                # edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
                 loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]
         if fit:
             grads = tape.gradient(loss, self.model.trainable_variables)
