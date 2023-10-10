@@ -175,7 +175,7 @@ rainfall:
   filedir: ./envs/network/astlingen/astlingen
   rainfall_timeseries: ./envs/config/ast_rain.csv # rainfall timeseries data
   rainfall_events: ./envs/config/ast_train_events.csv # rainfall timeseries data
-  pre_time: 60 # preliminary time (min) to exclude
+  pre_time: 0 # preliminary time (min) to exclude
   MIET: 120 # minimum interevent time (min)
   duration_range:  # rainfall duration sampling range (min)
     - 60

@@ -57,13 +57,13 @@ class DataGenerator:
         if processes > 1:
             pool = mp.Pool(processes)
             res = [pool.apply_async(func=self.simulate,args=(event,seq,act,))
-                    for event in events for _ in range(repeats)]
+                    for _ in range(repeats) for event in events]
             pool.close()
             pool.join()
             res = [r.get() for r in res]
         else:
             res = [self.simulate(event,seq,act)
-                    for event in events for _ in range(repeats)]
+                    for _ in range(repeats) for event in events]
         self.states,self.perfs = [np.concatenate([r[i][self.pre_step:] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2][self.pre_step:] for r in res],axis=0) if act else None
         if self.use_edge:

@@ -74,7 +74,7 @@ class Emulator:
         self.balance = getattr(args,"balance",0)
         self.if_flood = getattr(args,"if_flood",False)
         if self.if_flood:
-            self.n_in += 2
+            self.n_in += 1
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         self.epsilon = getattr(args,"epsilon",0.1)
 
