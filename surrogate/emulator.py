@@ -560,7 +560,7 @@ class Emulator:
                 loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
                 # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
-                edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
+                # edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
                 loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]
         if fit:
             grads = tape.gradient(loss, self.model.trainable_variables)
