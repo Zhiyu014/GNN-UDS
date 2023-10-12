@@ -68,8 +68,8 @@ class DataGenerator:
         self.settings = np.concatenate([r[2][self.pre_step:] for r in res],axis=0) if act else None
         if self.use_edge:
             self.edge_states = np.concatenate([r[-1][self.pre_step:] for r in res],axis=0) if self.use_edge else None
-        self.event_id = np.concatenate([np.repeat(i,sum([r[0][self.pre_step:].shape[0] for r in res[i*repeats:(i+1)*repeats]]))
-                                         for i,_ in enumerate(events)])
+        self.event_id = np.concatenate([np.repeat(i,res[idx][0][self.pre_step:].shape[0])
+                                         for idx,i in enumerate([i for _ in range(repeats) for i,_ in enumerate(events)])],axis=0)
 
     def state_split(self,states,perfs):
         h,q_totin,q_ds,r = [states[...,i] for i in range(4)]
