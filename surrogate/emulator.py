@@ -223,34 +223,34 @@ class Emulator:
             # Model the spatio-temporal differences
             if recurrent == 'Conv1D':
                 x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
-                b_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:]) for i in range(self.n_tp_layer)]
+                # b_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=b.shape[-2:]) for i in range(self.n_tp_layer)]
                 if self.use_edge:
                     e_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
-                    if self.act:
-                        ae_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=ae.shape[-2:]) for i in range(self.n_tp_layer)]
+                    # if self.act:
+                    #     ae_tem_nets = [Conv1D(self.hidden_dim//2,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=ae.shape[-2:]) for i in range(self.n_tp_layer)]
             elif recurrent == 'GRU':
                 x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-                b_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
+                # b_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
                 if self.use_edge:
                     e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-                    if self.act:
-                        ae_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
+                    # if self.act:
+                    #     ae_tem_nets = [GRU(self.hidden_dim//2,return_sequences=True) for _ in range(self.n_tp_layer)]
             else:
                 raise AssertionError("Unknown recurrent layer %s"%str(recurrent))
             
             # x = Subtract()([x,concat([tf.zeros_like(x[:,0:1,...]),x[:,1:,...]],axis=1)])
             # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
             x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_in,x.shape[-1])) if conv else x
-            b = reshape(transpose(b,[0,2,1,3]),(-1,self.seq_out,b.shape[-1])) if conv else b
+            # b = reshape(transpose(b,[0,2,1,3]),(-1,self.seq_out,b.shape[-1])) if conv else b
             # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
             for i in range(self.n_tp_layer):
                 x = x_tem_nets[i](x)
-                b = b_tem_nets[i](b)
+                # b = b_tem_nets[i](b)
             x = x[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-            b = b[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+            # b = b[...,-self.seq_out:,:] # seq_in >= seq_out if roll
             # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
             x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
-            b = transpose(reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1])),[0,2,1,3]) if conv else b
+            # b = transpose(reshape(b,(-1,self.n_node,self.seq_out,b.shape[-1])),[0,2,1,3]) if conv else b
             if self.use_edge:
                 # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
                 e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_in,e.shape[-1])) if conv else e
@@ -258,12 +258,12 @@ class Emulator:
                     e = e_tem_nets[i](e)
                 e = e[...,-self.seq_out:,:] # seq_in >= seq_out if roll
                 e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
-                if self.act:
-                    ae = reshape(transpose(ae,[0,2,1,3]),(-1,self.seq_out,ae.shape[-1])) if conv else ae
-                    for i in range(self.n_tp_layer):
-                        ae = ae_tem_nets[i](ae)
-                    ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
-                    ae = transpose(reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1])),[0,2,1,3]) if conv else ae
+                # if self.act:
+                #     ae = reshape(transpose(ae,[0,2,1,3]),(-1,self.seq_out,ae.shape[-1])) if conv else ae
+                #     for i in range(self.n_tp_layer):
+                #         ae = ae_tem_nets[i](ae)
+                #     ae = ae[...,-self.seq_out:,:] # seq_in >= seq_out if roll
+                #     ae = transpose(reshape(ae,(-1,self.n_edge,self.seq_out,ae.shape[-1])),[0,2,1,3]) if conv else ae
 
 
         # Boundary in: Add or concat? maybe add makes more sense
@@ -313,30 +313,30 @@ class Emulator:
             e = reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],)) if conv else reshape(e,(-1,)+edge_state_shape[:-2]+(e.shape[-1],)) 
 
         # Recurrent block 2: T_out --> T_out
-        # if recurrent:
-        #     # Model the spatio-temporal differences
-        #     if recurrent == 'Conv1D':
-        #         x_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
-        #         if self.use_edge:
-        #             e_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
-        #     elif recurrent == 'GRU':
-        #         x_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-        #         if self.use_edge:
-        #             e_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+        if recurrent:
+            # Model the spatio-temporal differences
+            if recurrent == 'Conv1D':
+                x_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
+                if self.use_edge:
+                    e_tem_nets2 = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
+            elif recurrent == 'GRU':
+                x_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+                if self.use_edge:
+                    e_tem_nets2 = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
 
-        #     # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
-        #     x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_out,x.shape[-1])) if conv else x
-        #     # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
-        #     for i in range(self.n_tp_layer):
-        #         x = x_tem_nets2[i](x)
-        #     # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
-        #     x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
-        #     if self.use_edge:
-        #         # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
-        #         e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_out,e.shape[-1])) if conv else e
-        #         for i in range(self.n_tp_layer):
-        #             e = e_tem_nets2[i](e)
-        #         e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
+            # (B,T,N,E) (B,T,E) --> (B,N,T,E) (B,T,E) --> (B*N,T,E) (B,T,E)
+            x = reshape(transpose(x,[0,2,1,3]),(-1,self.seq_out,x.shape[-1])) if conv else x
+            # (B*N,T,E) (B,T,E) --> (B*N,T_out,H) (B,T_out,H)
+            for i in range(self.n_tp_layer):
+                x = x_tem_nets2[i](x)
+            # (B*N,T_out,H) (B,T_out,H) --> (B,N,T_out,H) (B,T_out,H) --> (B,T_out,N,H) (B,T_out,H)
+            x = transpose(reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3]) if conv else x
+            if self.use_edge:
+                # e = Subtract()([e,concat([tf.zeros_like(e[:,0:1,...]),e[:,1:,...]],axis=1)])
+                e = reshape(transpose(e,[0,2,1,3]),(-1,self.seq_out,e.shape[-1])) if conv else e
+                for i in range(self.n_tp_layer):
+                    e = e_tem_nets2[i](e)
+                e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
         
         # Resnet
         x_out = Dense(self.embed_size,activation='linear')(x)
