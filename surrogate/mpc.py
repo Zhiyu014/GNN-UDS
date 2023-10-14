@@ -275,18 +275,11 @@ class mpc_problem_gr:
         self.r_step = args.setting_duration//args.interval
         self.optimizer = Adam(getattr(args,"learning_rate",1e-3))
         self.pop_size = getattr(args,'pop_size',64)
-        if self.args.act.startswith('conti'):
-            self.n_var = self.n_act*self.n_step
-            self.xl = np.array([min(v) for _ in range(self.n_step)
-                                for v in self.asp])
-            self.xu = np.array([max(v) for _ in range(self.n_step)
-                                for v in self.asp])
-        else:
-            self.xl = np.array([0 for _ in range(self.n_step)
-                                for v in self.asp for _ in v])
-            self.xu = np.array([1 for _ in range(self.n_step)
-                                for v in self.asp for _ in v])
-            self.n_var = self.xl.shape[0]
+        self.n_var = self.n_act*self.n_step
+        self.xl = np.array([min(v) for _ in range(self.n_step)
+                            for v in self.asp])
+        self.xu = np.array([max(v) for _ in range(self.n_step)
+                            for v in self.asp])
         
     def initialize(self,sampling):
         self.y = tf.Variable(sampling)
@@ -299,16 +292,7 @@ class mpc_problem_gr:
         edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size,axis=0),tf.float32) if self.edge_state is not None else None
         with tf.GradientTape() as tape:
             tape.watch(self.y)
-            if self.args.act.startwith('conti'):
-                settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
-            else:
-                settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(self.n_step,-1))
-                # settings = [tf.reduce_max(Softmax()(settings[:,sum([len(v) for v in self.asp[:i]]):sum([len(v) for v in self.asp[:i+1]])]),axis=-1)
-                #             for i in range(self.n_act)]
-                probs = [Softmax()(settings[:,sum([len(v) for v in self.asp[:i]]):sum([len(v) for v in self.asp[:i+1]])])
-                         for i in range(self.n_act)]
-                settings = [tf.transpose(tf.random.categorical(tf.math.log(prob),self.pop_size)) for prob in probs]
-                settings = tf.stack([tf.gather(self.asp[i],sett) for i,sett in enumerate(settings)],axis=-1)
+            settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
             settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
             if settings.shape[1] < self.runoff.shape[0]:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -324,13 +308,9 @@ def run_gr(args,margs,setting=None):
     prob = mpc_problem_gr(args,margs)
     if args.use_current and setting is not None:
         setting *= prob.n_step
-        if not args.act.startwith('conti'):
-            setting = np.concatenate([np.eye(len(asp))[sett] for sett,asp in zip(setting,prob.asp)],axis=0)
-        else:
-            sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
     else:
-        sampling = sampling_lhs(args.pop_size if args.act.startwith('conti') else 1,prob.n_var,prob.xl,prob.xu)
-        sampling = sampling.squeeze() if not args.act.startwith('conti') else sampling
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
     def if_terminate(item,vm,rec):
         if item == 'n_gen':
             return rec[0] >= vm
@@ -352,6 +332,7 @@ def run_gr(args,margs,setting=None):
         rec[0] += 1
         if obj.numpy().min() < rec[1]:
             ctrls = np.clip(prob.y[obj.numpy().argmin()].numpy(),prob.xl,prob.xu)
+            ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
         rec[1],rec[2] = min(rec[1],obj.numpy().min()),grads.numpy().mean()
         rec[3] = time.time() - t0
         vals.append(obj.numpy().min())
@@ -361,12 +342,6 @@ def run_gr(args,margs,setting=None):
         log += str(round(obj.numpy().min(),4)).center(15)+'|'
         log += str(round(rec[1],4)).center(15)
         print(log)
-    if not args.act.startwith('conti'):
-        ctrls = ctrls.reshape((prob.n_step,-1))
-        ctrls = np.stack([np.argmax(ctrls[:,sum([len(v) for v in prob.asp[:i]]):sum([len(v) for v in prob.asp[:i+1]])],axis=-1)
-                          for i in range(prob.n_act)],axis=-1).tolist()
-    else:
-        ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
     return ctrls,vals
 
@@ -376,6 +351,7 @@ if __name__ == '__main__':
     # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
+    #       'act':'rand3',
     #       'processes':5,
     #       'pop_size':128,
     #       'sampling':0.4,
@@ -384,8 +360,8 @@ if __name__ == '__main__':
     #       'surrogate':True,
     #       'gradient':True,
     #       'rain_dir':'./envs/config/ast_test5_events.csv',
-    #       'model_dir':'./model/astlingen/30s_20k_conti_1000ledgef_res_norm_flood_gat',
-    #       'result_dir':'./results/astlingen/gmpc_test'}
+    #       'model_dir':'./model/astlingen/30s_20k_3act_1000ledgef_res_norm_flood_gat_2tcn',
+    #       'result_dir':'./results/astlingen/30s_20k_3actgmpc_1000ledgef_res_norm_flood_gat_2tcn'}
     # config['rain_dir'] = de['rain_dir']
     # for k,v in de.items():
     #     setattr(args,k,v)
