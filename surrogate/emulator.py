@@ -72,7 +72,7 @@ class Emulator:
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
         self.balance = getattr(args,"balance",0)
-        self.if_flood = getattr(args,"if_flood",False)
+        self.if_flood = getattr(args,"if_flood",0)
         if self.if_flood:
             self.n_in += 1
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
@@ -358,6 +358,8 @@ class Emulator:
             #               kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01),activity_regularizer=l1(0.01))(x)
             # flood = Dropout(self.dropout)(flood) if self.dropout else flood
             out_shape = 1 if conv else 1 * self.n_node
+            for _ in range(self.if_flood):
+                x = Dense(self.embed_size//2,activation=self.activation)(x)
             flood = Dense(out_shape,activation='sigmoid')(x)
                         #   kernel_regularizer=l2(0.01),bias_regularizer=l1(0.01)
             # flood = Dense(out_shape,activation='linear')(x)

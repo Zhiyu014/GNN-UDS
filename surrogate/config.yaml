@@ -43,7 +43,7 @@ shunqing:
   seq_in: 6
   seq_out: 1
   resnet: False
-  if_flood: False
+  if_flood: 0
   epsilon: 0.1
 
   # test args
@@ -95,7 +95,7 @@ RedChicoSur:
   seq_in: 6
   seq_out: 1
   resnet: False
-  if_flood: False
+  if_flood: 0
   epsilon: 0.1
 
   # test args
@@ -149,7 +149,7 @@ astlingen:
   seq_in: 6
   seq_out: 1
   resnet: False
-  if_flood: False
+  if_flood: 0
   epsilon: 0.1
 
   # test args
@@ -222,7 +222,7 @@ hague:
   seq_in: 6
   seq_out: 1
   resnet: False
-  if_flood: False
+  if_flood: 0
   epsilon: 0.1
 
   # test args

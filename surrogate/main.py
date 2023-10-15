@@ -57,7 +57,7 @@ def parser(config=None):
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
-    parser.add_argument('--if_flood',action='store_true',help='if classify flooding or not')
+    parser.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
 
     # test args
