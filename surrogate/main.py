@@ -39,6 +39,7 @@ def parser(config=None):
     parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
     parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
     parser.add_argument('--epochs',type=int,default=500,help='training epochs')
+    parser.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
     parser.add_argument('--roll',action="store_true",help='if rollout simulation')
     parser.add_argument('--balance',action="store_true",help='ratio of balance loss')

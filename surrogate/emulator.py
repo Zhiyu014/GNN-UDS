@@ -112,6 +112,7 @@ class Emulator:
         self.ratio = getattr(args,"ratio",0.8)
         self.batch_size = getattr(args,"batch_size",256)
         self.epochs = getattr(args,"epochs",100)
+        self.save_gap = getattr(args,"save_gap",100)
         self.model_dir = getattr(args,"model_dir")
         
     def build_network(self,conv=None,resnet=False,recurrent=None):
@@ -657,6 +658,8 @@ class Emulator:
                 self.save(os.path.join(self.model_dir,'train'))
             if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
                 self.save(os.path.join(self.model_dir,'test'))
+            if epoch > 0 and epoch % self.save_gap == 0:
+                self.save(os.path.join(self.model_dir,'%s'%epoch))
         return train_ids,test_ids,train_losses,test_losses
 
     def simulate(self,states,runoff,a=None,edge_states=None):
