@@ -188,9 +188,9 @@ class Emulator:
             e = reshape(e,(-1,) + tuple(e.shape[2:])) if recurrent else e
             if self.act:
                 ae = reshape(AE_in,(-1,)+tuple(edge_state_shape[:-2])+(self.n_edge*1,)) if not conv else AE_in
-                for _ in range(self.n_sp_layer-1):
-                    ae = Dense(self.embed_size//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,E)
-                    ae = Dropout(0.2)(ae) if self.dropout else ae
+                # for _ in range(self.n_sp_layer-1):
+                ae = Dense(self.embed_size//2,activation=self.activation)(ae)  # Control Embedding (B,T_out,N,E)
+                ae = Dropout(0.2)(ae) if self.dropout else ae
 
         # Spatial block: Does spatial and temporal nets need combination one-by-one?
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)

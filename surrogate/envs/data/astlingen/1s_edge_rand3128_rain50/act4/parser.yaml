@@ -1,7 +1,0 @@
-act: rand3
-data_dir: 1s_edge_rand3128_rain50/act4
-processes: 8
-rain_dir: ast_train50_events.csv
-repeats: 16
-simulate: true
-use_edge: true
