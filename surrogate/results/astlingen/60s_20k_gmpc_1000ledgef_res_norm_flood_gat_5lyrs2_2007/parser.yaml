@@ -1,0 +1,11 @@
+act: conti
+gradient: true
+learning_rate: 0.1
+model_dir: 60s_20k_conti_1000ledgef_res_norm_flood_gat_5lyrs2
+pop_size: 128
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_20k_gmpc_1000ledgef_res_norm_flood_gat_5lyrs2_2007
+surrogate: true
+termination:
+- n_gen
+- 200
