@@ -16,7 +16,8 @@ from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
 HERE = os.path.dirname(__file__)
-
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='mpc')
@@ -48,9 +49,9 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    args.termination[-1] = eval(args.termination[-1]) if args.termination[0] != 'time' else args.termination[-1]
+    args.termination[-1] = eval(args.termination[-1]) if args.termination[0] not in ['time','soo','moo'] else args.termination[-1]
 
-    print('MPC configs: {}'.format(args))
+    print('MaxRed configs: {}'.format(args))
     return args,config
 
 class mpc_problem(Problem):
@@ -191,19 +192,21 @@ if __name__ == '__main__':
         state = env.reset(event)
         states = [state]
         perfs,objects = [env.flood()],[env.objective()]
-        edge_state = env.state_full(typ='links')
-        edge_states = [edge_state[-1] if args.surrogate else edge_state]
+        edge_state = env.state_full(False,typ='links')
+        edge_states = [edge_state]
         setting = [1 for _ in args.action_space]
         settings = [setting]
         done,idx = False,0
         while not done:
-            done = env.step(ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1])
+            setting = ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1]
+            done = env.step(setting)
             state = env.state()
             edge_state = env.state_full(False,'links')
-            states.append(state[-1] if args.surrogate else state)
+            states.append(state)
             perfs.append(env.flood())
             objects.append(env.objective())
-            edge_states.append(edge_state[-1] if args.surrogate else edge_state)
+            edge_states.append(edge_state)
+            settings.append(setting)
             idx += 1
 
         np.save(os.path.join(args.result_dir,name + '_state.npy'),np.stack(states))
