@@ -535,7 +535,7 @@ class Emulator:
                 if self.norm:
                     preds_re_norm = self.normalize(preds,'y',inverse=True)
                     b = self.normalize(b,'b',inverse=True)
-                    q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1],self.normalize(x[:,-1:,:,0],'x',True))
+                    q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1],None)
                     # q_w = self.get_flood(preds_re_norm,b[...,:1])
                     q_w = q_w/self.norm_y[0,:,-1]
                     preds = self.normalize(preds_re_norm,'y')
@@ -560,7 +560,7 @@ class Emulator:
                 loss = self.mse(y[...,:3],preds[...,:3])
             if not fit:
                 loss = [loss]
-            if self.if_flood:
+            if self.if_flood and not self.balance:
                 loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
                 # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
@@ -647,7 +647,7 @@ class Emulator:
             node_str = "Node bal: " if self.balance else "Node: "
             log += node_str + "{:.4f}".format(test_loss[0])
             i = 1
-            if self.if_flood:
+            if self.if_flood and not self.balance:
                 log += " if_flood: {:.4f}".format(test_loss[i])
                 i += 1
             if self.use_edge:
