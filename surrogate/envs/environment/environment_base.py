@@ -72,7 +72,8 @@ class env_base(environment):
                              'flow':self._getLinkFlow,
                              'flow_vol':self._getLinkCumFlow,
                              'setting':self._getLinkSetting,
-                             'rainfall':self._getGageRainfall})
+                             'rainfall':self._getGageRainfall,
+                             'getlinktype':self._getLinkType})
 
     def step(self, actions=None, advance_seconds = None):
         r"""
@@ -281,7 +282,9 @@ class env_base(environment):
         return self.sim._model.getGagePrecip(ID,
             tkai.RainGageResults.rainfall.value)
 
-
+    def _getLinkType(self,ID):
+        # For control formulation
+        return self.sim._model.getLinkType(ID).name
 
     def save_hotstart(self,hsf_file):
         r"""

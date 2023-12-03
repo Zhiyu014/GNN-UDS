@@ -56,19 +56,15 @@ performance_targets:
   - !!python/tuple
     - "st1"
     - cumflooding
-    - 1
+    - 1000
   - !!python/tuple
     - "st1"
     - depthN
-    - 1
-  - !!python/tuple
-    - "F134101"
-    - cumflooding
-    - 1
+    - 6.0
   - !!python/tuple
     - "F134101"
     - depthN
-    - 1
+    - 3.56
 
 # Flooding volume in each node
 flood:

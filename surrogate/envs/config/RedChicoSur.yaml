@@ -18,7 +18,7 @@ global_state:
     - cuminflow
   - !!python/tuple
     - nodes
-    - totaloutflow
+    - totaloutflow_vol
   - !!python/tuple
     - nodes
     - cum_lateral_inflow
@@ -30,7 +30,7 @@ global_state:
     - volumeL
   - !!python/tuple
     - links
-    - flow
+    - flow_vol
   - !!python/tuple
     - links
     - setting
