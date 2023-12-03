@@ -1,0 +1,8 @@
+act: rand
+pop_size: 64
+processes: 16
+rain_dir: ast_test2007_events3.csv
+result_dir: maxred_7act
+termination:
+- n_gen
+- 200

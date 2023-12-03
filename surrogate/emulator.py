@@ -71,7 +71,7 @@ class Emulator:
         self.dropout = getattr(args,'dropout',0.0)
         self.activation = getattr(args,"activation",'relu')
         self.norm = getattr(args,"norm",False)
-        self.balance = getattr(args,"balance",0)
+        self.balance = getattr(args,"balance",False)
         self.if_flood = getattr(args,"if_flood",0)
         if self.if_flood:
             self.n_in += 1
