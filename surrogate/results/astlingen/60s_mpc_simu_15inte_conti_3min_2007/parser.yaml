@@ -1,0 +1,9 @@
+act: conti
+control_interval: 15
+pop_size: 128
+processes: 16
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_mpc_simu_15inte_conti_3min_2007
+termination:
+- n_gen
+- 5

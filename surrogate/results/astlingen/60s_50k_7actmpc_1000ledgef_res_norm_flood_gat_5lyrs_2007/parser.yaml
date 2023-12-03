@@ -1,0 +1,9 @@
+act: rand
+model_dir: 60s_50k_7act_1000ledgef_res_norm_flood_gat_5lyrs
+pop_size: 128
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_50k_7actmpc_1000ledgef_res_norm_flood_gat_5lyrs_2007
+surrogate: true
+termination:
+- n_gen
+- 200

@@ -164,6 +164,7 @@ cython_debug/
 *.rpt
 *.hsf
 *.ipynb
+*.json
 !hague.inp
 !shunqing.inp
 !astlingen.inp
