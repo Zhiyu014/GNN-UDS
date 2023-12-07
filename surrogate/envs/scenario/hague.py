@@ -3,7 +3,8 @@ import os
 import numpy as np
 from swmm_api import read_inp_file
 from swmm_api.input_file.section_lists import NODE_SECTIONS
-
+import networkx as nx
+from itertools import combinations
 HERE = os.path.dirname(__file__)
 
 class hague(basescenario):
@@ -21,14 +22,15 @@ class hague(basescenario):
     Notes
     -----
     Objectives are the following:
-    1. Minimization of flooding
-    2. Avoid flooding at ponds
-    3. Minimization of TSS (not included here)
+    1. Minimization of system flooding
+    2. Avoid flooding at pond st1
+    3. Avoid large depths at pond F134101 which may cause upstream flooding
+    4. Depth targets for pond st1 & F134101
+    5. Minimization of TSS (not included here)
 
     Performance is measured as the following:
-    1. *2 for CSO volume (doubled for flow into the creek)
-    2. *(-1) for the flow to the WWTP
-    3. *(0.01) for the roughness of the control
+    1. 1 for system flooding volume, depth targets
+    2. 1000 for st1 flooding, F134101 large depth
 
     """
 
@@ -36,7 +38,7 @@ class hague(basescenario):
         # Network configuration
         config_file = os.path.join(HERE,"..","config","hague.yaml") \
             if config_file is None else config_file
-        super.__init__(config_file,swmm_file,global_state,initialize)
+        super().__init__(config_file,swmm_file,global_state,initialize)
 
         
     # TODO
@@ -46,28 +48,40 @@ class hague(basescenario):
         perfs = self.performance(seq)
         for i,(_,attr,target) in enumerate(self.config['performance_targets']):
             if attr == 'depthN':
-                __object += np.abs(perfs[:,i] if seq else perfs[i] - target)
+                if type(target) is str:
+                    target,weight = eval(target.split(',')[0]),eval(target.split(',')[1])
+                    __object += (perfs[:,i]>target)*weight if seq else (perfs[i]>target)*weight
+                else:
+                    __object += np.abs(perfs[:,i] - target if seq else perfs[i] - target)
             else:
                 __object += perfs[:,i] * target if seq else perfs[i] * target
         return __object
      
      
     def objective_pred(self,preds,state):
+        preds,_ = preds
         h,q_w = preds[...,0],preds[...,-1]
         flood = [q_w[...,self.elements['nodes'].index(idx)].sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
         depth = [np.abs(h[...,self.elements['nodes'].index(idx)]-target).sum(axis=1)
-                for idx,attr,target in self.config['performance_targets'] if attr == 'depthN']
-        return q_w.sum(axis=-1).sum(axis=-1) + sum(flood) + sum(depth)
+                for idx,attr,target in self.config['performance_targets']
+                if attr == 'depthN' and type(target) is not str]
+        exced = [eval(target.split(',')[1])*(h[...,self.elements['nodes'].index(idx)]>eval(target.split(',')[0])).sum(axis=1)
+                for idx,attr,target in self.config['performance_targets']
+                if attr == 'depthN' and type(target) is str]
+        return q_w.sum(axis=-1).sum(axis=-1) + sum(flood) + sum(depth) + sum(exced)
     
     def objective_pred_tf(self,preds,state):
         import tensorflow as tf
+        preds,_ = preds
         h,q_w = preds[...,0],preds[...,-1]
         flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
         depth = [tf.reduce_sum(tf.abs(h[...,self.elements['nodes'].index(idx)]-target),axis=1)
-                for idx,attr,target in self.config['performance_targets'] if attr == 'depthN']
-        return tf.reduce_sum(tf.reduce_sum(q_w,axis=-1),axis=-1) + tf.reduce_sum(flood,axis=0) + tf.reduce_sum(depth,axis=0)    
+                for idx,attr,target in self.config['performance_targets'] if attr == 'depthN' and type(target) is not str]
+        exced = [tf.reduce_sum(eval(target.split(',')[1])*tf.cast(h[...,self.elements['nodes'].index(idx)]>eval(target.split(',')[0]),tf.float32),axis=1)
+                for idx,attr,target in self.config['performance_targets'] if attr == 'depthN' and type(target) is str]
+        return tf.reduce_sum(tf.reduce_sum(q_w,axis=-1),axis=-1) + tf.reduce_sum(flood,axis=0) + tf.reduce_sum(depth,axis=0) + tf.reduce_sum(exced,axis=0)   
 
     def get_action_space(self,act='rand'):
         asp = self.config['action_space'].copy()
@@ -85,16 +99,14 @@ class hague(basescenario):
         #     args['rainfall']['training_events'] = os.path.join(HERE,'config',args['rainfall']['training_events']+'.csv')
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([inp.CURVES[node.Curve].points[0][1] if sec == 'STORAGE' else 0.0
+        args['area'] = np.array([node.Curve[0] if sec == 'STORAGE' else 0.0
                                   for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
 
         if self.global_state:
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
         return args
 
-
-    # TODO: ctrl mode
-    def controller(self,state=None,mode='rand'):
+    def controller(self,mode='rand',state=None,setting=None):
         asp = self.config['action_space']
         if mode.lower() == 'rand':
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
@@ -109,3 +121,39 @@ class hague(basescenario):
         else:
             raise AssertionError("Unknown controller %s"%str(mode))
         
+    def get_edge_adj(self,directed=False,length=0,order=1):
+        edges = self.get_edge_list(length=bool(length))
+        X = nx.MultiDiGraph() if directed else nx.MultiGraph()
+        if length:
+            edges,lengths = edges
+            l_std = np.std(lengths)
+        for i,(u,v) in enumerate(edges):
+            if length:
+                X.add_edge(u,v,edge=i,length=lengths[i])
+            else:
+                X.add_edge(u,v,edge=i)
+        EX = nx.DiGraph() if directed else nx.Graph()
+        for n in X.nodes():
+            if directed:
+                for _,_,u in X.in_edges(n,data=True):
+                    for _,_,v in X.out_edges(n,data=True):
+                        EX.add_edge(u['edge'],v['edge'])
+                        if length:
+                            EX[u['edge']][v['edge']].update(length = (u['length']+v['length'])/2)
+            else:
+                for (_,_,u),(_,_,v) in combinations(X.edges(n,data=True),2):
+                    EX.add_edge(u['edge'],v['edge'])
+                    if length:
+                        EX[u['edge']][v['edge']].update(length = (u['length']+v['length'])/2)
+
+        n_edge = edges.shape[0]
+        adj = np.zeros((n_edge,n_edge))
+        for n in range(n_edge):
+            if length:
+                p_l = nx.single_source_dijkstra_path_length(EX,n,weight='length',cutoff=length)
+                for a,l in p_l.items():
+                    adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
+            else:
+                for a in list(nx.dfs_preorder_nodes(EX,n,order)):
+                    adj[n,a] = 1
+        return adj

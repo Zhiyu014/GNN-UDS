@@ -1,0 +1,6 @@
+act: rand
+data_dir: edge_rand50
+processes: 2
+rain_suffix: chaohu_train
+repeats: 50
+simulate: true

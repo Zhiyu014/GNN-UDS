@@ -18,9 +18,9 @@ class DataGenerator:
         self.act = getattr(args,"act",False)
         self.setting_duration = getattr(args,"setting_duration",5)
         if self.act:
-            self.action_table = env.config['action_space']
+            self.action_space = env.config['action_space']
             # self.adj = env.get_adj()
-            # self.act_edges = env.get_edge_list(list(self.action_table.keys()))
+            # self.act_edges = env.get_edge_list(list(self.action_space.keys()))
 
     
     def simulate(self, event, seq = False, act = False, hotstart = False):
@@ -30,14 +30,14 @@ class DataGenerator:
         if self.use_edge:
             edge_state = self.env.state_full(seq,'links')
             edge_states = [edge_state]
-        setting = [1 for _ in self.action_table] if act else None
+        setting = [1 for _ in self.action_space] if act else None
         settings = [setting]
         done,i = False,0
         while not done:
             if hotstart:
                 eval_file = self.env.get_eval_file()
                 _ = swmm5_run(eval_file)
-            setting = self.env.controller(state,act) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
+            setting = self.env.controller(act,state,setting) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
             state = self.env.state(seq=seq)
             perf = self.env.flood(seq=seq)

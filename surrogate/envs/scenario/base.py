@@ -302,7 +302,7 @@ class basescenario(scenario):
             args['edges'] = self.get_edge_list()
             links = self.get_features('links')
             inp = read_inp_file(self.config['swmm_input'])
-            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 for link in links])
+            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 if link in inp.XSECTIONS else 0 for link in links])
 
             args['adj'] = self.get_adj(directed,length,order)
             args['edge_adj'] = self.get_edge_adj(directed,length,order)
@@ -517,7 +517,9 @@ class basescenario(scenario):
             return eval_file
 
     def get_current_setting(self):
-        if len(self.data_log['setting']) > 0 :
+        if not self.config['act']:
+            raise AssertionError("Control not allowed in scenario %s"%self.config["env_name"])
+        elif len(self.data_log['setting']) > 0 :
             setting = [self.data_log["setting"][ID][-1]
             for ID in self.config["action_space"]]
         else:

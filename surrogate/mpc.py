@@ -34,7 +34,6 @@ def parser(config=None):
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
     parser.add_argument('--horizon',type=int,default=60,help='control horizon')
-    # parser.add_argument('--continuous',action='store_true',help='if use continuous action space')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
 
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
@@ -128,6 +127,7 @@ class mpc_problem(Problem):
         self.r_step = args.setting_duration//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
+        self.env = get_env(args.env)(initialize=False)
         if args.act.startswith('conti'):
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([min(v) for _ in range(self.n_step)
@@ -136,12 +136,15 @@ class mpc_problem(Problem):
                                            for v in args.action_space.values()]),
                             vtype=float)
         else:
-            self.actions = [{i:v for i,v in enumerate(val)}
-                            for val in args.action_space.values()]            
+            self.actions = args['action_table']
+            # self.actions = [{i:v for i,v in enumerate(val)}
+            #                 for val in args.action_space.values()]            
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([0 for _ in range(self.n_var)]),
-                            xu = np.array([len(v)-1 for _ in range(self.n_step)
-                                for v in self.actions]),
+                            # xu = np.array([len(v)-1 for _ in range(self.n_step)
+                            #     for v in self.actions]),
+                            xu = np.array([v for _ in range(self.n_step)
+                                for v in np.array(list(self.actions.keys()).max(axis=0))]),
                             vtype=int)
 
     def pred_simu(self,y):
@@ -159,14 +162,16 @@ class mpc_problem(Problem):
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
-            done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
+            # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
+            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi)])
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
     
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
-        settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
+        # settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
+        settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y)
         settings = np.repeat(settings,self.r_step,axis=1)
         if settings.shape[1] < self.runoff.shape[0]:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -174,8 +179,8 @@ class mpc_problem(Problem):
         state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
-        env = get_env(self.args.env)(initialize=False)
-        return env.objective_pred(preds[0] if self.emul.use_edge else preds,state)
+        # env = get_env(self.args.env)(initialize=False)
+        return self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state)
 
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -249,7 +254,8 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     ctrls = res.X
     ctrls = ctrls.reshape((prob.n_step,prob.n_act))
     if not args.act.startswith('conti'):
-        ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+        # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+        ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
 
     vals = res.algorithm.callback.data["best"]
 
@@ -299,7 +305,7 @@ class mpc_problem_gr:
                 settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
             env = get_env(self.args.env)(initialize=False)
-            obj = env.objective_pred_tf(preds[0] if self.emul.use_edge else preds,state)
+            obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],state)
         grads = tape.gradient(obj,self.y)
         self.optimizer.apply_gradients(zip([grads],[self.y])) # How to regulate y in (xl,xu)
         return obj,grads
@@ -378,6 +384,8 @@ if __name__ == '__main__':
     rain_arg = env.config['rainfall']
     if 'rain_dir' in config:
         rain_arg['rainfall_events'] = args.rain_dir
+    if 'rain_suffix' in config:
+        rain_arg['suffix'] = args.rain_suffix
     events = get_inp_files(env.config['swmm_input'],rain_arg)
 
     if args.surrogate:

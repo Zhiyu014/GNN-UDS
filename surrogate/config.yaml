@@ -252,3 +252,76 @@ hague:
   continuous: False
   surrogate: False
   gradient: False
+
+chaohu:
+  # env args
+  env: chaohu
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix: chaohu
+
+  # simulate args
+  simulate: False
+  data_dir: ./envs/data/chaohu/
+  act: 'False'
+  processes: 5
+  repeats: 1
+  use_edge: False
+
+  # train args
+  train: False
+  load_model: False
+  edge_fusion: False
+  use_adj: False
+  model_dir: ./model/chaohu/
+  ratio: 0.8
+  learning_rate: 0.001
+  epochs: 500
+  save_gap: 500
+  batch_size: 256
+  roll: False
+  balance: 0
+  
+  # network args
+  norm: False
+  n_out: 3
+  conv: GCNconv
+  embed_size: 128
+  n_sp_layer: 2
+  dropout: 0.0
+  activation: relu
+  recurrent: GRU
+  hidden_dim: 64
+  kernel_size: 3
+  n_tp_layer: 2
+  seq_in: 6
+  seq_out: 1
+  resnet: False
+  if_flood: 0
+  epsilon: 0.1
+
+  # test args
+  test: False
+  result_dir: ./results/chaohu/
+
+  # MPC args
+  control_interval: 5
+  setting_duration: 5
+  horizon: 60
+  pop_size: 32
+  use_current: False
+  sampling: 0.4
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  continuous: False
+  surrogate: False
+  gradient: False

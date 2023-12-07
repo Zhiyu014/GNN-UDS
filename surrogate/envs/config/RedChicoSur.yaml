@@ -108,7 +108,7 @@ flood:
     
 # Rainfall scenario parameters
 rainfall:
-  func: generate_file
+  func: split_file
   suffix:
   filedir: ./envs/network/RedChicoSur/
   MIET: 4

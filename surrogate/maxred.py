@@ -72,12 +72,15 @@ class mpc_problem(Problem):
                                            for v in args.action_space.values()]),
                             vtype=float)
         else:
+            self.actions = args['action_table']
             self.actions = [{i:v for i,v in enumerate(val)}
                             for val in args.action_space.values()]            
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([0 for _ in range(self.n_var)]),
-                            xu = np.array([len(v)-1 for _ in range(self.n_step)
-                                for v in self.actions]),
+                            # xu = np.array([len(v)-1 for _ in range(self.n_step)
+                            #     for v in self.actions]),
+                            xu = np.array([v for _ in range(self.n_step)
+                                for v in np.array(list(self.actions.keys()).max(axis=0))]),
                             vtype=int)
 
     def pred_simu(self,y):
@@ -93,7 +96,8 @@ class mpc_problem(Problem):
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
-            done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
+            # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
+            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi)])
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
@@ -143,6 +147,8 @@ if __name__ == '__main__':
     rain_arg = env.config['rainfall']
     if 'rain_dir' in config:
         rain_arg['rainfall_events'] = args.rain_dir
+    if 'rain_suffix' in config:
+        rain_arg['suffix'] = args.rain_suffix
     events = get_inp_files(env.config['swmm_input'],rain_arg)
 
 
@@ -186,7 +192,8 @@ if __name__ == '__main__':
         ctrls = res.X
         ctrls = ctrls.reshape((prob.n_step,prob.n_act))
         if not args.act.startswith('conti'):
-            ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+            # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+            ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
         ctrls = np.repeat(ctrls,prob.r_step,axis=0)
 
         state = env.reset(event)

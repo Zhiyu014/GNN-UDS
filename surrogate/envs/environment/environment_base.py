@@ -54,26 +54,29 @@ class env_base(environment):
         self.sec_per_day = 3600.0 * 24.0
                              
         # for state and performance
-        self.methods.update({'invertelev':self._getNodeinvertElev,
-                             'fulldepth':self._getNodefullDepth,
-                             'surdepth':self._getNodesurDepth,
-                             'depthN_avg':self._getNodeAvgDepth,
-                             'head':self._getNodeHead,
-                             'head_avg':self._getNodeAvgHead,
-                             'cumflooding':self._getCumFlooding,
-                             'cuminflow':self._getNodeCumInflow,
-                             'totalinflow':self._getNodeTotalInflow,
-                             'totaloutflow':self._getNodeTotalOutflow,
-                             'totaloutflow_vol':self._getNodeCumOutflow,
-                             'lateralinflow':self._getNodeLateralInflow,
-                             'cumlateralinflow':self._getNodeLateralInflowVol,
-                             'depthL_avg':self._getLinkAvgDepth,
-                             'volumeL_avg':self._getLinkAvgVolume,
-                             'flow':self._getLinkFlow,
-                             'flow_vol':self._getLinkCumFlow,
-                             'setting':self._getLinkSetting,
-                             'rainfall':self._getGageRainfall,
-                             'getlinktype':self._getLinkType})
+        self.methods.update({
+            'invertelev':self._getNodeinvertElev,
+            'fulldepth':self._getNodefullDepth,
+            'surdepth':self._getNodesurDepth,
+            'depthN_avg':self._getNodeAvgDepth,
+            'head':self._getNodeHead,
+            'head_avg':self._getNodeAvgHead,
+            'cumflooding':self._getCumFlooding,
+            'cuminflow':self._getNodeCumInflow,
+            'totalinflow':self._getNodeTotalInflow,
+            'totaloutflow':self._getNodeTotalOutflow,
+            'totaloutflow_vol':self._getNodeCumOutflow,
+            'lateralinflow':self._getNodeLateralInflow,
+            'cumlateralinflow':self._getNodeLateralInflowVol,
+            'depthL_avg':self._getLinkAvgDepth,
+            'volumeL_avg':self._getLinkAvgVolume,
+            'flow':self._getLinkFlow,
+            'flow_vol':self._getLinkCumFlow,
+            'setting':self._getLinkSetting,
+            'rainfall':self._getGageRainfall,
+            'getlinktype':self._getLinkType,
+            'cumpumpenergy':self._getPumpEnergy,
+            })
 
     def step(self, actions=None, advance_seconds = None):
         r"""
@@ -286,6 +289,9 @@ class env_base(environment):
         # For control formulation
         return self.sim._model.getLinkType(ID).name
 
+    def _getPumpEnergy(self, ID):
+        return self.sim._model.pump_statistics(ID)['energy_consumed']    
+    
     def save_hotstart(self,hsf_file):
         r"""
         Outputs a hotstart file and returns file path.

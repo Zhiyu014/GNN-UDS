@@ -62,7 +62,7 @@ flood:
     
 # Rainfall scenario parameters
 rainfall:
-  func: generate_file
+  func: split_file
   suffix: bpswmm
   filedir: ./envs/network/shunqing/
   MIET: 1

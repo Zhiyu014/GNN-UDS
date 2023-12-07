@@ -1,17 +1,19 @@
 from swmm_api import read_inp_file
 from datetime import timedelta,datetime
-from os.path import exists,splitext
+from os.path import exists,splitext,dirname,join
 from datetime import datetime,timedelta
 from swmm_api import read_inp_file
-from swmm_api.input_file.sections.others import TimeseriesData
+from swmm_api.input_file.sections.others import TimeseriesData,Timeseries
 import pandas as pd
-
+import numpy as np
+from math import log10
+import random
 
 def get_inp_files(inp,arg,**kwargs):
     files = eval(arg['func'])(inp,arg=arg,**kwargs)
     return files
 
-def generate_file(file,arg,**kwargs):
+def split_file(file,arg,**kwargs):
     inp = read_inp_file(file)
     for k,v in inp.TIMESERIES.items():
         if arg['suffix'] is None or k.startswith(arg['suffix']):
@@ -28,6 +30,97 @@ def generate_file(file,arg,**kwargs):
     return events
 
 
+def generate_file(file, arg, pattern = 'Chicago_icm', filedir = None, rain_num = 1, replace = False):
+    """
+    Generate multiple inp files containing rainfall events
+    designed by rainfall pattern.
+    
+    Parameters
+    ----------
+    base_inp_file : dir
+        Path of the inp model.
+    arg : dict
+        rainfall arguments.
+    pattern : str, optional
+        'Chicago_icm'
+    filedir : dir, optional
+        The output dir. The default is None.
+    rain_num : int, optional
+        numbers of rainfall events. The default is 1.
+
+    Returns
+    -------
+    files : list
+        A list of inp files.
+
+    """
+    inp = read_inp_file(file)
+    files = list()
+    filedir = arg.get('filedir',dirname(file)) if filedir is None else filedir
+    filedir = join(filedir,arg['suffix']+'_%s.inp')
+    rain_num = arg.get('rain_num',rain_num)
+    for i in range(rain_num):
+        file = filedir%i
+        files.append(file)
+        if exists(file) == True and replace == False:
+            continue        
+
+        if type(arg['P']) is tuple:
+            p = random.randint(*arg['P'])
+        elif type(arg['P']) is list:
+            p = arg['P'][i]
+        elif type(arg['P']) in [int,float]:
+            p = arg['P']
+
+        para = []
+        for v in arg['params'].values():
+            if type(v) is tuple:
+                para.append(random.uniform(*v))
+            elif type(v) in [int,float]:
+                para.append(v)
+        para += [p,arg['delta'],arg['dura']]
+
+        # define simulation time on 01/01/2000
+        start_time = datetime(2000,1,1,0,0)
+        end_time = start_time + timedelta(minutes = arg['simu_dura'])
+        inp.OPTIONS['START_DATE'] = start_time.date()
+        inp.OPTIONS['END_DATE'] = end_time.date()
+        inp.OPTIONS['START_TIME'] = start_time.time()
+        inp.OPTIONS['END_TIME'] = end_time.time()
+        inp.OPTIONS['REPORT_START_DATE'] = start_time.date()
+        inp.OPTIONS['REPORT_START_TIME'] = start_time.time()
+
+        # calculate rainfall timeseries
+        ts = eval(pattern)(para)
+        ts = [[(start_time+timedelta(hours=1)+timedelta(minutes=t)).strftime('%m/%d/%Y %H:%M:%S'),va] for t,va in ts]
+        inp['TIMESERIES'] = Timeseries.create_section()
+        inp['TIMESERIES'].add_obj(TimeseriesData(Name = str(p)+'y',data = ts))
+        inp.RAINGAGES['RG']['Timeseries'] = str(p)+'y'
+        inp.RAINGAGES['RG']['Interval'] = str(int(arg['delta']//60)).zfill(2)+':'+str(int(arg['delta']%60)).zfill(2)
+
+        inp.write_file(file)
+    return files
+
+# Generate a rainfall intensity file from a cumulative values in ICM
+def Chicago_icm(para_tuple):
+    A,C,n,b,r,P,delta,dura = para_tuple
+    a = A*(1+C*log10(P))
+    HT = a*dura/(dura+b)**n
+    Hs = []
+    for i in range(dura//delta+1):
+        t = i*delta
+        if t <= r*dura:
+            H = HT*(r-(r-t/dura)*(1-t/(r*(dura+b)))**(-n))
+        else:
+            H = HT*(r+(t/dura-r)*(1+(t-dura)/((1-r)*(dura+b)))**(-n))
+        Hs.append(H)
+    tsd = np.diff(np.array(Hs))*60/delta
+    ts = []
+    for i in range(dura//delta):
+        t = i*delta
+        # key = str(1+t//60).zfill(2)+':'+str(t % 60).zfill(2)
+        ts.append([t,tsd[i]])
+    return ts
 
 def generate_split_file(base_inp_file,
                         timeseries_file=None,

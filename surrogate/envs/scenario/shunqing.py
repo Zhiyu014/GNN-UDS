@@ -31,5 +31,5 @@ class shunqing(basescenario):
         # Network configuration
         config_file = os.path.join(HERE,"..","config","shunqing.yaml") \
             if config_file is None else config_file
-        super.__init__(config_file,swmm_file,global_state,initialize)
+        super().__init__(config_file,swmm_file,global_state,initialize)
 

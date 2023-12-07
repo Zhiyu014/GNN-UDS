@@ -1,0 +1,235 @@
+# Configuration file for scenario chaohu
+# name of scearnio
+env_name: chaohu
+# if env contains actions
+act: True
+# time step (min)
+interval: 1
+# control time step (min)
+# control_interval: 5
+# state definitions
+# global state definitions
+global_state:
+  - !!python/tuple
+    - nodes
+    - depthN
+  - !!python/tuple
+    - nodes
+    # - totalinflow
+    - cuminflow
+  - !!python/tuple
+    - nodes
+    - totaloutflow_vol
+  - !!python/tuple
+    - nodes
+    # - lateralinflow
+    - cumlateralinflow
+  - !!python/tuple
+    - links
+    - depthL
+  - !!python/tuple
+    - links
+    - volumeL
+  - !!python/tuple
+    - links
+    - flow_vol
+  - !!python/tuple
+    - links
+    - setting
+
+# Action space
+action_space:
+  CC-S1:
+    !!python/tuple
+    - 0
+    - 1
+  CC-S2:
+    !!python/tuple
+    - 0
+    - 1
+  CC-R1:
+    !!python/tuple
+    - 0
+    - 1
+  CC-R2:
+    !!python/tuple
+    - 0
+    - 1
+  JK-S:
+    !!python/tuple
+    - 0
+    - 1
+  JK-R1:
+    !!python/tuple
+    - 0
+    - 1
+  JK-R2:
+    !!python/tuple
+    - 0
+    - 1
+
+# Startup shutoff thresholds
+hc_thresholds:
+  CC-S1:
+    !!python/tuple
+    - 0.5
+    - 0.8
+  CC-S2:
+    !!python/tuple
+    - 0.5
+    - 1
+  CC-R1:
+    !!python/tuple
+    - 0.5
+    - 1.2
+  CC-R2:
+    !!python/tuple
+    - 0.5
+    - 1.4
+  JK-S:
+    !!python/tuple
+    - 1
+    - 4
+  JK-R1:
+    !!python/tuple
+    - 1.2
+    - 4.2
+  JK-R2:
+    !!python/tuple
+    - 1.2
+    - 4.3
+
+# Performance Targets
+performance_targets:
+  # rainfall indicator
+  # - !!python/tuple
+  #   - "RG"
+  #   - rainfall
+  #   - -5
+  # flooding
+  # - !!python/tuple
+  #   - "system"
+  #   - cumflooding
+  #   - 1
+  # tank flooding penalty
+  - !!python/tuple
+    - "CC-storage"
+    - cumflooding
+    - 50
+  - !!python/tuple
+    - "JK-storage"
+    - cumflooding
+    - 50
+  # CSOs
+  - !!python/tuple
+    - "CC-1"
+    - cuminflow
+    - 0.5
+  - !!python/tuple
+    - "CC-2"
+    - cuminflow
+    - 0.5  
+  - !!python/tuple
+    - "JK-1"
+    - cuminflow
+    - 0.5
+  - !!python/tuple
+    - "JK-2"
+    - cuminflow
+    - 0.5
+  # Pump energy
+  - !!python/tuple
+    - "CC-S1"
+    - cumpumpenergy
+    - 0.1
+  - !!python/tuple
+    - "CC-S2"
+    - cumpumpenergy
+    - 0.1  
+  - !!python/tuple
+    - "CC-R1"
+    - cumpumpenergy
+    - 0.1 
+  - !!python/tuple
+    - "CC-R2"
+    - cumpumpenergy
+    - 0.1
+  - !!python/tuple
+    - "JK-S"
+    - cumpumpenergy
+    - 0.1
+  - !!python/tuple
+    - "JK-R1"
+    - cumpumpenergy
+    - 0.1
+  - !!python/tuple
+    - "JK-R2"
+    - cumpumpenergy
+    - 0.1
+  # Tank depth
+  # - !!python/tuple
+  #   - "CC-storage"
+  #   - depthN
+  #   - 1
+  # - !!python/tuple
+  #   - "JK-storage"
+  #   - depthN
+  #   - 1
+
+# Flooding volume in each node
+flood:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+
+# TODO: Chicago Rainfall scenario parameters
+rainfall:
+  func: generate_file
+  filedir: ./envs/network/chaohu/
+  suffix: chaohu_train
+  # Rainfall pattern
+  rainfall_pattern: "Chicago (Keifer & Chu, 1957)"
+  # Events
+  rain_num: 50
+  # Rainfall duration (min)
+  dura: 120
+  # Time resolution (min)
+  delta: 5
+  # Simulation duration (min)
+  simu_dura: 300
+  # Set rainfall parameters
+  P:
+    !!python/tuple
+    - 1
+    - 5    
+  params:
+    A:
+      !!python/tuple
+      - 21.9682
+      - 38.8565
+    C:
+      !!python/tuple
+      - 0.8057
+      - 2.201
+    n:
+      !!python/tuple
+      - 0.8301
+      - 1.0792
+    b:
+      !!python/tuple
+      - 16.41
+      - 26.5
+    r:
+      !!python/tuple
+      - 0.3
+      - 0.8
+
+# Model predictive control parameters
+prediction:
+  control_horizon: 60  # Control horizon (min)
+  eval_horizon: 60 # Evaluation horizon (min)
+  no_runoff: True # if excludes runoff module and use external data
+  hsf_dir: hsf # file path to save the hotstart file
+  eval_dir: eval # file path to save the evaluation file
+  suffix: mpc_eval_ # suffix of the evaluation file
+  

@@ -60,11 +60,15 @@ performance_targets:
   - !!python/tuple
     - "st1"
     - depthN
-    - 6.0
+    - 1.8
   - !!python/tuple
     - "F134101"
     - depthN
-    - 3.56
+    - 1.1
+  - !!python/tuple
+    - "F134101"
+    - depthN
+    - '1.75,1000'
 
 # Flooding volume in each node
 flood:

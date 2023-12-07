@@ -24,7 +24,7 @@ class RedChicoSur(basescenario):
         # Network configuration
         config_file = os.path.join(HERE,"..","config","RedChicoSur.yaml") \
             if config_file is None else config_file
-        super.__init__(config_file,swmm_file,global_state,initialize)
+        super().__init__(config_file,swmm_file,global_state,initialize)
 
 
     def get_args(self,directed=False,length=0,order=1,act=False):
@@ -34,7 +34,7 @@ class RedChicoSur(basescenario):
         return args
 
         
-    def controller(self,state=None,mode='rand'):
+    def controller(self,mode='rand',state=None,setting=None):
         asp = self.config['action_space']
         if mode.lower() == 'rand':
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
