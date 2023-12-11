@@ -251,10 +251,10 @@ class basescenario(scenario):
             for ID in self.elements[typ]:
                 self.data_log[attribute][ID] = [] if maxlen is None else deque(maxlen=maxlen)
 
-        if config['act']:
-            self.data_log["setting"] = {}
-            for ID in config["action_space"].keys():
-                self.data_log["setting"][ID] =  [] if maxlen is None else deque(maxlen=maxlen)
+        # if config['act']:
+        #     self.data_log["setting"] = {}
+        #     for ID in config["action_space"].keys():
+        #         self.data_log["setting"][ID] =  [] if maxlen is None else deque(maxlen=maxlen)
 
         # for ID, attribute, _ in config["reward"]:
         #     if attribute not in self.data_log.keys():
