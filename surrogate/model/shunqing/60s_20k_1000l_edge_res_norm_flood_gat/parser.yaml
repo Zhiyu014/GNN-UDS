@@ -1,0 +1,17 @@
+batch_size: 32
+conv: 'False'
+data_dir: edge
+epochs: 20000
+if_flood: 3
+length: 1000.0
+model_dir: 60s_20k_1000l_edge_res_norm_flood_gat
+n_sp_layer: 3
+n_tp_layer: 3
+norm: true
+recurrent: Conv1D
+resnet: true
+save_gap: 5000
+seq_in: 60
+seq_out: 60
+train: true
+use_edge: true
