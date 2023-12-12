@@ -1,5 +1,5 @@
 batch_size: 32
-conv: 'False'
+conv: GAT
 data_dir: edge
 epochs: 20000
 if_flood: 3

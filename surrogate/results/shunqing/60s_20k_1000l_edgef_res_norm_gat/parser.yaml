@@ -1,5 +1,5 @@
 batch_size: 32
-conv: 'False'
+conv: GAT
 data_dir: edge
 edge_fusion: true
 epochs: 20000
