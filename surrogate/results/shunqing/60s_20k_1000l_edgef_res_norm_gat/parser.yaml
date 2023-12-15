@@ -1,10 +1,7 @@
-batch_size: 32
 conv: GAT
-data_dir: edge
 edge_fusion: true
-epochs: 20000
 length: 1000.0
-model_dir: 60s_20k_1000l_edgef_res_norm_gat
+model_dir: 60s_20k_1000l_edgef_res_norm_gat/10000
 n_sp_layer: 3
 n_tp_layer: 3
 norm: true
@@ -12,7 +9,6 @@ rain_suffix: test_bpswmm_
 recurrent: Conv1D
 resnet: true
 result_dir: 60s_20k_1000l_edgef_res_norm_gat
-save_gap: 5000
 seq_in: 60
 seq_out: 60
 test: true
