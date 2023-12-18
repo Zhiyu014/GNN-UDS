@@ -52,7 +52,8 @@ class env_base(environment):
         self._advance_seconds = None
         self.log = self.ini_log(self.sim._model.curSimTime)
         self.sec_per_day = 3600.0 * 24.0
-                             
+        self.flow_unit = self.sim._model.getSimUnit(tkai.SimulationUnits.FlowUnits.value)  # unit must be LPS or CMS
+        
         # for state and performance
         self.methods.update({
             'invertelev':self._getNodeinvertElev,
@@ -253,7 +254,10 @@ class env_base(environment):
         return self.sim._model.getNodeResult(ID,tkai.NodeResults.outflow.value)
         
     def _getNodeCumOutflow(self,ID):
-        return sum(self._get_step_value('totaloutflow_vol',ID))
+        if self.flow_unit == 'LPS':
+            return sum(self._get_step_value('totaloutflow_vol',ID))/1e3
+        else:
+            return sum(self._get_step_value('totaloutflow_vol',ID))
     
     def _getNodeLateralInflow(self,ID):
         # Lateral inflow rate
@@ -277,7 +281,10 @@ class env_base(environment):
         return self.sim._model.getLinkResult(ID,tkai.LinkResults.newFlow.value)
     
     def _getLinkCumFlow(self,ID):
-        return sum(self._get_step_value('flow_vol',ID))
+        if self.flow_unit == 'LPS':
+            return sum(self._get_step_value('flow_vol',ID))/1e3
+        else:
+            return sum(self._get_step_value('flow_vol',ID))
 
 
     def _getGageRainfall(self,ID):

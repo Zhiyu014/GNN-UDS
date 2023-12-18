@@ -20,6 +20,7 @@ def parser(config=None):
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
+    parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
 
     # simulate args
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
@@ -64,6 +65,7 @@ def parser(config=None):
     # test args
     parser.add_argument('--test',action="store_true",help='if test the emulator')
     parser.add_argument('--result_dir',type=str,default='./results/',help='the test results')
+    parser.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
 
     args = parser.parse_args()
     if config is not None:
@@ -151,6 +153,8 @@ if __name__ == "__main__":
             rain_arg['rainfall_events'] = args.rain_dir
         if 'rain_suffix' in config:
             rain_arg['suffix'] = args.rain_suffix
+        if 'rain_num' in config:
+            rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg)
         dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act)
         dG.save(args.data_dir)
@@ -194,6 +198,8 @@ if __name__ == "__main__":
             rain_arg['rainfall_events'] = args.rain_dir
         if 'rain_suffix' in config:
             rain_arg['suffix'] = args.rain_suffix
+        if 'rain_num' in config:
+            rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg)
         for event in events:
             name = os.path.basename(event).strip('.inp')
@@ -207,7 +213,7 @@ if __name__ == "__main__":
             else:
                 t0 = time.time()
                 pre_step = rain_arg.get('pre_time',0) // args.interval
-                res = dG.simulate(event,act=args.act,hotstart=False)
+                res = dG.simulate(event,act=args.act,hotstart=args.seq_out*args.hotstart)
                 states,perfs,settings = [r[pre_step:] if r is not None else None for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)

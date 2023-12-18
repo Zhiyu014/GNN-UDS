@@ -82,12 +82,13 @@ class chaohu(basescenario):
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cuminflow']
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.env.config['global_state'][0][-1] == 'head':
-            energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * q[...,links.index(idx)]/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         else:
-            energy = [(np.abs(self.hmin[self.pumps[idx][0]]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[self.pumps[idx][1]]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * q[...,links.index(idx)]/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [(np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         return flood + sum(penal) + sum(outflow) + sum(energy)
+        # return np.array([flood] + penal + outflow + energy).T
     
     def objective_pred_tf(self,preds,state):
         import tensorflow as tf
@@ -101,10 +102,10 @@ class chaohu(basescenario):
                    for idx,attr,weight in self.config['performance_targets'] if attr == 'cuminflow']
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.env.config['global_state'][0][-1] == 'head':
-            energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * q[...,links.index(idx)]/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         else:
-            energy = [tf.reduce_sum((tf.abs(self.hmin[self.pumps[idx][0]]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[self.pumps[idx][1]]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * q[...,links.index(idx)]/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [tf.reduce_sum((tf.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(energy,axis=0)
 

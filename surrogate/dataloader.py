@@ -1,7 +1,8 @@
 import numpy as np
 import multiprocessing as mp
 import os
-from swmm_api import swmm5_run
+from swmm_api import swmm5_run,read_inp_file
+from datetime import timedelta
 
 class DataGenerator:
     def __init__(self,env,data_dir=None,args=None):
@@ -36,6 +37,11 @@ class DataGenerator:
         while not done:
             if hotstart:
                 eval_file = self.env.get_eval_file()
+                ct = self.env.env.methods['simulation_time']()
+                inp = read_inp_file(eval_file)
+                inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
+                inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
+                inp.write_file(eval_file)
                 _ = swmm5_run(eval_file)
             setting = self.env.controller(act,state,setting) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)

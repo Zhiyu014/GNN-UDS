@@ -422,6 +422,7 @@ class Emulator:
     
     def get_edge_action(self,a,g=False):
         act_edges = np.squeeze([np.where((self.edges==act_edge).all(1))[0] for act_edge in self.act_edges])
+        act_edges = list(set([i for e in act_edges for i in e]))
         if g:
             out = np.zeros(self.n_edge)
             out[act_edges] = range(1,a.shape[-1]+1)

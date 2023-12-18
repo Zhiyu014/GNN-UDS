@@ -47,6 +47,7 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
+    parser.add_argument('--enumerate',action='store_true',help='if enumerate all possible actions')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -265,7 +266,50 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     gc.collect()
 
     return ctrls.tolist(),vals
-    
+
+def run_enu(args,margs=None,eval_file=None,setting=None):
+    print('Running enumerate')
+    # Only feasible for small action space
+    if margs is not None:
+        prob = mpc_problem(args,margs=margs)
+    elif eval_file is not None:
+        prob = mpc_problem(args,eval_file=eval_file)
+    else:
+        raise AssertionError('No margs or file claimed')
+
+    sampling = np.array(list(prob.actions.keys()))
+    if hasattr(prob,'emul'):
+        objs = prob.pred_emu(sampling)
+    else:
+        pool = mp.Pool(prob.args.processes)
+        res = [pool.apply_async(func=prob.pred_simu,args=(xi,)) for xi in sampling]
+        pool.close()
+        pool.join()
+        F = [r.get() for r in res]
+        objs = np.array(F)
+
+    print("Best solution found: %s" % sampling[np.argmin(objs)])
+    print("Function value: %s" % objs.min())
+
+    # Multiple solutions with the same performance
+    # Choose the minimum changing
+    # if res.X.ndim == 2:
+    #     X = res.X[:,:prob.n_pump]
+    #     chan = (X-np.array(settings)).sum(axis=1)
+    #     ctrls = res.X[chan.argmin()]
+    # else:
+    ctrls = sampling[np.argmin(objs)]
+    ctrls = ctrls.reshape((prob.n_step,prob.n_act))
+    # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+    ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
+
+    if margs is not None:
+        del prob.emul
+    del prob
+    gc.collect()
+
+    return ctrls.tolist(),None
+
 class mpc_problem_gr:
     def __init__(self,args,margs):
         self.args = args

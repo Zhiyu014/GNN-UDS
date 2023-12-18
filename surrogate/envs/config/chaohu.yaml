@@ -224,6 +224,9 @@ rainfall:
       - 0.3
       - 0.8
 
+# if time-variant outlet boundary
+tide: False
+
 # Model predictive control parameters
 prediction:
   control_horizon: 60  # Control horizon (min)

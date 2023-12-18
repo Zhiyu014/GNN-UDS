@@ -6,6 +6,7 @@ shunqing:
   order: 1
   rain_dir: ./envs/config/
   rain_suffix: bpswmm
+  rain_num: 119
 
   # simulate args
   simulate: False
@@ -50,6 +51,7 @@ shunqing:
   # test args
   test: False
   result_dir: ./results/shunqing/
+  hotstart: False
 
 RedChicoSur:
   # env args
@@ -59,6 +61,7 @@ RedChicoSur:
   order: 1
   rain_dir: ./envs/config/
   rain_suffix:
+  rain_num: 1
 
   # simulate args
   simulate: False
@@ -103,8 +106,7 @@ RedChicoSur:
   # test args
   test: False
   result_dir: ./results/RedChicoSur/
-  rain_dir: ./envs/config/
-  rain_suffix:
+  hotstart: False
 
 astlingen:
   # env args
@@ -114,6 +116,7 @@ astlingen:
   order: 1
   rain_dir: ./envs/config/
   rain_suffix:
+  rain_num: 50
 
   # simulate args
   simulate: False
@@ -158,6 +161,7 @@ astlingen:
   # test args
   test: False
   result_dir: ./results/astlingen/
+  hotstart: False
 
   # MPC args
   control_interval: 5
@@ -178,6 +182,7 @@ astlingen:
   continuous: False
   surrogate: False
   gradient: False
+  enumerate: False
 
 hague:
   # env args
@@ -187,6 +192,7 @@ hague:
   order: 1
   rain_dir: ./envs/config/
   rain_suffix:
+  rain_num: 50
 
   # simulate args
   simulate: False
@@ -232,6 +238,7 @@ hague:
   # test args
   test: False
   result_dir: ./results/hague/
+  hotstart: False
 
   # MPC args
   control_interval: 30
@@ -252,6 +259,7 @@ hague:
   continuous: False
   surrogate: False
   gradient: False
+  enumerate: False
 
 chaohu:
   # env args
@@ -261,6 +269,7 @@ chaohu:
   order: 1
   rain_dir: ./envs/config/
   rain_suffix: chaohu
+  rain_num: 50
 
   # simulate args
   simulate: False
@@ -305,6 +314,7 @@ chaohu:
   # test args
   test: False
   result_dir: ./results/chaohu/
+  hotstart: False
 
   # MPC args
   control_interval: 5
@@ -325,3 +335,4 @@ chaohu:
   continuous: False
   surrogate: False
   gradient: False
+  enumerate: True
