@@ -297,12 +297,14 @@ class basescenario(scenario):
 
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
+        args['nwei'] = np.array([self.config['loss_weight'].get(node,1.0) if self.config.get('loss_weight') is not None else 1.0 for node in nodes])
 
         if self.global_state:
             args['edges'] = self.get_edge_list()
             links = self.get_features('links')
             inp = read_inp_file(self.config['swmm_input'])
             args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 if link in inp.XSECTIONS else 0 for link in links])
+            args['ewei'] = np.array([self.config['loss_weight'].get(link,1.0) if self.config.get('loss_weight') is not None else 1.0 for link in links])
 
             args['adj'] = self.get_adj(directed,length,order)
             args['edge_adj'] = self.get_edge_adj(directed,length,order)

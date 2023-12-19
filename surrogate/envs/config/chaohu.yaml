@@ -37,6 +37,18 @@ global_state:
     - links
     - setting
 
+# Key elements in loss function
+loss_weight:
+  CC-S1: 5.0
+  CC-S2: 5.0
+  CC-R1: 5.0
+  CC-R2: 5.0
+  JK-S: 5.0
+  JK-R1: 5.0
+  JK-R2: 5.0
+  CC-storage: 5.0
+  JK-storage: 5.0
+
 # Action space
 action_space:
   CC-S1:

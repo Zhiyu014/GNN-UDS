@@ -87,6 +87,7 @@ class Emulator:
             self.e_out = self.e_in - 1 # exclude setting
             self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
             self.ehmax = getattr(args,"ehmax",np.array([0.5 for _ in range(self.n_edge)]))
+            self.ewei = getattr(args,"ewei",np.array([1.0 for _ in range(self.n_edge)]))
             if self.edge_fusion:
                 self.n_out -= 2 # exclude q_in, q_out
                 self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
@@ -99,6 +100,7 @@ class Emulator:
         self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
         self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
         self.area = getattr(args,"area",np.array([0.0 for _ in range(self.n_node)]))
+        self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
@@ -556,17 +558,17 @@ class Emulator:
                 y = concat([y[...,:1] * wei,y[...,1:]],axis=-1)
             preds = tf.clip_by_value(preds,0,1) # avoid large loss value
             if self.balance:
-                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1))
+                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1),sample_weight=self.nwei)
             else:
-                loss = self.mse(y[...,:3],preds[...,:3])
+                loss = self.mse(y[...,:3],preds[...,:3],sample_weight=self.nwei)
             if not fit:
                 loss = [loss]
             if self.if_flood and not self.balance:
-                loss += self.bce(y[...,-2:-1],preds[...,-1:]) if fit else [self.bce(y[...,-2:-1],preds[...,-1:])]
+                loss += self.bce(y[...,-2:-1],preds[...,-1:],sample_weight=self.nwei) if fit else [self.bce(y[...,-2:-1],preds[...,-1:],sample_weight=self.nwei)]
                 # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
             if self.use_edge:
                 # edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
-                loss += self.mse(edge_preds,ey) if fit else [self.mse(edge_preds,ey)]
+                loss += self.mse(edge_preds,ey,sample_weight=self.ewei) if fit else [self.mse(edge_preds,ey,sample_weight=self.ewei)]
         if fit:
             grads = tape.gradient(loss, self.model.trainable_variables)
             self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))

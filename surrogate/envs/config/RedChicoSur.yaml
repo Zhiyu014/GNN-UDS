@@ -35,6 +35,9 @@ global_state:
     - links
     - setting
 
+# Key elements in loss function
+loss_weight:
+
 action_space:
   G6: &id001 !!python/tuple
   - 0

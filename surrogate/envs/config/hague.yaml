@@ -37,6 +37,9 @@ global_state:
     - links
     - setting
 
+# Key elements in loss function
+loss_weight:
+
 # Action space
 action_space:
   R1:
