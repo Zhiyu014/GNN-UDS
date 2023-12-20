@@ -110,7 +110,7 @@ def pred_simu(y,file,args,r=None):
         # perf.append(env.flood())
         idx += 1
     # return np.array(perf)
-    return env.objective(idx).sum()
+    return env.objective(idx)
 
 class mpc_problem(Problem):
     def __init__(self,args,eval_file=None,margs=None):
@@ -181,7 +181,7 @@ class mpc_problem(Problem):
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         # env = get_env(self.args.env)(initialize=False)
-        return self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state)
+        return self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state).sum(axis=-1)
 
         
     def _evaluate(self,x,out,*args,**kwargs):        

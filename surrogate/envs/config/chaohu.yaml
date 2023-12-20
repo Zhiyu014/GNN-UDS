@@ -48,6 +48,10 @@ loss_weight:
   JK-R2: 5.0
   CC-storage: 5.0
   JK-storage: 5.0
+  CC-1: 5.0
+  CC-2: 5.0
+  JK-1: 5.0
+  JK-2: 5.0
 
 # Action space
 action_space:

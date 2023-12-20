@@ -87,10 +87,11 @@ class Emulator:
             self.e_out = self.e_in - 1 # exclude setting
             self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
             self.ehmax = getattr(args,"ehmax",np.array([0.5 for _ in range(self.n_edge)]))
+            self.pump = getattr(args,"pump",np.array([0.0 for _ in range(self.n_edge)]))
             self.ewei = getattr(args,"ewei",np.array([1.0 for _ in range(self.n_edge)]))
+            self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
             if self.edge_fusion:
                 self.n_out -= 2 # exclude q_in, q_out
-                self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
                 self.node_index = tf.convert_to_tensor(getattr(args,"node_index"),dtype=tf.int32)
                 self.edge_index = tf.convert_to_tensor(getattr(args,"edge_index"),dtype=tf.int32)
         self.adj = getattr(args,"adj",np.eye(self.n_node))
@@ -101,6 +102,8 @@ class Emulator:
         self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
         self.area = getattr(args,"area",np.array([0.0 for _ in range(self.n_node)]))
         self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
+        self.pump_in = getattr(args,"pump_in",np.array([0.0 for _ in range(self.n_node)]))
+        self.pump_out = getattr(args,"pump_out",np.array([0.0 for _ in range(self.n_node)]))        
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
@@ -423,7 +426,7 @@ class Emulator:
         return a_out,a_in
     
     def get_edge_action(self,a,g=False):
-        act_edges = np.squeeze([np.where((self.edges==act_edge).all(1))[0] for act_edge in self.act_edges])
+        act_edges = [np.where((self.edges==act_edge).all(1))[0] for act_edge in self.act_edges]
         act_edges = list(set([i for e in act_edges for i in e]))
         if g:
             out = np.zeros(self.n_edge)
@@ -516,9 +519,21 @@ class Emulator:
 
                 if self.act:
                     if self.use_edge:
-                        edge_preds = concat([edge_preds[...,:-1],tf.multiply(edge_preds[...,-1:],ae)],axis=-1)
+                        h,flow = preds[...,0],edge_preds[...,-1]
+                        # regulate pumping flow (rated value if there is volume in inlet tank)
+                        fl = self.pump*tf.matmul(tf.cast((h*self.area)>0,tf.float32),tf.clip_by_value(self.node_edge,0,1))/self.norm_e[0,:,2]
+                        flow = tf.expand_dims(flow * tf.cast(fl==0,tf.float32) + fl,axis=-1)
+                        # regulate flow with setting
+                        edge_preds = concat([edge_preds[...,:-1],tf.multiply(flow,ae)],axis=-1)
                     if not self.edge_fusion:
-                        preds = concat([tf.stack([preds[...,0],tf.multiply(preds[...,1],a_in),tf.multiply(preds[...,2],a_out)],axis=-1),preds[...,3:]],axis=-1)
+                        h,inflow,outflow = preds[...,0],preds[...,1],preds[...,2]
+                        # regulate pumping flow (rated value if there is volume in inlet tank)
+                        fli = self.pump_in * tf.cast((h*self.area)>0,tf.float32)/self.norm_y[0,:,1:2]
+                        inflow = inflow * tf.cast(fli==0,tf.float32) + fli
+                        flo = self.pump_out * tf.cast((h*self.area)>0,tf.float32)/self.norm_y[0,:,2:3]
+                        outflow = outflow * tf.cast(flo==0,tf.float32) + flo
+                        # regulate flow with setting
+                        preds = concat([tf.stack([h,tf.multiply(inflow,a_in),tf.multiply(outflow,a_out)],axis=-1),preds[...,3:]],axis=-1)
 
                 if self.use_edge and self.edge_fusion:
                     edge_flow = self.normalize(edge_preds,'e',True)[...,-1:] if self.norm else edge_preds[...,-1:]
@@ -760,8 +775,17 @@ class Emulator:
                 y = squeeze(y,0).numpy()
                 if self.act:
                     if self.use_edge:
-                        ey[...,-1:] *= ae[idx]
+                        # regulate pumping flow (rated value if there is volume in inlet tank)
+                        fl = self.pump*np.matmul((y[...,0]*self.area>0),np.clip(self.node_edge,0,1))/self.norm_e[0,:,2]
+                        ey[...,-1] = ey[...,-1] * (fl==0) + fl
+                        ey[...,-1:] *= ae[idx] # regulate flow with setting
                     if not self.edge_fusion:
+                        # regulate pumping flow (rated value if there is volume in inlet tank)
+                        fli = self.pump_in * (y[...,0]*self.area>0)/self.norm_y[0,:,1:2]
+                        y[...,1] = y[...,1]*(fli==0) + fli
+                        flo = self.pump_out * (y[...,0]*self.area>0)/self.norm_y[0,:,2:3]
+                        y[...,2] = y[...,2]*(flo==0) + flo
+                        # regulate flow with setting
                         y[...,2] *= a_out[idx,...]
                         y[...,1] *= a_in[idx,...]
 
@@ -820,8 +844,17 @@ class Emulator:
         y = y.numpy()
         if self.act:
             if self.use_edge:
+                # regulate pumping flow (rated value if there is volume in inlet tank)
+                fl = self.pump*np.matmul((y[...,0]*self.area>0),np.clip(self.node_edge,0,1))/self.norm_e[0,:,2]
+                ey[...,-1] = ey[...,-1] * (fl==0) + fl
                 ey[...,-1:] *= ae
             if not self.edge_fusion:
+                # regulate pumping flow (rated value if there is volume in inlet tank)
+                fli = self.pump_in * (y[...,0]*self.area>0)/self.norm_y[0,:,1:2]
+                y[...,1] = y[...,1]*(fli==0) + fli
+                flo = self.pump_out * (y[...,0]*self.area>0)/self.norm_y[0,:,2:3]
+                y[...,2] = y[...,2]*(flo==0) + flo
+                # regulate flow with setting
                 y[...,2] *= a_out
                 y[...,1] *= a_in
         if self.use_edge and self.edge_fusion:
@@ -868,9 +901,19 @@ class Emulator:
             ey = tf.concat([tf.expand_dims(tf.clip_by_value(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
         if self.act:
             if self.use_edge:
-                ey = concat([ey[...,:-1],tf.multiply(ey[...,-1:],ae)],axis=-1)
+                # regulate pumping flow (rated value if there is volume in inlet tank)
+                fl = self.pump*tf.matmul(tf.cast((y[...,0]*self.area)>0,tf.float32),tf.clip_by_value(self.node_edge,0,1))/self.norm_e[0,:,2]
+                flow = tf.expand_dims(ey[...,-1] * tf.cast(fl==0,tf.float32) + fl,axis=-1)
+                # regulate flow with setting
+                ey = concat([ey[...,:-1],tf.multiply(flow,ae)],axis=-1)
             if not self.edge_fusion:
-                y = concat([tf.stack([y[...,0],tf.multiply(y[...,1],a_in),tf.multiply(y[...,2],a_out)],axis=-1),y[...,3:]],axis=-1)
+                # regulate pumping flow (rated value if there is volume in inlet tank)
+                fli = self.pump_in * tf.cast((y[...,0]*self.area)>0,tf.float32)/self.norm_y[0,:,1:2]
+                inflow = y[...,1] * tf.cast(fli==0,tf.float32) + fli
+                flo = self.pump_out * tf.cast((y[...,0]*self.area)>0,tf.float32)/self.norm_y[0,:,2:3]
+                outflow = y[...,2] * tf.cast(flo==0,tf.float32) + flo
+                # regulate flow with setting
+                y = concat([tf.stack([y[...,0],tf.multiply(inflow,a_in),tf.multiply(outflow,a_out)],axis=-1),y[...,3:]],axis=-1)
 
         if self.use_edge and self.edge_fusion:
             node_outflow = tf.matmul(tf.clip_by_value(self.node_edge,0,1),tf.clip_by_value(ey[...,-1:],0,np.inf)) + tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),-tf.clip_by_value(ey[...,-1:],-np.inf,0))

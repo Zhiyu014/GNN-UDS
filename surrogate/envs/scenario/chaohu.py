@@ -2,7 +2,7 @@ from .base import basescenario
 import os
 import numpy as np
 from swmm_api import read_inp_file
-from swmm_api.input_file.section_lists import NODE_SECTIONS
+from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import networkx as nx
 from itertools import combinations,groupby,product
 HERE = os.path.dirname(__file__)
@@ -54,8 +54,10 @@ class chaohu(basescenario):
         
     # TODO
     def objective(self, seq = False):
-        __object = np.zeros(seq) if seq else 0.0
-        __object += self.flood(seq).squeeze().sum(axis=-1)
+        # __object = np.zeros(seq) if seq else 0.0
+        # __object += self.flood(seq).squeeze().sum(axis=-1)
+        __object = []
+        __object += [self.flood(seq).squeeze().sum(axis=-1)]
         perfs = self.performance(seq)
         # _is_raining = False
         for i,(ID,attr,target) in enumerate(self.config['performance_targets']):
@@ -65,10 +67,13 @@ class chaohu(basescenario):
             # if attr == 'depthN':
             #     __object -= __value/self.hmax[i] * target if _is_raining else (1-__value/self.hmax[i]) * target
             if attr == 'cumflooding' and ID.endswith('storage'):
-                __object += (__value>0) * target
+                # __object += (__value>0) * target
+                __object += [(__value>0) * target]
             else:
-                __object += __value * target
-        return __object
+                # __object += __value * target
+                __object += [__value * target]
+        # return __object
+        return np.array(__object).sum(axis=-1)
      
      
     def objective_pred(self,preds,state):
@@ -87,8 +92,8 @@ class chaohu(basescenario):
         else:
             energy = [(np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
-        return flood + sum(penal) + sum(outflow) + sum(energy)
-        # return np.array([flood] + penal + outflow + energy).T
+        # return flood + sum(penal) + sum(outflow) + sum(energy)
+        return np.array([flood] + penal + outflow + energy).T
     
     def objective_pred_tf(self,preds,state):
         import tensorflow as tf
@@ -121,8 +126,12 @@ class chaohu(basescenario):
         args = super().get_args(directed,length,order)
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([node.Curve[0] if sec == 'STORAGE' else 0.0
-                                  for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
+        args['area'] = np.array([inp['CURVES'][node.Curve].points[0][1] if sec == 'STORAGE' else 0.0
+                                  for sec in NODE_SECTIONS if sec in inp for node in getattr(inp,sec,dict()).values()])
+        args['pump'] = np.array([inp['CURVES'][link.Curve].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
+                                  for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])
+        args['pump_in'] = (-np.clip(args['node_edge'],-1,0)*args['pump']).sum(axis=1)
+        args['pump_out'] = (np.clip(args['node_edge'],0,1)*args['pump']).sum(axis=1)
 
         if self.global_state:
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))

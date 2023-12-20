@@ -43,20 +43,25 @@ class hague(basescenario):
         
     # TODO
     def objective(self, seq = False):
-        __object = np.zeros(seq) if seq else 0.0
-        __object += self.flood(seq).squeeze().sum(axis=-1)
+        # __object = np.zeros(seq) if seq else 0.0
+        # __object += self.flood(seq).squeeze().sum(axis=-1)
+        __object = []
+        __object += [self.flood(seq).squeeze().sum(axis=-1)]
         perfs = self.performance(seq)
         for i,(_,attr,target) in enumerate(self.config['performance_targets']):
             if attr == 'depthN':
                 if type(target) is str:
                     target,weight = eval(target.split(',')[0]),eval(target.split(',')[1])
-                    __object += (perfs[:,i]>target)*weight if seq else (perfs[i]>target)*weight
+                    # __object += (perfs[:,i]>target)*weight if seq else (perfs[i]>target)*weight
+                    __object += [(perfs[:,i]>target)*weight if seq else (perfs[i]>target)*weight]
                 else:
-                    __object += np.abs(perfs[:,i] - target if seq else perfs[i] - target)
+                    # __object += np.abs(perfs[:,i] - target if seq else perfs[i] - target)
+                    __object += [np.abs(perfs[:,i] - target if seq else perfs[i] - target)]
             else:
-                __object += perfs[:,i] * target if seq else perfs[i] * target
-        return __object
-     
+                # __object += perfs[:,i] * target if seq else perfs[i] * target
+                __object += [perfs[:,i] * target if seq else perfs[i] * target]
+        # return __object
+        return np.array(__object).sum(axis=-1)
      
     def objective_pred(self,preds,state):
         preds,_ = preds
@@ -69,7 +74,8 @@ class hague(basescenario):
         exced = [eval(target.split(',')[1])*(h[...,self.elements['nodes'].index(idx)]>eval(target.split(',')[0])).sum(axis=1)
                 for idx,attr,target in self.config['performance_targets']
                 if attr == 'depthN' and type(target) is str]
-        return q_w.sum(axis=-1).sum(axis=-1) + sum(flood) + sum(depth) + sum(exced)
+        # return q_w.sum(axis=-1).sum(axis=-1) + sum(flood) + sum(depth) + sum(exced)
+        return np.array([q_w.sum(axis=-1).sum(axis=-1)] + flood + depth + exced).T
     
     def objective_pred_tf(self,preds,state):
         import tensorflow as tf

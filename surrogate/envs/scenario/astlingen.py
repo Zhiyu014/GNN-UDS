@@ -41,15 +41,19 @@ class astlingen(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
         
     def objective(self, seq = False):
-        __object = np.zeros(seq) if seq else 0.0
+        # __object = np.zeros(seq) if seq else 0.0
+        __object = []
         perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
         for i,(idx,attr,weight) in enumerate(self.config['performance_targets']):
             if attr == 'cuminflow' and idx != 'Out_to_WWTP':
-                __object += np.abs(np.diff(perfs[:,i],axis=0)) * weight
+                # __object += np.abs(np.diff(perfs[:,i],axis=0)) * weight
+                __object += [np.abs(np.diff(perfs[:,i],axis=0)) * weight]
             else:
-                __object += perfs[1:,i] * weight
-        return __object
-     
+                # __object += perfs[1:,i] * weight
+                __object += [perfs[1:,i] * weight]
+        # return __object
+        return np.array(__object).sum(axis=-1)
+         
     def reward(self,norm=False):
         # Calculate the target error in the recent step based on cumulative values
         __reward = 0.0
@@ -95,7 +99,8 @@ class astlingen(basescenario):
         outflow = [q_in[:,1:,self.elements['nodes'].index(idx)].sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        return sum(flood) + sum(inflow) + sum(outflow)
+        # return sum(flood) + sum(inflow) + sum(outflow)
+        return np.array(flood + outflow + inflow).T
     
     def objective_pred_tf(self,preds,state):
         import tensorflow as tf

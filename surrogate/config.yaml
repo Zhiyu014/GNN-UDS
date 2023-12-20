@@ -317,8 +317,8 @@ chaohu:
   hotstart: False
 
   # MPC args
-  control_interval: 5
-  setting_duration: 5
+  control_interval: 10
+  setting_duration: 10
   horizon: 60
   pop_size: 32
   use_current: False
