@@ -182,7 +182,8 @@ astlingen:
   continuous: False
   surrogate: False
   gradient: False
-  enumerate: False
+  stochastic: 0
+  error: 0.0
 
 hague:
   # env args
@@ -259,7 +260,8 @@ hague:
   continuous: False
   surrogate: False
   gradient: False
-  enumerate: False
+  stochastic: 0
+  error: 0.0
 
 chaohu:
   # env args
@@ -335,4 +337,5 @@ chaohu:
   continuous: False
   surrogate: False
   gradient: False
-  enumerate: True
+  stochastic: 0
+  error: 0.0

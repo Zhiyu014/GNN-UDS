@@ -86,7 +86,7 @@ class chaohu(basescenario):
         outflow = [q_in[...,nodes.index(idx)].sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cuminflow']
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
-        if self.env.config['global_state'][0][-1] == 'head':
+        if self.config['global_state'][0][-1] == 'head':
             energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         else:
@@ -106,7 +106,7 @@ class chaohu(basescenario):
         outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]) * weight
                    for idx,attr,weight in self.config['performance_targets'] if attr == 'cuminflow']
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
-        if self.env.config['global_state'][0][-1] == 'head':
+        if self.config['global_state'][0][-1] == 'head':
             energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumpumpenergy']
         else:

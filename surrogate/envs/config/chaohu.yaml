@@ -39,19 +39,19 @@ global_state:
 
 # Key elements in loss function
 loss_weight:
-  CC-S1: 5.0
-  CC-S2: 5.0
-  CC-R1: 5.0
-  CC-R2: 5.0
-  JK-S: 5.0
-  JK-R1: 5.0
-  JK-R2: 5.0
-  CC-storage: 5.0
-  JK-storage: 5.0
-  CC-1: 5.0
-  CC-2: 5.0
-  JK-1: 5.0
-  JK-2: 5.0
+  # CC-S1: 5.0
+  # CC-S2: 5.0
+  # CC-R1: 5.0
+  # CC-R2: 5.0
+  # JK-S: 5.0
+  # JK-R1: 5.0
+  # JK-R2: 5.0
+  # CC-storage: 5.0
+  # JK-storage: 5.0
+  # CC-1: 5.0
+  # CC-2: 5.0
+  # JK-1: 5.0
+  # JK-2: 5.0
 
 # Action space
 action_space:
@@ -128,14 +128,14 @@ performance_targets:
   #   - cumflooding
   #   - 1
   # tank flooding penalty
-  - !!python/tuple
-    - "CC-storage"
-    - cumflooding
-    - 50
-  - !!python/tuple
-    - "JK-storage"
-    - cumflooding
-    - 50
+  # - !!python/tuple
+  #   - "CC-storage"
+  #   - cumflooding
+  #   - 50
+  # - !!python/tuple
+  #   - "JK-storage"
+  #   - cumflooding
+  #   - 50
   # CSOs
   - !!python/tuple
     - "CC-1"
@@ -247,7 +247,7 @@ tide: False
 prediction:
   control_horizon: 60  # Control horizon (min)
   eval_horizon: 60 # Evaluation horizon (min)
-  no_runoff: True # if excludes runoff module and use external data
+  no_runoff: False # if excludes runoff module and use external data
   hsf_dir: hsf # file path to save the hotstart file
   eval_dir: eval # file path to save the evaluation file
   suffix: mpc_eval_ # suffix of the evaluation file

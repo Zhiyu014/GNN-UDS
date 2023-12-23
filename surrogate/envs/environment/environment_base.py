@@ -299,9 +299,10 @@ class env_base(environment):
     def _getPumpEnergy(self, ID):
         return self.sim._model.pump_statistics(ID)['energy_consumed']    
     
-    def save_hotstart(self,hsf_file):
+    def _save_hotstart(self,hsf_file):
         r"""
         Outputs a hotstart file and returns file path.
+        Runoff is not correct without proper api.
 
         Parameters:
         ----------
@@ -346,6 +347,10 @@ class env_base(environment):
                 x += (self._getLinkSetting(_linkid),)
                 f.write(pack('fff',*x))
         return hsf_file
+    
+    def save_hotstart(self,hsf_file):
+        # save hotstart file (updated in swmm-toolkit-0.15 & pyswmm-1.5)
+        self.sim._model.swmm_save_hotstart(hsf_file)
 
 
     # ------ For hotstart file  ----------------------------------------------

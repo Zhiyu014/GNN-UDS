@@ -333,7 +333,8 @@ class basescenario(scenario):
         inp = read_inp_file(self.config['swmm_input'])
         nodes = self.get_features('nodes')
         if links is not None:
-            links = [link for label in LINK_SECTIONS if label in inp for k,link in getattr(inp,label).items() if k in links]
+            lks = {k:link for label in LINK_SECTIONS if label in inp for k,link in getattr(inp,label).items() if k in links}
+            links = [lks[k] for k in links]
         else:
             links = [link for label in LINK_SECTIONS if label in inp for link in getattr(inp,label).values()]
         edges,lengths = [],[]
@@ -461,7 +462,8 @@ class basescenario(scenario):
             self.config['prediction']['hsf_dir'],hsf_file)
         if os.path.exists(os.path.dirname(hsf_file)) == False:
             os.mkdir(os.path.dirname(hsf_file))
-        return self.env.save_hotstart(hsf_file)
+        self.env.save_hotstart(hsf_file)
+        return hsf_file
 
     def create_eval_file(self,hsf_file=None,no_runoff=False):
         ct = self.env.methods['simulation_time']()

@@ -30,6 +30,7 @@ def parser(config=None):
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
+    parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
@@ -47,7 +48,9 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
-    parser.add_argument('--enumerate',action='store_true',help='if enumerate all possible actions')
+    # TODO: stochastic MPC for surrogate-based
+    parser.add_argument('--stochastic',type=int,default=0,help='number of stochastic scenarios')
+    parser.add_argument('--error',type=float,default=0.0,help='error range of stochastic scenarios')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -121,15 +124,16 @@ class mpc_problem(Problem):
             self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
             self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
-        self.n_act = len(args.action_space)
+            self.stochastic = getattr(args,"stochastic",False)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
         self.n_step = args.prediction['control_horizon']//args.setting_duration
         self.r_step = args.setting_duration//args.interval
-        self.n_var = self.n_act*self.n_step
         self.n_obj = 1
         self.env = get_env(args.env)(initialize=False)
         if args.act.startswith('conti'):
+            self.n_act = len(args.action_space)
+            self.n_var = self.n_act*self.n_step
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([min(v) for _ in range(self.n_step)
                                             for v in args.action_space.values()]),
@@ -137,7 +141,9 @@ class mpc_problem(Problem):
                                            for v in args.action_space.values()]),
                             vtype=float)
         else:
-            self.actions = args['action_table']
+            self.actions = args.action_table
+            self.n_act = np.array(list(self.actions)).shape[-1]
+            self.n_var = self.n_act*self.n_step
             # self.actions = [{i:v for i,v in enumerate(val)}
             #                 for val in args.action_space.values()]            
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
@@ -145,8 +151,9 @@ class mpc_problem(Problem):
                             # xu = np.array([len(v)-1 for _ in range(self.n_step)
                             #     for v in self.actions]),
                             xu = np.array([v for _ in range(self.n_step)
-                                for v in np.array(list(self.actions.keys()).max(axis=0))]),
+                                for v in np.array(list(self.actions.keys())).max(axis=0)]),
                             vtype=int)
+            # print(self.n_var,self.xu)
 
     def pred_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
@@ -171,17 +178,24 @@ class mpc_problem(Problem):
     
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))
+        pop_size = y.shape[0]
         # settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
         settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y)
         settings = np.repeat(settings,self.r_step,axis=1)
-        if settings.shape[1] < self.runoff.shape[0]:
+        if settings.shape[1] < self.eval_hrz // self.step:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-            settings = np.concatenate([settings,np.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
-        state,runoff = np.repeat(np.expand_dims(self.state,0),y.shape[0],axis=0),np.repeat(np.expand_dims(self.runoff,0),y.shape[0],axis=0)
-        edge_state = np.repeat(np.expand_dims(self.edge_state,0),y.shape[0],axis=0) if self.edge_state is not None else None
+            settings = np.concatenate([settings,np.repeat(settings[:,-1:,:],self.eval_hrz // self.step - settings.shape[1],axis=1)],axis=1)
+        if self.stochastic:
+            settings = np.repeat(settings,self.stochastic,axis=0)
+            runoff = np.tile(self.runoff,(pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)]))
+        else:
+            runoff = np.repeat(np.expand_dims(self.runoff,0),pop_size,axis=0)
+        state = np.repeat(np.expand_dims(self.state,0),settings.shape[0],axis=0)
+        edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         # env = get_env(self.args.env)(initialize=False)
-        return self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state).sum(axis=-1)
+        objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state).sum(axis=-1)
+        return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
 
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -242,9 +256,6 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
                    termination = termination,
                    callback=BestCallback(),
                    verbose = True)
-    print("Best solution found: %s" % res.X)
-    print("Function value: %s" % res.F)
-
     # Multiple solutions with the same performance
     # Choose the minimum changing
     # if res.X.ndim == 2:
@@ -257,6 +268,8 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     if not args.act.startswith('conti'):
         # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
         ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
+    print("Best solution found: %s" % ctrls.tolist())
+    print("Function value: %s" % res.F)
 
     vals = res.algorithm.callback.data["best"]
 
@@ -267,49 +280,6 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
 
     return ctrls.tolist(),vals
 
-def run_enu(args,margs=None,eval_file=None,setting=None):
-    print('Running enumerate')
-    # Only feasible for small action space
-    if margs is not None:
-        prob = mpc_problem(args,margs=margs)
-    elif eval_file is not None:
-        prob = mpc_problem(args,eval_file=eval_file)
-    else:
-        raise AssertionError('No margs or file claimed')
-
-    sampling = np.array(list(prob.actions.keys()))
-    if hasattr(prob,'emul'):
-        objs = prob.pred_emu(sampling)
-    else:
-        pool = mp.Pool(prob.args.processes)
-        res = [pool.apply_async(func=prob.pred_simu,args=(xi,)) for xi in sampling]
-        pool.close()
-        pool.join()
-        F = [r.get() for r in res]
-        objs = np.array(F)
-
-    print("Best solution found: %s" % sampling[np.argmin(objs)])
-    print("Function value: %s" % objs.min())
-
-    # Multiple solutions with the same performance
-    # Choose the minimum changing
-    # if res.X.ndim == 2:
-    #     X = res.X[:,:prob.n_pump]
-    #     chan = (X-np.array(settings)).sum(axis=1)
-    #     ctrls = res.X[chan.argmin()]
-    # else:
-    ctrls = sampling[np.argmin(objs)]
-    ctrls = ctrls.reshape((prob.n_step,prob.n_act))
-    # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
-    ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
-
-    if margs is not None:
-        del prob.emul
-    del prob
-    gc.collect()
-
-    return ctrls.tolist(),None
-
 class mpc_problem_gr:
     def __init__(self,args,margs):
         self.args = args
@@ -317,6 +287,7 @@ class mpc_problem_gr:
         self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
         self.emul.load(margs.model_dir)
         self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
+        self.stochastic = getattr(args,"stochastic",False)
         self.asp = list(args.action_space.values())
         self.n_act = len(self.asp)
         self.step = args.interval
@@ -337,19 +308,26 @@ class mpc_problem_gr:
     @tf.function
     def pred_fit(self):
         assert getattr(self,'y',None) is not None
-        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size,axis=0),tf.float32)
-        runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size,axis=0),tf.float32) if self.edge_state is not None else None
+        if self.stochastic:
+            runoff = tf.cast(tf.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)])),tf.float32)
+        else:
+            runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
+        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32) if self.edge_state is not None else None
         with tf.GradientTape() as tape:
             tape.watch(self.y)
             settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
             settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
-            if settings.shape[1] < self.runoff.shape[0]:
+            if settings.shape[1] < self.eval_hrz // self.step:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.runoff.shape[0]-settings.shape[1],axis=1)],axis=1)
+                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
+            if self.stochastic:
+                settings = tf.repeat(settings,self.stochastic,axis=0)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
             env = get_env(self.args.env)(initialize=False)
             obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],state)
+            if self.stochastic:
+                obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
         grads = tape.gradient(obj,self.y)
         self.optimizer.apply_gradients(zip([grads],[self.y])) # How to regulate y in (xl,xu)
         return obj,grads
@@ -430,6 +408,8 @@ if __name__ == '__main__':
         rain_arg['rainfall_events'] = args.rain_dir
     if 'rain_suffix' in config:
         rain_arg['suffix'] = args.rain_suffix
+    if 'rain_num' in config:
+        rain_arg['rain_num'] = args.rain_num
     events = get_inp_files(env.config['swmm_input'],rain_arg)
 
     if args.surrogate:
@@ -501,7 +481,13 @@ if __name__ == '__main__':
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     margs.state = state
                     t = env.env.methods['simulation_time']()
-                    margs.runoff = runoff[int(tss.asof(t)['Index'])]
+                    r = runoff[int(tss.asof(t)['Index'])]
+                    if args.stochastic:
+                        std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
+                        err = np.array([np.random.uniform(-std,std) for _ in range(args.stochastic)])
+                        margs.runoff = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
+                    else:
+                        margs.runoff = r
                     if margs.use_edge:
                         margs.edge_state = edge_state
                     if args.gradient:
