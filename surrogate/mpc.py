@@ -48,12 +48,16 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
-    # TODO: stochastic MPC for surrogate-based
-    parser.add_argument('--stochastic',type=int,default=0,help='number of stochastic scenarios')
-    parser.add_argument('--error',type=float,default=0.0,help='error range of stochastic scenarios')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
+
+    # Only used to keep the same condition to test internal model efficiency
+    parser.add_argument('--keep',type=str,default='False',help='if keep the default trajectory')
+    
+    # stochastic MPC for surrogate-based internal model
+    parser.add_argument('--stochastic',type=int,default=0,help='number of stochastic scenarios')
+    parser.add_argument('--error',type=float,default=0.0,help='error range of stochastic scenarios')
     args = parser.parse_args()
     if config is not None:
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
@@ -370,6 +374,7 @@ def run_gr(args,margs,setting=None):
         log += str(round(obj.numpy().min(),4)).center(15)+'|'
         log += str(round(rec[1],4)).center(15)
         print(log)
+    # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
     print('Best solution: ',ctrls)
     return ctrls,vals
 
@@ -468,7 +473,10 @@ if __name__ == '__main__':
         edge_state = env.state_full(typ='links',seq=margs.seq_in if args.surrogate else False)
         edge_states = [edge_state[-1] if args.surrogate else edge_state]
         
-        setting = [1 for _ in args.action_space]
+        # setting = [1 for _ in args.action_space]
+        setting = env.controller('default')
+        if args.keep != 'False':
+            setting = env.controller(args.keep,state,setting)
         settings = [setting]
         done,i,valss = False,0,[]
         while not done:
@@ -482,10 +490,13 @@ if __name__ == '__main__':
                     margs.state = state
                     t = env.env.methods['simulation_time']()
                     r = runoff[int(tss.asof(t)['Index'])]
-                    if args.stochastic:
+                    if args.error > 0:
                         std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
-                        err = np.array([np.random.uniform(-std,std) for _ in range(args.stochastic)])
-                        margs.runoff = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
+                        if args.stochastic:
+                            err = np.array([np.random.uniform(-std,std) for _ in range(args.stochastic)])
+                            margs.runoff = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
+                        else:
+                            margs.runoff = r + np.random.uniform(-std,std)
                     else:
                         margs.runoff = r
                     if margs.use_edge:
@@ -514,12 +525,9 @@ if __name__ == '__main__':
                 # setting = [env.controller(mode='bc')
                 #             for _ in range(args.prediction['control_horizon']//args.setting_duration)]
                 j = 0
-                done = env.step(setting[j])
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-                done = env.step(setting[j])
-            else:
-                done = env.step(setting[j])
+            done = env.step(setting[j]) if args.keep == 'False' else settings[0]
             state = env.state(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)

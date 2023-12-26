@@ -118,7 +118,7 @@ class hague(basescenario):
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
-        elif mode.lower() == 'off':
+        elif mode.lower() == 'off' or mode.lower() == 'default':
             return [table[0] for table in asp.values()]
         elif mode.lower() == 'half':
             return [table[1] for table in asp.values()]

@@ -153,7 +153,7 @@ class astlingen(basescenario):
                 args['action_table'] = self.get_action_table(act)
         return args
 
-    def controller(self,mode='rand',state=None,settimg=None):
+    def controller(self,mode='rand',state=None,setting=None):
         asp = self.config['action_space']
         asp3 = {k:[v[ac] for ac in ac3]
                  for (k,v),ac3 in zip(asp.items(),[[0,1,-1],[0,3,-1],[0,1,-1],[0,2,-1]])}
@@ -163,7 +163,7 @@ class astlingen(basescenario):
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
-        elif mode.lower() == 'bc':
+        elif mode.lower() == 'bc' or mode.lower() == 'default':
             return [table[1] for table in asp3.values()]
         elif mode.lower() == 'efd':
             state_idxs = {k:self.elements['nodes'].index(k.replace('V','T')) for k in asp}

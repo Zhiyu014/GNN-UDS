@@ -179,7 +179,7 @@ astlingen:
   termination:
     - n_eval
     - '256'
-  continuous: False
+  keep: 'False'
   surrogate: False
   gradient: False
   stochastic: 0
@@ -257,7 +257,7 @@ hague:
   termination:
     - n_eval
     - '256'
-  continuous: False
+  keep: 'False'
   surrogate: False
   gradient: False
   stochastic: 0
@@ -334,7 +334,7 @@ chaohu:
   termination:
     - n_eval
     - '256'
-  continuous: False
+  keep: 'False'
   surrogate: False
   gradient: False
   stochastic: 0

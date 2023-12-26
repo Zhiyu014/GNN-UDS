@@ -38,7 +38,7 @@ class RedChicoSur(basescenario):
         asp = self.config['action_space']
         if mode.lower() == 'rand':
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
-        elif mode.lower() == 'off':
+        elif mode.lower() == 'off' or mode.lower() == 'default':
             return [table[0] for table in asp.values()]
         elif mode.lower() == 'on':
             return [table[-1] for table in asp.values()]
