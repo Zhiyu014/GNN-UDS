@@ -17,6 +17,7 @@ from pymoo.operators.sampling.lhs import LatinHypercubeSampling,sampling_lhs
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
+from pymoo.termination.collection import TerminationCollection
 from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
@@ -247,7 +248,10 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
         sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
     crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
     mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
-    termination = get_termination(*args.termination)
+    if len(args.termination) > 2:
+        termination = TerminationCollection(*[get_termination(*args.termination[i*2:(i+1)*2]) for i in range(len(args.termination)//2)])
+    else:
+        termination = get_termination(*args.termination)
 
     method = GA(pop_size = args.pop_size,
                 sampling = sampling,
@@ -527,7 +531,7 @@ if __name__ == '__main__':
                 j = 0
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-            done = env.step(setting[j]) if args.keep == 'False' else settings[0]
+            done = env.step(setting[j]) if args.keep == 'False' else env.step(settings[0])
             state = env.state(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)

@@ -1,0 +1,10 @@
+act: conti
+keep: bc
+model_dir: 60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs
+pop_size: 8
+rain_dir: ast_test5_events.csv
+result_dir: 60s_ga_pop8_vals
+surrogate: true
+termination:
+- n_gen
+- 200
