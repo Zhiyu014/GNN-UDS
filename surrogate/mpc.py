@@ -23,6 +23,13 @@ from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
 HERE = os.path.dirname(__file__)
 
+class TerminationCollection(TerminationCollection):
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+
+    def _update(self, algorithm):
+        return max([termination.update(algorithm) for termination in self.terminations])
+
 def parser(config=None):
     parser = argparse.ArgumentParser(description='mpc')
     parser.add_argument('--env',type=str,default='astlingen',help='set drainage scenarios')
@@ -69,7 +76,8 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    args.termination[-1] = eval(args.termination[-1]) if args.termination[0] != 'time' else args.termination[-1]
+    for i in range(len(args.termination)//2):
+        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] != 'time' else args.termination[2*i+1]
 
     print('MPC configs: {}'.format(args))
     return args,config
@@ -205,14 +213,14 @@ class mpc_problem(Problem):
         
     def _evaluate(self,x,out,*args,**kwargs):        
         if hasattr(self,'emul'):
-            out['F'] = self.pred_emu(x)
+            out['F'] = self.pred_emu(x)+1e-6
         else:
             pool = mp.Pool(self.args.processes)
             res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
             pool.close()
             pool.join()
             F = [r.get() for r in res]
-            out['F'] = np.array(F)
+            out['F'] = np.array(F)+1e-6
 
 class BestCallback(Callback):
 
