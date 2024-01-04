@@ -7,3 +7,5 @@ surrogate: true
 termination:
 - n_gen
 - 200
+- fmin
+- 1.0e-05

@@ -4,10 +4,10 @@ import pandas as pd
 import os,time,gc
 import multiprocessing as mp
 import numpy as np
+from scipy.stats import truncnorm
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Softmax
+from tensorflow.keras.optimizers import Adam,SGD
 import argparse,yaml
 from envs import get_env
 from pymoo.optimize import minimize
@@ -56,6 +56,7 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
+    parser.add_argument('--cross_entropy',type=float,default=0,help=' if use cross-entropy method and the kept percentage')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -129,14 +130,12 @@ def pred_simu(y,file,args,r=None):
     return env.objective(idx)
 
 class mpc_problem(Problem):
-    def __init__(self,args,eval_file=None,margs=None):
+    def __init__(self,args,margs=None):
         self.args = args
-        self.file = eval_file
         if margs is not None:
             tf.keras.backend.clear_session()    # to clear backend occupied models
             self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
-            self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
             self.stochastic = getattr(args,"stochastic",False)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
@@ -167,6 +166,12 @@ class mpc_problem(Problem):
                                 for v in np.array(list(self.actions.keys())).max(axis=0)]),
                             vtype=int)
             # print(self.n_var,self.xu)
+    
+    def load_state(self,state,runoff,edge_state=None):
+        self.state,self.runoff,self.edge_state = state,runoff,edge_state
+    
+    def load_file(self,eval_file,runoff_rate=None):
+        self.file,self.runoff_rate = eval_file,runoff_rate
 
     def pred_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
@@ -180,7 +185,7 @@ class mpc_problem(Problem):
         # perf = 0
         while not done and idx < y.shape[0]:
             if self.args.prediction['no_runoff']:
-                for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
+                for node,ri in zip(env.elements['nodes'],self.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
@@ -209,7 +214,6 @@ class mpc_problem(Problem):
         # env = get_env(self.args.env)(initialize=False)
         objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
-
         
     def _evaluate(self,x,out,*args,**kwargs):        
         if hasattr(self,'emul'):
@@ -221,6 +225,17 @@ class mpc_problem(Problem):
             pool.join()
             F = [r.get() for r in res]
             out['F'] = np.array(F)+1e-6
+
+    def pred(self,x):
+        if hasattr(self,'emul'):
+            return self.pred_emu(x)+1e-6
+        else:
+            pool = mp.Pool(self.args.processes)
+            res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
+            pool.close()
+            pool.join()
+            F = [r.get() for r in res]
+            return np.array(F)+1e-6
 
 class BestCallback(Callback):
 
@@ -240,14 +255,14 @@ def initialize(x0,xl,xu,pop_size,prob,conti=False):
         population.append(xi)
     return np.array(population)
 
-def run_ea(args,margs=None,eval_file=None,setting=None):
-    print('Running ga')
-    if margs is not None:
-        prob = mpc_problem(args,margs=margs)
-    elif eval_file is not None:
-        prob = mpc_problem(args,eval_file=eval_file)
-    else:
-        raise AssertionError('No margs or file claimed')
+def run_ea(prob,args,setting=None):
+    print('Running genetic algorithm')
+    # if margs is not None:
+    #     prob = mpc_problem(args,margs=margs)
+    # elif eval_file is not None:
+    #     prob = mpc_problem(args,eval_file=eval_file)
+    # else:
+    #     raise AssertionError('No margs or file claimed')
 
     if args.use_current and setting is not None:
         setting *= prob.n_step
@@ -288,13 +303,68 @@ def run_ea(args,margs=None,eval_file=None,setting=None):
     print("Function value: %s" % res.F)
 
     vals = res.algorithm.callback.data["best"]
-
-    if margs is not None:
-        del prob.emul
-    del prob
-    gc.collect()
-
+    # if margs is not None:
+    #     del prob.emul
+    # del prob
+    # gc.collect()
     return ctrls.tolist(),vals
+
+# TODO: cross-entropy method
+def run_ce(prob,args,setting=None):
+    print('Running cross entropy')
+    def sample_conti(mu,sig,n=1):
+        return np.array([truncnorm.rvs((prob.xl-mu)/sig,(prob.xu-mu)/sig)*sig+mu for _ in range(n)])
+    def sample_disc(pr,n=1):
+        pr = [np.array(pri)/np.sum(pri) for pri in pr]
+        return np.array([np.random.choice(np.arange(pri.shape[0]),p=pri,size=n) for pri in pr]).T
+    
+    # Initialize
+    if args.act.startswith('conti'):
+        mu,sig = np.random.uniform(low=prob.xl,high=prob.xu,size=prob.n_var),np.random.uniform(low=0.001,size=prob.n_var)
+    else:
+        pr = [np.random.uniform(low=0.001,size=int(xui)+1) for xui in prob.xu]
+
+    def if_terminate(item,vm,rec):
+        if item == 'n_gen':
+            return rec[0] >= vm
+        elif item == 'obj':
+            return rec[1] <= vm  # TODO
+        elif item == 'time':
+            return rec[2] >= vm
+        
+    t0,rec,vals = time.time(),[0,1e6,time.time()],[]
+    print('=======================================================')
+    print(' n_gen |     f_avg     |     f_min     |     g_min     ')
+    print('=======================================================')
+    obj = np.random.uniform(size=(args.pop_size,))
+    while not if_terminate(*args.termination,rec):
+        x = sample_conti(mu,sig,args.pop_size) if args.act.startswith('conti') else sample_disc(pr,args.pop_size)
+        obj = prob.pred(x)
+        rec[0] += 1
+        if obj.min() < rec[1]:
+            ctrls = np.clip(x[obj.argmin()],prob.xl,prob.xu)
+            ctrls = ctrls.reshape((prob.n_step,prob.n_act))
+            if not args.act.startswith('conti'):
+                # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
+                ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
+            ctrls = ctrls.tolist()
+        # formulate a new distribution with minimal several individuals
+        x_new = x[obj.argsort()[:int(args.pop_size*args.cross_entropy)]]
+        if args.act.startswith('conti'):
+            mu,sig = x_new.mean(axis=0),x_new.std(axis=0)
+        else:
+            pr = [np.bincount(x_ni) for x_ni in x_new.T]
+        
+        rec[1],rec[2] = min(rec[1],obj.min()),time.time() - t0
+        vals.append(obj.min())
+        log = str(rec[0]).center(7)+'|'
+        log += str(round(obj.mean(),4)).center(15)+'|'
+        log += str(round(obj.min(),4)).center(15)+'|'
+        log += str(round(rec[1],4)).center(15)
+        print(log)
+    # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
+    print('Best solution: ',ctrls)
+    return ctrls,vals
 
 class mpc_problem_gr:
     def __init__(self,args,margs):
@@ -302,7 +372,7 @@ class mpc_problem_gr:
         tf.keras.backend.clear_session()    # to clear backend occupied models
         self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
         self.emul.load(margs.model_dir)
-        self.state,self.runoff,self.edge_state = margs.state,margs.runoff,getattr(margs,"edge_state",None)
+        # self.load_state(margs)
         self.stochastic = getattr(args,"stochastic",False)
         self.asp = list(args.action_space.values())
         self.n_act = len(self.asp)
@@ -318,8 +388,14 @@ class mpc_problem_gr:
         self.xu = np.array([max(v) for _ in range(self.n_step)
                             for v in self.asp])
         
+    def load_state(self,state,runoff,edge_state=None):
+        self.state,self.runoff,self.edge_state = state,runoff,edge_state
+
     def initialize(self,sampling):
-        self.y = tf.Variable(sampling)
+        if not hasattr(self,'y'):
+            self.y = tf.Variable(sampling)
+        else:
+            self.y.assign(sampling)
 
     @tf.function
     def pred_fit(self):
@@ -348,8 +424,9 @@ class mpc_problem_gr:
         self.optimizer.apply_gradients(zip([grads],[self.y])) # How to regulate y in (xl,xu)
         return obj,grads
 
-def run_gr(args,margs,setting=None):
-    prob = mpc_problem_gr(args,margs)
+def run_gr(prob,args,setting=None):
+    print('Running gradient inversion')
+    # prob = mpc_problem_gr(args,margs)
     if args.use_current and setting is not None:
         setting *= prob.n_step
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
@@ -359,7 +436,7 @@ def run_gr(args,margs,setting=None):
         if item == 'n_gen':
             return rec[0] >= vm
         elif item == 'obj':
-            return rec[1]   # TODO
+            return rec[1] <= vm # TODO
         elif item == 'grad':
             return rec[2] <= vm
         elif item == 'time':
@@ -490,6 +567,12 @@ if __name__ == '__main__':
         if args.keep != 'False':
             setting = env.controller(args.keep,state,setting)
         settings = [setting]
+
+        if args.surrogate and args.gradient:
+            prob = mpc_problem_gr(args,margs)
+        else:
+            prob = mpc_problem(args,margs=margs if args.surrogate else None)
+
         done,i,valss = False,0,[]
         while not done:
             if i*args.interval % args.control_interval == 0:
@@ -499,36 +582,36 @@ if __name__ == '__main__':
                         f = (flood>0).astype(float)
                         # f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                    margs.state = state
                     t = env.env.methods['simulation_time']()
                     r = runoff[int(tss.asof(t)['Index'])]
                     if args.error > 0:
                         std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
                         if args.stochastic:
                             err = np.array([np.random.uniform(-std,std) for _ in range(args.stochastic)])
-                            margs.runoff = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
+                            r = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
                         else:
-                            margs.runoff = r + np.random.uniform(-std,std)
-                    else:
-                        margs.runoff = r
-                    if margs.use_edge:
-                        margs.edge_state = edge_state
+                            r += np.random.uniform(-std,std)
+                    # margs.state = state
+                    # margs.runoff = r
+                    # if margs.use_edge:
+                        # margs.edge_state = edge_state
+                    prob.load_state(state,r,edge_state if margs.use_edge else None)
                     if args.gradient:
-                        setting,vals = run_gr(args,margs,setting)
+                        setting,vals = run_gr(prob,args,setting=setting)
+                    elif args.cross_entropy:
+                        setting,vals = run_ce(prob,args,setting=setting)
                     else:
-                        setting,vals = run_ea(args,margs,None,setting)
-                    # use multiprocessing in emulation to avoid memory accumulation
-                    # pool = ctx.Pool(1)
-                    # r = pool.apply_async(func=run_ea,args=(args,margs,None,setting,))
-                    # pool.close()
-                    # pool.join()
-                    # setting = r.get()
+                        setting,vals = run_ea(prob,args,setting=setting)
                 else:
                     eval_file = env.get_eval_file(args.prediction['no_runoff'])
                     if args.prediction['no_runoff']:
                         t = env.env.methods['simulation_time']()
-                        args.runoff_rate = runoff_rate[int(tss.asof(t)['Index']),...,0]
-                    setting,vals = run_ea(args,eval_file=eval_file,setting=setting)
+                        rr = runoff_rate[int(tss.asof(t)['Index']),...,0]
+                    prob.load_file(eval_file,rr if args.prediction['no_runoff'] else None)
+                    if args.cross_entropy:
+                        setting,vals = run_ce(prob,args,setting=setting)
+                    else:
+                        setting,vals = run_ea(prob,args,setting=setting)
                 valss.append(vals)
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
