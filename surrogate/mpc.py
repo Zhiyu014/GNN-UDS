@@ -8,6 +8,7 @@ from scipy.stats import truncnorm
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam,SGD
+from tensorflow_probability import distributions as tfd
 import argparse,yaml
 from envs import get_env
 from pymoo.optimize import minimize
@@ -334,7 +335,7 @@ def run_ce(prob,args,setting=None):
         
     t0,rec,vals = time.time(),[0,1e6,time.time()],[]
     print('=======================================================')
-    print(' n_gen |     f_avg     |     f_min     |     g_min     ')
+    print(' n_gen |     f_lam     |     f_min     |     g_min     ')
     print('=======================================================')
     obj = np.random.uniform(size=(args.pop_size,))
     while not if_terminate(*args.termination,rec):
@@ -348,14 +349,15 @@ def run_ce(prob,args,setting=None):
                 # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
                 ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
             ctrls = ctrls.tolist()
-        # formulate a new distribution with minimal several individuals
-        x_new = x[obj.argsort()[:int(args.pop_size*args.cross_entropy)]]
+        # formulate a new distribution with elites
+        rec[1] = min(obj.argsort()[int(args.pop_size*args.cross_entropy)],rec[1])
+        x_new = x[obj<=rec[1]]
         if args.act.startswith('conti'):
             mu,sig = x_new.mean(axis=0),x_new.std(axis=0)
         else:
             pr = [np.bincount(x_ni) for x_ni in x_new.T]
         
-        rec[1],rec[2] = min(rec[1],obj.min()),time.time() - t0
+        rec[2] = time.time() - t0
         vals.append(obj.min())
         log = str(rec[0]).center(7)+'|'
         log += str(round(obj.mean(),4)).center(15)+'|'
@@ -373,6 +375,7 @@ class mpc_problem_gr:
         self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
         self.emul.load(margs.model_dir)
         # self.load_state(margs)
+        self.cross_entropy = bool(getattr(args,"cross_entropy",False))
         self.stochastic = getattr(args,"stochastic",False)
         self.asp = list(args.action_space.values())
         self.n_act = len(self.asp)
@@ -396,10 +399,21 @@ class mpc_problem_gr:
             self.y = tf.Variable(sampling)
         else:
             self.y.assign(sampling)
+        self.train_vars = [self.y]
 
-    @tf.function
+    def initialize_distr(self,sampling):
+        if not hasattr(self,'distr'):
+            self.distr = tfd.TruncatedNormal(loc=tf.Variable(sampling[0,:]),scale=tf.Variable(sampling[1,:]),
+                                             low=self.xl,high=self.xu)
+        else:
+            self.distr.loc.assign(sampling[0,:])
+            self.distr.scale.assign(sampling[1,:])
+        self.train_vars = [self.distr.loc,self.distr.scale]
+
+    # TODO: distr.sample does not work in autograph
+    # @tf.function
     def pred_fit(self):
-        assert getattr(self,'y',None) is not None
+        # assert getattr(self,'y',None) is not None
         if self.stochastic:
             runoff = tf.cast(tf.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)])),tf.float32)
         else:
@@ -407,8 +421,18 @@ class mpc_problem_gr:
         state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
         edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32) if self.edge_state is not None else None
         with tf.GradientTape() as tape:
-            tape.watch(self.y)
-            settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
+            tape.watch(self.train_vars)
+            if self.cross_entropy:
+                # distr = tfd.TruncatedNormal(loc=tf.clip_by_value(self.train_vars[0],self.xl,self.xu),
+                #                             scale=tf.clip_by_value(self.train_vars[1],0,np.nan),
+                #                             low=self.xl,high=self.xu)
+                # self.x = distr.sample(self.pop_size)
+                self.train_vars[0].assign(tf.clip_by_value(self.train_vars[0],self.xl,self.xu))
+                self.train_vars[1].assign(tf.clip_by_value(self.train_vars[1],1e-3,np.inf))
+                self.x = self.distr.sample(self.pop_size)
+                settings = tf.reshape(tf.clip_by_value(self.x,self.xl,self.xu),(-1,self.n_step,self.n_act))
+            else:
+                settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
             settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
             if settings.shape[1] < self.eval_hrz // self.step:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -420,8 +444,10 @@ class mpc_problem_gr:
             obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],state)
             if self.stochastic:
                 obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
-        grads = tape.gradient(obj,self.y)
-        self.optimizer.apply_gradients(zip([grads],[self.y])) # How to regulate y in (xl,xu)
+            if self.cross_entropy:
+                obj = tf.reduce_mean(obj,axis=0)
+        grads = tape.gradient(obj,self.train_vars)
+        self.optimizer.apply_gradients(zip(grads,self.train_vars)) # How to regulate y in (xl,xu)
         return obj,grads
 
 def run_gr(prob,args,setting=None):
@@ -429,9 +455,9 @@ def run_gr(prob,args,setting=None):
     # prob = mpc_problem_gr(args,margs)
     if args.use_current and setting is not None:
         setting *= prob.n_step
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
+        sampling = initialize(setting,prob.xl,prob.xu,2 if args.cross_entropy else args.pop_size,args.sampling,conti=True)
     else:
-        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
+        sampling = sampling_lhs(2 if args.cross_entropy else args.pop_size,prob.n_var,prob.xl,prob.xu)
     def if_terminate(item,vm,rec):
         if item == 'n_gen':
             return rec[0] >= vm
@@ -446,19 +472,20 @@ def run_gr(prob,args,setting=None):
     print('=======================================================================')
     print(' n_gen |     grads     |     f_avg     |     f_min     |     g_min     ')
     print('=======================================================================')
-    prob.initialize(sampling)
+    prob.initialize_distr(sampling) if args.cross_entropy else prob.initialize(sampling)
     obj = tf.random.uniform((args.pop_size,))
     while not if_terminate(*args.termination,rec):
         obj,grads = prob.pred_fit()
         rec[0] += 1
         if obj.numpy().min() < rec[1]:
-            ctrls = np.clip(prob.y[obj.numpy().argmin()].numpy(),prob.xl,prob.xu)
+            ctrls = prob.distr.loc.numpy() if args.cross_entropy else prob.y[obj.numpy().argmin()].numpy()
+            ctrls = np.clip(ctrls,prob.xl,prob.xu)
             ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
-        rec[1],rec[2] = min(rec[1],obj.numpy().min()),grads.numpy().mean()
+        rec[1],rec[2] = min(rec[1],obj.numpy().min()),np.mean([grad.numpy().mean() for grad in grads])
         rec[3] = time.time() - t0
         vals.append(obj.numpy().min())
         log = str(rec[0]).center(7)+'|'
-        log += str(round(grads.numpy().mean(),4)).center(15)+'|'
+        log += str(round(rec[2],4)).center(15)+'|'
         log += str(round(obj.numpy().mean(),4)).center(15)+'|'
         log += str(round(obj.numpy().min(),4)).center(15)+'|'
         log += str(round(rec[1],4)).center(15)
@@ -528,7 +555,7 @@ if __name__ == '__main__':
         os.mkdir(args.result_dir)
     yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
 
-    results = pd.DataFrame(columns=['rr time','fl time','perf'])
+    results = pd.DataFrame(columns=['rr time','fl time','perf','objective'])
     item = 'emul' if args.surrogate else 'simu'
     # events = ['./envs/network/astlingen/astlingen_08_22_2007_21.inp']
     for event in events:
@@ -642,6 +669,6 @@ if __name__ == '__main__':
         np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.stack(edge_states))
         np.save(os.path.join(args.result_dir,name + '_%s_vals.npy'%item),np.array(valss))
 
-        results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum()]
+        results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum(),np.stack(objects).sum()]
     results.to_csv(os.path.join(args.result_dir,'results_%s.csv'%item))
 
