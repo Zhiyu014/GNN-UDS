@@ -46,8 +46,8 @@ loss_weight:
   # JK-S: 5.0
   # JK-R1: 5.0
   # JK-R2: 5.0
-  # CC-storage: 5.0
-  # JK-storage: 5.0
+  CC-storage: 5.0
+  JK-storage: 5.0
   # CC-1: 5.0
   # CC-2: 5.0
   # JK-1: 5.0

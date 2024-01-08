@@ -551,6 +551,20 @@ class Emulator:
                         # node_inflow = tf.clip_by_value(node_inflow,-10,10)
                     preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
             
+                # TODO: Pumped storage depth calculation: boundary condition differs from orifice
+                if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
+                    if self.use_edge:
+                        ps = tf.cast((self.area * tf.matmul(tf.clip_by_value(self.node_edge,0,1),self.pump))>0,tf.float32)
+                    else:
+                        ps = tf.cast(self.pump_out>0,tf.float32)
+                    preds_re_norm = self.normalize(preds,'y',True)
+                    h,qin,qout = [preds_re_norm[...,i] for i in [0,1,2]]
+                    de = tf.zeros_like(h)
+                    for t in range(de.shape[1]):
+                        de[:,t,:] = tf.clip_by_value(self.normalize(x,'x',True)[:,-1,:,0] if t==0 else de[:,t-1,:] +\
+                                                    (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)
+                    y = tf.concat([tf.expand_dims(h*(1-ps) + de * ps,axis=-1),y[...,1:]],axis=-1)
+                    
             # Loss funtion
             if self.balance:
                 if self.norm:
@@ -804,6 +818,20 @@ class Emulator:
 
                 if self.norm:
                     y = self.normalize(y,'y',True)
+
+                # TODO: Pumped storage depth calculation: boundary condition differs from orifice
+                if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
+                    if self.use_edge:
+                        ps = (self.area * np.matmul(np.clip(self.node_edge,0,1),self.pump))>0
+                    else:
+                        ps = self.pump_out>0
+                    h,qin,qout = [y[...,i] for i in [0,1,2]]
+                    de = np.zeros_like(h)
+                    for t in range(de.shape[0]):
+                        de[t,:] = np.clip(x[-1,:,0] if t==0 else de[t-1,:] +\
+                                            (qin-qout)[t,:]/(self.area+1e-6),self.hmin,self.hmax)
+                    y[...,0] = h*(1-ps) + de * ps
+
                 q_w,y = self.constrain(y,bi[...,:1],x[-1:,:,0])
                 # q_w = self.get_flood(y,bi)
             y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
@@ -873,6 +901,20 @@ class Emulator:
             y = np.concatenate([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
         if self.norm:
             y = self.normalize(y,'y',True)
+
+        # TODO: Pumped storage depth calculation: boundary condition differs from orifice
+        if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
+            if self.use_edge:
+                ps = (self.area * np.matmul(np.clip(self.node_edge,0,1),self.pump))>0
+            else:
+                ps = self.pump_out>0
+            h,qin,qout = [y[...,i] for i in [0,1,2]]
+            de = np.zeros_like(h)
+            for t in range(de.shape[1]):
+                de[:,t,:] = np.clip(x[:,-1,:,0] if t==0 else de[:,t-1,:] +\
+                                    (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)
+            y[...,0] = h*(1-ps) + de * ps
+
         q_w,y = self.constrain(y,b[...,:1],x[:,-1:,:,0])
         y = np.concatenate([y,np.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey if self.use_edge else y
@@ -933,6 +975,19 @@ class Emulator:
             y = tf.concat([y[...,:1],node_inflow,node_outflow,y[...,1:]],axis=-1)
         if self.norm:
             y = self.normalize(y,'y',True)
+
+        # TODO: Pumped storage depth calculation: boundary condition differs from orifice
+        if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
+            if self.use_edge:
+                ps = tf.cast((self.area * tf.matmul(tf.clip_by_value(self.node_edge,0,1),self.pump))>0,tf.float32)
+            else:
+                ps = tf.cast(self.pump_out>0,tf.float32)
+            h,qin,qout = [y[...,i] for i in [0,1,2]]
+            de = tf.zeros_like(h)
+            for t in range(de.shape[1]):
+                de[:,t,:] = tf.clip_by_value(x[:,-1,:,0] if t==0 else de[:,t-1,:] +\
+                                             (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)
+            y = tf.concat([tf.expand_dims(h*(1-ps) + de * ps,axis=-1),y[...,1:]],axis=-1)
         q_w,y = self.constrain_tf(y,b[...,:1],x[:,-1:,:,0])
         y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey if self.use_edge else y

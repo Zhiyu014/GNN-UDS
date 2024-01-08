@@ -429,10 +429,8 @@ class mpc_problem_gr:
                 # self.x = distr.sample(self.pop_size)
                 self.train_vars[0].assign(tf.clip_by_value(self.train_vars[0],self.xl,self.xu))
                 self.train_vars[1].assign(tf.clip_by_value(self.train_vars[1],1e-3,np.inf))
-                self.x = self.distr.sample(self.pop_size)
-                settings = tf.reshape(tf.clip_by_value(self.x,self.xl,self.xu),(-1,self.n_step,self.n_act))
-            else:
-                settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
+                self.y = self.distr.sample(self.pop_size)
+            settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
             settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
             if settings.shape[1] < self.eval_hrz // self.step:
                 # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -444,9 +442,8 @@ class mpc_problem_gr:
             obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],state)
             if self.stochastic:
                 obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
-            if self.cross_entropy:
-                obj = tf.reduce_mean(obj,axis=0)
-        grads = tape.gradient(obj,self.train_vars)
+            loss = tf.reduce_mean(obj,axis=0) if self.cross_entropy else obj
+        grads = tape.gradient(loss,self.train_vars)
         self.optimizer.apply_gradients(zip(grads,self.train_vars)) # How to regulate y in (xl,xu)
         return obj,grads
 
@@ -478,7 +475,7 @@ def run_gr(prob,args,setting=None):
         obj,grads = prob.pred_fit()
         rec[0] += 1
         if obj.numpy().min() < rec[1]:
-            ctrls = prob.distr.loc.numpy() if args.cross_entropy else prob.y[obj.numpy().argmin()].numpy()
+            ctrls = prob.y[obj.numpy().argmin()].numpy()
             ctrls = np.clip(ctrls,prob.xl,prob.xu)
             ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
         rec[1],rec[2] = min(rec[1],obj.numpy().min()),np.mean([grad.numpy().mean() for grad in grads])
