@@ -106,25 +106,27 @@ def get_runoff(env,event,rate=False,tide=False):
     return ts,runoff
 
 def pred_simu(y,file,args,r=None):
-    n_step = args.prediction['control_horizon']//args.setting_duration
-    r_step = args.setting_duration//args.interval
-    e_hrz = args.prediction['eval_horizon'] // args.interval
-    actions = list(args.action_space.values())
+    # n_step = args.prediction['control_horizon']//args.setting_duration
+    # r_step = args.setting_duration//args.interval
+    # e_hrz = args.prediction['eval_horizon'] // args.interval
+    # actions = list(args.action_space.values())
 
-    y = y.reshape(n_step,len(args.action_space))
-    y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
-    if y.shape[0] < e_hrz:
-        y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
+    # y = y.reshape(n_step,len(args.action_space))
+    # y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
+    # if y.shape[0] < e_hrz:
+    #     y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
     
     env = get_env(args.env_name)(swmm_file = file)
-    done = False
-    idx = 0
-    perf = []
+    done,idx = False,0
+    if getattr(args,'log') is not None:
+        env.data_log.update({k:v for k,v in args.log.items() if 'cum' not in k})
+    # perf = []
     while not done and idx < y.shape[0]:
         if args.prediction['no_runoff']:
             for node,ri in zip(env.elements['nodes'],r[idx]):
                 env.env._setNodeInflow(node,ri)
-        done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
+        # done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
+        done = env.step([sett for sett in y[idx]])
         # perf.append(env.flood())
         idx += 1
     # return np.array(perf)
@@ -171,8 +173,8 @@ class mpc_problem(Problem):
     def load_state(self,state,runoff,edge_state=None):
         self.state,self.runoff,self.edge_state = state,runoff,edge_state
     
-    def load_file(self,eval_file,runoff_rate=None):
-        self.file,self.runoff_rate = eval_file,runoff_rate
+    def load_file(self,eval_file,log=None,runoff_rate=None):
+        self.file,self.runoff_rate,self.log = eval_file,runoff_rate,log
 
     def pred_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
@@ -181,8 +183,9 @@ class mpc_problem(Problem):
             y = np.concatenate([y,np.repeat(y[-1:,:],self.eval_hrz // self.step-y.shape[0],axis=0)],axis=0)
 
         env = get_env(self.args.env)(swmm_file = self.file)
-        done = False
-        idx = 0
+        if getattr(self,'log') is not None:
+            env.data_log.update({k:v for k,v in self.log.items() if 'cum' not in k})
+        done,idx = False,0
         # perf = 0
         while not done and idx < y.shape[0]:
             if self.args.prediction['no_runoff']:
@@ -631,7 +634,7 @@ if __name__ == '__main__':
                     if args.prediction['no_runoff']:
                         t = env.env.methods['simulation_time']()
                         rr = runoff_rate[int(tss.asof(t)['Index']),...,0]
-                    prob.load_file(eval_file,rr if args.prediction['no_runoff'] else None)
+                    prob.load_file(eval_file,env.data_log,rr if args.prediction['no_runoff'] else None)
                     if args.cross_entropy:
                         setting,vals = run_ce(prob,args,setting=setting)
                     else:

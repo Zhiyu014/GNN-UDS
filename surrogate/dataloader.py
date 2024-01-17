@@ -149,7 +149,7 @@ class DataGenerator:
             iys = np.apply_along_axis(lambda t:np.arange(t+1,t+seq+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
             states = (np.take(self.states,ixs,axis=0),np.take(self.states,iys,axis=0))
             perfs = (np.take(self.perfs,ixs,axis=0),np.take(self.perfs,iys,axis=0))
-            edge_states = (np.take(self.edge_states,ixs,axis=0),np.take(self.edge_states,iys,axis=0))
+            edge_states = (np.take(self.edge_states,ixs,axis=0),np.take(self.edge_states,iys,axis=0)) if self.use_edge else None
             settings = np.take(self.settings,iys,axis=0) if self.settings is not None else None
         else:
             states,perfs = (self.states[idxs],self.states[idxs+1]),(self.perfs[idxs],self.perfs[idxs+1])

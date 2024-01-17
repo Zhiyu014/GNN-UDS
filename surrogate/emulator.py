@@ -201,7 +201,7 @@ class Emulator:
         # (B,T,N,E) (B,T,E) (B,N,E) (B,E) --> (B*T,N,E) (B*T,E)
         x = reshape(x,(-1,) + tuple(x.shape[2:])) if recurrent else x
         for _ in range(self.n_sp_layer):
-            if conv and self.use_edge and self.edge_fusion:
+            if conv and self.use_edge:
                 # n,n,e   B,E,H  how to convert e from beh to bnnh?
                 # x_e = tf.gather(e,self.edge_index,axis=1)
                 # e_x = tf.gather(x,self.node_index,axis=1)
@@ -211,11 +211,11 @@ class Emulator:
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
                 x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-            x = [x,Adj_in] if conv else x
+            x = [x,Adj_in] if conv else concat([x,e],axis=-1) if self.use_edge else x
             x = net(self.embed_size,activation=self.activation)(x)
             x = Dropout(self.dropout)(x) if self.dropout else x
             if self.use_edge:
-                e = [e,Eadj_in] if conv else e
+                e = [e,Eadj_in] if conv else concat([x,e],axis=-1)
                 e = net(self.embed_size,activation=self.activation)(e)
                 e = Dropout(self.dropout)(e) if self.dropout else e
 
@@ -293,7 +293,7 @@ class Emulator:
             else:
                 A = Adj_in
         for _ in range(self.n_sp_layer):
-            if conv and self.use_edge and self.edge_fusion:
+            if conv and self.use_edge:
                 # n,n,e   B,E,H  how to convert e from beh to bnnh?
                 # x_e = tf.gather(e,self.edge_index,axis=1)
                 # e_x = tf.gather(x,self.node_index,axis=1)
@@ -303,11 +303,11 @@ class Emulator:
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
                 x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
                 e = concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-            x = [x,A] if conv else x
+            x = [x,A] if conv else concat([x,e],axis=-1) if self.use_edge else x
             x = net(self.embed_size,activation=self.activation)(x)
             x = Dropout(self.dropout)(x) if self.dropout else x
             if self.use_edge:
-                e = [e,Eadj_in] if conv else e
+                e = [e,Eadj_in] if conv else concat([x,e],axis=-1)
                 e = net(self.embed_size,activation=self.activation)(e)
                 e = Dropout(self.dropout)(e) if self.dropout else e
 
@@ -551,19 +551,6 @@ class Emulator:
                         # node_inflow = tf.clip_by_value(node_inflow,-10,10)
                     preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
             
-                # TODO: Pumped storage depth calculation: boundary condition differs from orifice
-                if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
-                    if self.use_edge:
-                        ps = tf.cast((self.area * tf.matmul(tf.clip_by_value(self.node_edge,0,1),self.pump))>0,tf.float32)
-                    else:
-                        ps = tf.cast(self.pump_out>0,tf.float32)
-                    preds_re_norm = self.normalize(preds,'y',True)
-                    h,qin,qout = [preds_re_norm[...,i] for i in [0,1,2]]
-                    de = tf.zeros_like(h)
-                    for t in range(de.shape[1]):
-                        de[:,t,:] = tf.clip_by_value(self.normalize(x,'x',True)[:,-1,:,0] if t==0 else de[:,t-1,:] +\
-                                                    (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)
-                    y = tf.concat([tf.expand_dims(h*(1-ps) + de * ps,axis=-1),y[...,1:]],axis=-1)
                     
             # Loss funtion
             if self.balance:
@@ -822,15 +809,15 @@ class Emulator:
                 # TODO: Pumped storage depth calculation: boundary condition differs from orifice
                 if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
                     if self.use_edge:
-                        ps = (self.area * np.matmul(np.clip(self.node_edge,0,1),self.pump))>0
+                        ps = (self.area * np.matmul(np.clip(self.node_edge,0,1),np.expand_dims(self.pump,axis=-1)).squeeze())>0
                     else:
                         ps = self.pump_out>0
                     h,qin,qout = [y[...,i] for i in [0,1,2]]
-                    de = np.zeros_like(h)
-                    for t in range(de.shape[0]):
-                        de[t,:] = np.clip(x[-1,:,0] if t==0 else de[t-1,:] +\
-                                            (qin-qout)[t,:]/(self.area+1e-6),self.hmin,self.hmax)
-                    y[...,0] = h*(1-ps) + de * ps
+                    de = []
+                    for t in range(self.seq_out):
+                        de += [np.clip(x[-1,:,0] if t==0 else de[-1] +\
+                                       (qin-qout)[t,:]/(self.area+1e-6),self.hmin,self.hmax)]
+                    y[...,0] = h*(1-ps) + np.stack(de,axis=0) * ps
 
                 q_w,y = self.constrain(y,bi[...,:1],x[-1:,:,0])
                 # q_w = self.get_flood(y,bi)
@@ -979,14 +966,15 @@ class Emulator:
         # TODO: Pumped storage depth calculation: boundary condition differs from orifice
         if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
             if self.use_edge:
-                ps = tf.cast((self.area * tf.matmul(tf.clip_by_value(self.node_edge,0,1),self.pump))>0,tf.float32)
+                ps = tf.cast((self.area * tf.squeeze(tf.matmul(tf.clip_by_value(self.node_edge,0,1),tf.expand_dims(tf.cast(self.pump,tf.float32),axis=-1))))>0,tf.float32)
             else:
                 ps = tf.cast(self.pump_out>0,tf.float32)
             h,qin,qout = [y[...,i] for i in [0,1,2]]
-            de = tf.zeros_like(h)
-            for t in range(de.shape[1]):
-                de[:,t,:] = tf.clip_by_value(x[:,-1,:,0] if t==0 else de[:,t-1,:] +\
-                                             (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)
+            de = []
+            for t in range(self.seq_out):
+                de += [tf.clip_by_value(x[:,-1,:,0] if t==0 else de[-1] +\
+                                        (qin-qout)[:,t,:]/(self.area+1e-6),self.hmin,self.hmax)]
+            de = tf.stack(de,axis=1)
             y = tf.concat([tf.expand_dims(h*(1-ps) + de * ps,axis=-1),y[...,1:]],axis=-1)
         q_w,y = self.constrain_tf(y,b[...,:1],x[:,-1:,:,0])
         y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
