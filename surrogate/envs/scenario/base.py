@@ -200,7 +200,7 @@ class basescenario(scenario):
         return flood
     
 
-    def reset(self,swmm_file=None, global_state=False,seq=False):
+    def reset(self,swmm_file=None, global_state=True,seq=False):
         # clear the data log and reset the environment
         if swmm_file is not None:
             self.config["swmm_input"] = swmm_file

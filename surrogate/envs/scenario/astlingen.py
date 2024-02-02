@@ -47,12 +47,12 @@ class astlingen(basescenario):
         for i,(idx,attr,weight) in enumerate(self.config['performance_targets']):
             if attr == 'cuminflow' and idx != 'Out_to_WWTP':
                 # __object += np.abs(np.diff(perfs[:,i],axis=0)) * weight
-                __object += [np.abs(np.diff(perfs[:,i],axis=0)) * weight]
+                __object += [np.abs(np.diff(perfs[:,i],axis=0)).squeeze() * weight]
             else:
                 # __object += perfs[1:,i] * weight
-                __object += [perfs[1:,i] * weight]
+                __object += [perfs[1:,i].squeeze() * weight]
         # return __object
-        return np.array(__object).sum(axis=-1)
+        return np.array(__object).sum(axis=-1) if seq else np.array(__object)
          
     def reward(self,norm=False):
         # Calculate the target error in the recent step based on cumulative values
@@ -87,8 +87,9 @@ class astlingen(basescenario):
         else:
             return - __reward
 
-    def objective_pred(self,preds,state):
+    def objective_pred(self,preds,states,settings):
         preds,_ = preds
+        state,_ = states
         q_w = preds[...,-1]
         q_in = np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
         flood = [q_w[...,self.elements['nodes'].index(idx)].sum(axis=1) * weight
@@ -102,9 +103,10 @@ class astlingen(basescenario):
         # return sum(flood) + sum(inflow) + sum(outflow)
         return np.array(flood + outflow + inflow).T
     
-    def objective_pred_tf(self,preds,state):
+    def objective_pred_tf(self,preds,states,settings):
         import tensorflow as tf
         preds,_ = preds
+        state,_ = states
         q_w = preds[...,-1]
         q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
         flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight

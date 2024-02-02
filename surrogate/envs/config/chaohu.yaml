@@ -128,14 +128,14 @@ performance_targets:
   #   - cumflooding
   #   - 1
   # tank flooding penalty
-  # - !!python/tuple
-  #   - "CC-storage"
-  #   - cumflooding
-  #   - 50
-  # - !!python/tuple
-  #   - "JK-storage"
-  #   - cumflooding
-  #   - 50
+  - !!python/tuple
+    - "CC-storage"
+    - cumflooding
+    - 1000
+  - !!python/tuple
+    - "JK-storage"
+    - cumflooding
+    - 1000
   # CSOs
   - !!python/tuple
     - "CC-1"
@@ -144,7 +144,7 @@ performance_targets:
   - !!python/tuple
     - "CC-2"
     - cuminflow
-    - 0.5  
+    - 0.5
   - !!python/tuple
     - "JK-1"
     - cuminflow
@@ -153,35 +153,69 @@ performance_targets:
     - "JK-2"
     - cuminflow
     - 0.5
-  # Pump energy
+  # WWTP
+  - !!python/tuple
+    - "WSC"
+    - cuminflow
+    - -0.1
+  # Pumping energy
   - !!python/tuple
     - "CC-S1"
     - cumpumpenergy
-    - 0.1
+    - 1
   - !!python/tuple
     - "CC-S2"
     - cumpumpenergy
-    - 0.1  
+    - 1
   - !!python/tuple
     - "CC-R1"
     - cumpumpenergy
-    - 0.1 
+    - 1
   - !!python/tuple
     - "CC-R2"
     - cumpumpenergy
-    - 0.1
+    - 1
   - !!python/tuple
     - "JK-S"
     - cumpumpenergy
-    - 0.1
+    - 1
   - !!python/tuple
     - "JK-R1"
     - cumpumpenergy
-    - 0.1
+    - 1
   - !!python/tuple
     - "JK-R2"
     - cumpumpenergy
-    - 0.1
+    - 1
+  # Control Roughness
+  - !!python/tuple
+    - "CC-S1"
+    - setting
+    - 10
+  - !!python/tuple
+    - "CC-S2"
+    - setting
+    - 10
+  - !!python/tuple
+    - "CC-R1"
+    - setting
+    - 10
+  - !!python/tuple
+    - "CC-R2"
+    - setting
+    - 10
+  - !!python/tuple
+    - "JK-S"
+    - setting
+    - 10
+  - !!python/tuple
+    - "JK-R1"
+    - setting
+    - 10
+  - !!python/tuple
+    - "JK-R2"
+    - setting
+    - 10
   # Tank depth
   # - !!python/tuple
   #   - "CC-storage"

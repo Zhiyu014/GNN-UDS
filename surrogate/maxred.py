@@ -27,6 +27,7 @@ def parser(config=None):
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
+    parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
@@ -72,15 +73,15 @@ class mpc_problem(Problem):
                                            for v in args.action_space.values()]),
                             vtype=float)
         else:
-            self.actions = args['action_table']
-            self.actions = [{i:v for i,v in enumerate(val)}
-                            for val in args.action_space.values()]            
+            self.actions = args.action_table
+            self.n_act = np.array(list(self.actions)).shape[-1]
+            self.n_var = self.n_act*self.n_step
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([0 for _ in range(self.n_var)]),
                             # xu = np.array([len(v)-1 for _ in range(self.n_step)
                             #     for v in self.actions]),
                             xu = np.array([v for _ in range(self.n_step)
-                                for v in np.array(list(self.actions.keys()).max(axis=0))]),
+                                for v in np.array(list(self.actions.keys())).max(axis=0)]),
                             vtype=int)
 
     def pred_simu(self,y):
@@ -149,6 +150,8 @@ if __name__ == '__main__':
         rain_arg['rainfall_events'] = args.rain_dir
     if 'rain_suffix' in config:
         rain_arg['suffix'] = args.rain_suffix
+    if 'rain_num' in config:
+        rain_arg['rain_num'] = args.rain_num
     events = get_inp_files(env.config['swmm_input'],rain_arg)
 
 

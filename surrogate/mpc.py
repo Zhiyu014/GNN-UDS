@@ -216,7 +216,7 @@ class mpc_problem(Problem):
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         # env = get_env(self.args.env)(initialize=False)
-        objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],state).sum(axis=-1)
+        objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -442,7 +442,7 @@ class mpc_problem_gr:
                 settings = tf.repeat(settings,self.stochastic,axis=0)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
             env = get_env(self.args.env)(initialize=False)
-            obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],state)
+            obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings)
             if self.stochastic:
                 obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
             loss = tf.reduce_mean(obj,axis=0) if self.cross_entropy else obj
