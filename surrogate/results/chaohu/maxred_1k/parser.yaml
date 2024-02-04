@@ -1,0 +1,12 @@
+act: rand
+mutation:
+- 1.0
+- 10.0
+pop_size: 64
+processes: 8
+rain_num: 4
+rain_suffix: chaohu_test
+result_dir: maxred_1k
+termination:
+- n_gen
+- 100
