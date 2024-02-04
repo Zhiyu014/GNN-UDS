@@ -105,7 +105,7 @@ def get_runoff(env,event,rate=False,tide=False):
     runoff = np.array(runoffs)
     return ts,runoff
 
-def pred_simu(y,file,args,r=None):
+def pred_simu(y,file,args,r=None,act=True):
     # n_step = args.prediction['control_horizon']//args.setting_duration
     # r_step = args.setting_duration//args.interval
     # e_hrz = args.prediction['eval_horizon'] // args.interval
@@ -121,12 +121,12 @@ def pred_simu(y,file,args,r=None):
     if getattr(args,'log') is not None:
         env.data_log.update({k:v for k,v in args.log.items() if 'cum' not in k})
     # perf = []
-    while not done and idx < y.shape[0]:
+    while not done and idx < (y.shape[0] if act else args.prediction['eval_horizon']):
         if args.prediction['no_runoff']:
             for node,ri in zip(env.elements['nodes'],r[idx]):
                 env.env._setNodeInflow(node,ri)
         # done = env.step([actions[i][int(act)] for i,act in enumerate(y[idx])])
-        done = env.step([sett for sett in y[idx]])
+        done = env.step([sett for sett in y[idx]] if act else None)
         # perf.append(env.flood())
         idx += 1
     # return np.array(perf)
