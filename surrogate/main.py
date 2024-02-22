@@ -167,14 +167,77 @@ if __name__ == "__main__":
         # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
         yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
+        seq = max(args.seq_in,args.seq_out) if args.recurrent else 0
+        n_events = int(max(dG.event_id))+1
+
         if args.load_model:
             emul.load(args.model_dir)
             train_ids = np.load(os.path.join(args.model_dir,'train_id.npy'))
         else:
-            train_ids = None
+            train_ids = np.random.choice(np.arange(n_events),int(n_events*args.ratio),replace=False)
+        test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         if args.norm:
             emul.set_norm(*dG.get_norm())
-        train_ids,test_ids,train_losses,test_losses = emul.update_net(dG,args.ratio,args.epochs,args.batch_size,train_ids)
+
+        train_idxs = dG.get_data_idxs(seq,train_ids)
+        test_idxs = dG.get_data_idxs(seq,test_ids)
+
+        t0 = time.time()
+        train_losses,test_losses,secs = [],[],[0]
+        for epoch in range(args.epochs):
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size)
+            x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
+            if args.norm:
+                x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
+            if args.use_edge:
+                ex,ey = [dat for dat in train_dats[-2:]]
+                if args.norm:
+                    ex,ey = [emul.normalize(dat,'e') for dat in [ex,ey]]
+            else:
+                ex,ey = None,None
+            train_loss = emul.fit_eval(x,a,b,y,ex,ey)
+            train_loss = train_loss.numpy()
+            if epoch >= 500:
+                train_losses.append(train_loss)
+
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size)
+            x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
+            if args.norm:
+                x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
+            if args.use_edge:
+                ex,ey = [dat for dat in test_dats[-2:]]
+                if args.norm:
+                    ex,ey = [emul.normalize(dat,'e') for dat in [ex,ey]]
+            else:
+                ex,ey = None,None
+            test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
+            test_loss = [los.numpy() for los in test_loss]
+            if epoch >= 500:
+                test_losses.append(test_loss)
+
+            if train_loss < min([1e6]+train_losses[:-1]):
+                emul.save(os.path.join(args.model_dir,'train'))
+            if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
+                emul.save(os.path.join(args.model_dir,'test'))
+            if epoch > 0 and epoch % emul.save_gap == 0:
+                emul.save(os.path.join(args.model_dir,'%s'%epoch))
+                
+            secs.append(time.time()-t0)
+
+            # Log output
+            log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],train_loss,sum(test_loss))
+            log += " ("
+            node_str = "Node bal: " if args.balance else "Node: "
+            log += node_str + "{:.4f}".format(test_loss[0])
+            i = 1
+            if args.if_flood and not args.balance:
+                log += " if_flood: {:.4f}".format(test_loss[i])
+                i += 1
+            if args.use_edge:
+                log += " Edge: {:.4f}".format(test_loss[i])
+            log += ")"
+            print(log)
+
 
         # save
         emul.save(args.model_dir)
@@ -182,6 +245,7 @@ if __name__ == "__main__":
         np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
+        np.save(os.path.join(args.model_dir,'time.npy'),np.array(secs[1:]))
         plt.plot(train_losses,label='train')
         plt.plot(np.array(test_losses).sum(axis=1),label='test')
         plt.legend()
