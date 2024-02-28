@@ -115,6 +115,37 @@ hc_thresholds:
     - 1.2
     - 4.3
 
+# Startup shutoff thresholds for safety
+safe_thresholds:
+  CC-S1:
+    !!python/tuple
+    - 0.3
+    - 2
+  CC-S2:
+    !!python/tuple
+    - 0.3
+    - 2
+  CC-R1:
+    !!python/tuple
+    - 0.3
+    - 2
+  CC-R2:
+    !!python/tuple
+    - 0.3
+    - 2
+  JK-S:
+    !!python/tuple
+    - 0.8
+    - 5
+  JK-R1:
+    !!python/tuple
+    - 0.8
+    - 5
+  JK-R2:
+    !!python/tuple
+    - 0.8
+    - 5
+    
 # Performance Targets
 performance_targets:
   # rainfall indicator
@@ -188,34 +219,34 @@ performance_targets:
     - cumpumpenergy
     - 1
   # Control Roughness
-  - !!python/tuple
-    - "CC-S1"
-    - setting
-    - 10
-  - !!python/tuple
-    - "CC-S2"
-    - setting
-    - 10
-  - !!python/tuple
-    - "CC-R1"
-    - setting
-    - 10
-  - !!python/tuple
-    - "CC-R2"
-    - setting
-    - 10
-  - !!python/tuple
-    - "JK-S"
-    - setting
-    - 10
-  - !!python/tuple
-    - "JK-R1"
-    - setting
-    - 10
-  - !!python/tuple
-    - "JK-R2"
-    - setting
-    - 10
+  # - !!python/tuple
+  #   - "CC-S1"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "CC-S2"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "CC-R1"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "CC-R2"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "JK-S"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "JK-R1"
+  #   - setting
+  #   - 10
+  # - !!python/tuple
+  #   - "JK-R2"
+  #   - setting
+  #   - 10
   # Tank depth
   # - !!python/tuple
   #   - "CC-storage"

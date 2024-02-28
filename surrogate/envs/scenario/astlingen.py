@@ -179,6 +179,8 @@ class astlingen(basescenario):
                         1 * (1-int(depth[k] >= max(depth.values()))) * (1-int(depth[k] <= min(depth.values())))
             setting = [v[setting[k]] for k,v in asp3.items()]
             return setting
+        elif mode.lower() == 'safe':
+            return setting
         else:
             raise AssertionError("Unknown controller %s"%str(mode))
         

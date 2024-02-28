@@ -1,9 +1,0 @@
-env: shunqing
-if_flood: true
-load_model: true
-model_dir: ./model/shunqing/5s_5k_res_bal_flood/
-resnet: true
-result_dir: ./results/shunqing/5s_res_bal_flood
-seq_in: 5
-seq_out: 5
-test: true

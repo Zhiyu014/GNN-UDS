@@ -170,10 +170,10 @@ class chaohu(basescenario):
             return [table[0] for table in asp.values()]
         elif mode.lower() == 'on':
             return [table[-1] for table in asp.values()]
-        elif mode.lower() == 'hc':
+        elif mode.lower() == 'hc' or mode.lower() == 'safe':
             state_idxs = {k:self.elements['nodes'].index(k.split('-')[0]+'-storage') for k in asp}
             depth = {k:state[idx,0] for k,idx in state_idxs.items()}
-            thres = self.config['hc_thresholds']
+            thres = self.config[mode.lower()+'_thresholds']
             setting = [min(max(sett,int(h>thres[k][1])),1-int(h<thres[k][0]))
                         for (k,h),sett in zip(depth.items(),setting)]
             return setting

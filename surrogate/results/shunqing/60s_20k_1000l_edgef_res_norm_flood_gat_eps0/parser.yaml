@@ -1,0 +1,6 @@
+epsilon: 0.0
+model_dir: 60s_20k_1000l_edgef_res_norm_flood_gat
+rain_num: 3
+rain_suffix: test_bpswmm
+result_dir: 60s_20k_1000l_edgef_res_norm_flood_gat_eps0
+test: true

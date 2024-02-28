@@ -1,9 +1,0 @@
-env: shunqing
-if_flood: true
-model_dir: ./model/shunqing/10s_10k_res_norm_flood/
-norm: true
-resnet: true
-result_dir: ./results/shunqing/10s_res_norm_flood/
-seq_in: 10
-seq_out: 10
-test: true

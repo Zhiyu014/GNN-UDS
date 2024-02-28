@@ -60,7 +60,7 @@ def parser(config=None):
     parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
-    parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
+    parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
 
     # test args
     parser.add_argument('--test',action="store_true",help='if test the emulator')
@@ -252,6 +252,16 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
     if args.test:
+        known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
+        for k,v in known_hyps.items():
+            if k == 'model_dir':
+                continue
+            setattr(args,k,v)
+        env_args = env.get_args(args.directed,args.length,args.order)
+        for k,v in env_args.items():
+            setattr(args,k,v)
+        args.use_edge = args.use_edge or args.edge_fusion
+        dG = DataGenerator(env,args.data_dir,args)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         emul.load(args.model_dir)
         if not os.path.exists(args.result_dir):

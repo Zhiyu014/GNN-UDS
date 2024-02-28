@@ -76,7 +76,7 @@ class Emulator:
         if self.if_flood:
             self.n_in += 1
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
-        self.epsilon = getattr(args,"epsilon",0.1)
+        self.epsilon = getattr(args,"epsilon",-1.0)
 
         self.use_edge = getattr(args,"use_edge",False)
         self.edge_fusion = getattr(args,"edge_fusion",False)
@@ -902,14 +902,17 @@ class Emulator:
         if self.if_flood:
             # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = y[...,-1] > 0.5
-            q_w *= f
             h = self.hmax * f + h * ~f
             # y = np.stack([h,q_us,q_ds,y[...,-2],y[...,-1]],axis=-1)
             y = np.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
         else:
-            if self.epsilon > 0:
-                q_w *= ((self.hmax - h) < self.epsilon)
             y = np.stack([h,q_us,q_ds],axis=-1)
+        if self.epsilon > 0:
+            q_w *= ((self.hmax - h) < self.epsilon)
+        elif self.epsilon == 0:
+            pass
+        elif self.if_flood:
+            q_w *= f
         return q_w,y
     
     def constrain_tf(self,y,r,h0):
@@ -922,13 +925,16 @@ class Emulator:
         if self.if_flood:
             # f = tf.cast(tf.argmax(y[...,-2:],axis=-1),tf.float32)
             f = tf.cast(y[...,-1] > 0.5,tf.float32)
-            q_w *= f
             h = self.hmax * f + h * (1-f)
             y = tf.stack([h,q_us,q_ds,y[...,-1]],axis=-1)
         else:
-            if self.epsilon > 0:
-                q_w = q_w * tf.cast((self.hmax - h) < self.epsilon, tf.float32)
             y = tf.stack([h,q_us,q_ds],axis=-1)
+        if self.epsilon > 0:
+            q_w = q_w * tf.cast((self.hmax - h) < self.epsilon, tf.float32)
+        elif self.epsilon == 0:
+            pass
+        elif self.if_flood:
+            q_w *= f
         return q_w,y
     
     def get_flood(self,y,r,h0):
@@ -939,12 +945,14 @@ class Emulator:
         # dv = self.area * np.diff(np.concatenate([h0,h],axis=1),axis=1) if self.area.max() > 0 else 0.0
         dv = 0.0
         q_w = np.clip(q_us + r - q_ds - dv,0,np.inf) * (1-self.is_outfall)
-        if self.if_flood:
+        if self.epsilon > 0:
+            q_w *= ((self.hmax - h) < self.epsilon)
+        elif self.epsilon == 0:
+            pass
+        elif self.if_flood:
             # f = np.argmax(y[...,-2:],axis=-1).astype(bool)
             f = y[...,-1] > 0.5
             q_w *= f
-        elif self.epsilon > 0:
-            q_w *= ((self.hmax - h) < self.epsilon)
         return q_w
     
     def head_to_depth(self,h):

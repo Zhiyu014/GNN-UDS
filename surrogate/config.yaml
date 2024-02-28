@@ -46,7 +46,7 @@ shunqing:
   seq_out: 1
   resnet: False
   if_flood: 0
-  epsilon: 0.1
+  epsilon: -1.0
 
   # test args
   test: False
@@ -101,7 +101,7 @@ RedChicoSur:
   seq_out: 1
   resnet: False
   if_flood: 0
-  epsilon: 0.1
+  epsilon: -1.0
 
   # test args
   test: False
@@ -156,7 +156,7 @@ astlingen:
   seq_out: 1
   resnet: False
   if_flood: 0
-  epsilon: 0.1
+  epsilon: -1.0
 
   # test args
   test: False
@@ -235,7 +235,7 @@ hague:
   seq_out: 1
   resnet: False
   if_flood: 0
-  epsilon: 0.1
+  epsilon: -1.0
 
   # test args
   test: False
@@ -313,7 +313,7 @@ chaohu:
   seq_out: 1
   resnet: False
   if_flood: 0
-  epsilon: 0.1
+  epsilon: -1.0
 
   # test args
   test: False

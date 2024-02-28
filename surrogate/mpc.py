@@ -592,7 +592,7 @@ if __name__ == '__main__':
         # setting = [1 for _ in args.action_space]
         setting = env.controller('default')
         if args.keep != 'False':
-            setting = env.controller(args.keep,state,setting)
+            setting = env.controller(args.keep,states[0],setting)
         settings = [setting]
 
         if args.surrogate and args.gradient:
@@ -649,7 +649,8 @@ if __name__ == '__main__':
                 j = 0
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-            done = env.step(setting[j]) if args.keep == 'False' else env.step(settings[0])
+            sett = env.controller('safe',state[-1],setting[j]) if args.keep == 'False' else settings[0]
+            done = env.step(sett)
             state = env.state(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)
@@ -658,7 +659,7 @@ if __name__ == '__main__':
             perfs.append(env.flood())
             objects.append(env.objective())
             edge_states.append(edge_state[-1] if args.surrogate else edge_state)
-            settings.append(setting[j])
+            settings.append(sett)
             i += 1
             print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
         
