@@ -27,7 +27,6 @@ shunqing:
   epochs: 500
   save_gap: 500
   batch_size: 256
-  roll: False
   balance: 0
   
   # network args
@@ -82,7 +81,6 @@ RedChicoSur:
   epochs: 500
   save_gap: 500
   batch_size: 256
-  roll: False
   balance: 0
   
   # network args
@@ -137,7 +135,6 @@ astlingen:
   epochs: 500
   save_gap: 500
   batch_size: 256
-  roll: False
   balance: 0
   
   # network args
@@ -216,7 +213,6 @@ hague:
   epochs: 500
   save_gap: 500
   batch_size: 256
-  roll: False
   balance: 0
   
   # network args
@@ -294,7 +290,6 @@ chaohu:
   epochs: 500
   save_gap: 500
   batch_size: 256
-  roll: False
   balance: 0
   
   # network args

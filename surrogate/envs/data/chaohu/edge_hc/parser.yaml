@@ -1,0 +1,5 @@
+act: hc
+data_dir: edge_hc
+processes: 2
+rain_suffix: chaohu_train
+simulate: true

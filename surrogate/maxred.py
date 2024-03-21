@@ -161,6 +161,8 @@ if __name__ == '__main__':
 
     for event in events:
         name = os.path.basename(event).strip('.inp')
+        if os.path.exists(os.path.join(args.result_dir,name + '_state.npy')):
+            continue
         t0 = time.time()
         ts,runoff_rate = get_runoff(env,event,True)
         tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
@@ -208,7 +210,7 @@ if __name__ == '__main__':
         settings = [setting]
         done,idx = False,0
         while not done:
-            setting = ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1]
+            setting = np.array(env.controller('safe',state,ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1])).astype(float)
             done = env.step(setting)
             state = env.state()
             edge_state = env.state_full(False,'links')

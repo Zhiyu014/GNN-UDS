@@ -1,0 +1,9 @@
+act: rand
+pop_size: 64
+processes: 3
+rain_num: 100
+rain_suffix: chaohu_testall
+result_dir: maxred_all100
+termination:
+- n_gen
+- 100

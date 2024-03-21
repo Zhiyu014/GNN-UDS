@@ -162,6 +162,7 @@ cython_debug/
 *.inp
 *.out
 *.rpt
+*.png
 *.hsf
 *.ipynb
 *.json
@@ -169,3 +170,4 @@ cython_debug/
 !shunqing.inp
 !astlingen.inp
 !RedChicoSur.inp
+!chaohu.inp

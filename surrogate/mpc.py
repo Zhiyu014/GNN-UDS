@@ -16,7 +16,9 @@ from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling,random_by_bounds
 from pymoo.operators.sampling.lhs import LatinHypercubeSampling,sampling_lhs
 from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.crossover.binx import BX
 from pymoo.operators.mutation.pm import PM
+from pymoo.operators.mutation.bitflip import BitflipMutation
 from pymoo.termination import get_termination
 from pymoo.termination.collection import TerminationCollection
 from pymoo.operators.repair.rounding import RoundingRepair
@@ -73,6 +75,8 @@ def parser(config=None):
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
         hyp = {k:v for k,v in hyps[args.env].items() if hasattr(args,k)}
         parser.set_defaults(**hyp)
+    if args.act.endswith('bin'):
+        parser.set_defaults(**{'crossover':[0.5,2],'mutation':[0.5,0.3]})
     args = parser.parse_args()
     config = {k:v for k,v in args.__dict__.items() if v!=hyp.get(k)}
     for k,v in config.items():
@@ -162,12 +166,12 @@ class mpc_problem(Problem):
             # self.actions = [{i:v for i,v in enumerate(val)}
             #                 for val in args.action_space.values()]            
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
-                            xl = np.array([0 for _ in range(self.n_var)]),
+                            xl = np.zeros(self.n_var),
                             # xu = np.array([len(v)-1 for _ in range(self.n_step)
                             #     for v in self.actions]),
                             xu = np.array([v for _ in range(self.n_step)
                                 for v in np.array(list(self.actions.keys())).max(axis=0)]),
-                            vtype=int)
+                            vtype=bool if args.act.endswith('bin') else int)
             # print(self.n_var,self.xu)
     
     def load_state(self,state,runoff,edge_state=None):
@@ -193,7 +197,7 @@ class mpc_problem(Problem):
                     env.env._setNodeInflow(node,ri)
             yi = y[idx]
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
-            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi)])
+            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi.astype(int))])
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
@@ -202,7 +206,7 @@ class mpc_problem(Problem):
         y = y.reshape((-1,self.n_step,self.n_act))
         pop_size = y.shape[0]
         # settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
-        settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y)
+        settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y.astype(int))
         settings = np.repeat(settings,self.r_step,axis=1)
         if settings.shape[1] < self.eval_hrz // self.step:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
@@ -273,8 +277,12 @@ def run_ea(prob,args,setting=None):
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.act.startswith('conti'))
     else:
         sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
-    crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
-    mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
+    if args.act.endswith('bin'):
+        crossover = BX(*args.crossover,vtype=bool)
+        mutation = BitflipMutation(*args.mutation,vtype=bool)
+    else:
+        crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
+        mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
     if len(args.termination) > 2:
         termination = TerminationCollection(*[get_termination(*args.termination[i*2:(i+1)*2]) for i in range(len(args.termination)//2)])
     else:
@@ -302,7 +310,7 @@ def run_ea(prob,args,setting=None):
     ctrls = ctrls.reshape((prob.n_step,prob.n_act))
     if not args.act.startswith('conti'):
         # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
-        ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
+        ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls.astype(int))
     print("Best solution found: %s" % ctrls.tolist())
     print("Function value: %s" % res.F)
 
@@ -560,6 +568,8 @@ if __name__ == '__main__':
     # events = ['./envs/network/astlingen/astlingen_08_22_2007_21.inp']
     for event in events:
         name = os.path.basename(event).strip('.inp')
+        if os.path.exists(os.path.join(args.result_dir,name + '_%s_state.npy'%item)):
+            continue
         t0 = time.time()
         if args.surrogate:
             ts,runoff = get_runoff(env,event,tide=args.tide)
@@ -649,7 +659,7 @@ if __name__ == '__main__':
                 j = 0
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-            sett = env.controller('safe',state[-1],setting[j]) if args.keep == 'False' else settings[0]
+            sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             done = env.step(sett)
             state = env.state(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:

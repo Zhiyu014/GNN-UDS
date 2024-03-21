@@ -42,7 +42,6 @@ def parser(config=None):
     parser.add_argument('--epochs',type=int,default=500,help='training epochs')
     parser.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
-    parser.add_argument('--roll',action="store_true",help='if rollout simulation')
     parser.add_argument('--balance',action="store_true",help='if use balance not classification loss')
 
     # network args
@@ -57,7 +56,7 @@ def parser(config=None):
     parser.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
     parser.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
     parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
-    parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. if not roll, seq_out < seq_in ')
+    parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. seq_out < seq_in ')
     parser.add_argument('--resnet',action='store_true',help='if use resnet')
     parser.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
@@ -106,7 +105,6 @@ if __name__ == "__main__":
     #             'n_tp_layer':4,
     #             'resnet':True,
     #             'norm':True,
-    #             'roll':False,
     #             'use_edge':True,'edge_fusion':True,
     #             'balance':False,
     #             'seq_in':30,'seq_out':30,
@@ -254,11 +252,13 @@ if __name__ == "__main__":
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
         for k,v in known_hyps.items():
-            if k == 'model_dir':
+            if k in ['model_dir','act']:
                 continue
             setattr(args,k,v)
         env_args = env.get_args(args.directed,args.length,args.order)
         for k,v in env_args.items():
+            if k == 'act':
+                v = v and args.act != 'False' and args.act
             setattr(args,k,v)
         args.use_edge = args.use_edge or args.edge_fusion
         dG = DataGenerator(env,args.data_dir,args)

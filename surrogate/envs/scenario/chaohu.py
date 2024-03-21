@@ -137,10 +137,13 @@ class chaohu(basescenario):
 
     def get_action_table(self,act='rand'):
         asp = self.config['action_space'].copy()
-        asp = {k:[0]+[i+1 for i,_ in enumerate(v)]
-                for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
-        actions = {act:[[1]*a+[0]*(len(v)-1-a) for a,v in zip(act,asp.values())] for act in product(*asp.values())}
-        actions = {k:[v for va in values for v in va] for k,values in actions.items()}
+        if act.endswith('bin'):
+            actions = {act:list(act) for act in product(*asp.values())}
+        else:
+            asp = {k:[0]+[i+1 for i,_ in enumerate(v)]
+                    for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
+            actions = {act:[[1]*a+[0]*(len(v)-1-a) for a,v in zip(act,asp.values())] for act in product(*asp.values())}
+            actions = {k:[v for va in values for v in va] for k,values in actions.items()}
         return actions
 
     def get_args(self,directed=False,length=0,order=1,act=False):
@@ -162,7 +165,7 @@ class chaohu(basescenario):
     
     def controller(self,mode='rand',state=None,setting=None):
         asp = self.config['action_space']
-        if mode.lower() == 'rand':
+        if mode.lower().startswith('rand'):
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
