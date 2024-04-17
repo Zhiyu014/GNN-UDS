@@ -79,61 +79,66 @@ class chaohu(basescenario):
         return np.array(__object).sum(axis=-1) if seq else np.array(__object)
      
      
-    def objective_pred(self,preds,states,settings):
+    def objective_pred(self,preds,states,settings,gamma=None):
         preds,edge_preds = preds
-        _,edge_state = states
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        flood = q_w.sum(axis=-1).sum(axis=-1)
+        gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
+        flood = (q_w.sum(axis=-1)*gamma).sum(axis=-1)
         nodes,links = self.elements['nodes'],self.elements['links']
-        targets,asp = self.config['performance_targets'],list(self.config['action_space'])
-        penal = [(q_w[...,nodes.index(idx)]>0).sum(axis=1) * weight
+        targets = self.config['performance_targets']
+        penal = [((q_w[...,nodes.index(idx)]>0)*gamma).sum(axis=1) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding']
-        outflow = [q_in[...,nodes.index(idx)].sum(axis=1) * weight
+        outflow = [(q_in[...,nodes.index(idx)]*gamma).sum(axis=1) * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
-        wwtp = [q_in[...,nodes.index(idx)].sum(axis=1) * weight
+        wwtp = [(q_in[...,nodes.index(idx)]*gamma).sum(axis=1) * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.config['global_state'][0][-1] == 'head':
-            energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [((np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)*gamma).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         else:
-            energy = [(np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [((np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)*gamma).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         # Control Roughness
-        sett = np.concatenate([edge_state[:,-1:,[links.index(idx) for idx,attr,_  in targets if attr == 'setting'],-1],
-                               settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
-        rough = [np.abs(np.diff(sett[...,i],axis=1)).sum(axis=1) * weight
-                 for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        # return flood + sum(penal) + sum(outflow) + sum(energy)
-        return np.array([flood] + penal + outflow + wwtp + energy + rough).T
+        # asp = list(self.config['action_space'])
+        # _,edge_state = states
+        # sett = np.concatenate([edge_state[:,-1:,[links.index(idx) for idx,attr,_  in targets if attr == 'setting'],-1],
+        #                        settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
+        # rough = [np.abs(np.diff(sett[...,i],axis=1)*gamma).sum(axis=1) * weight
+        #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
+        return np.array([flood] + penal + outflow + wwtp + energy).T
+        # return np.array([flood] + penal + outflow + wwtp + energy + rough).T
     
-    def objective_pred_tf(self,preds,states,settings):
+    def objective_pred_tf(self,preds,states,settings,gamma=None):
         import tensorflow as tf
         preds,edge_preds = preds
-        _,edge_state = states
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        flood = tf.reduce_sum(tf.reduce_sum(q_w,axis=-1),axis=-1)
+        gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
+        flood = tf.reduce_sum(tf.reduce_sum(q_w,axis=-1)*gamma,axis=1)
         nodes,links = self.elements['nodes'],self.elements['links']
-        targets,asp = self.config['performance_targets'],list(self.config['action_space'])
-        penal = [tf.reduce_sum(tf.cast(q_w[...,nodes.index(idx)]>0,tf.float32),axis=1) * weight
+        targets = self.config['performance_targets']
+        penal = [tf.reduce_sum(tf.cast(q_w[...,nodes.index(idx)]>0,tf.float32)*gamma,axis=1) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding']
-        outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]) * weight
+        outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
                    for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
-        wwtp = [tf.reduce_sum(q_in[...,nodes.index(idx)]) * weight
+        wwtp = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.config['global_state'][0][-1] == 'head':
-            energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms)*gamma,axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         else:
-            energy = [tf.reduce_sum((tf.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms),axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [tf.reduce_sum((tf.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms)*gamma,axis=1)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         # Control Roughness
-        sett = tf.concat([edge_state[:,-1:,[links.index(idx) for idx,attr,_  in targets if attr == 'setting'],-1],
-                          settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
-        rough = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(sett[...,i],axis=1)),axis=1) * weight
-                 for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
+        # asp = list(self.config['action_space'])
+        # _,edge_state = states
+        # sett = tf.concat([edge_state[:,-1:,[links.index(idx) for idx,attr,_  in targets if attr == 'setting'],-1],
+        #                   settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
+        # rough = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(sett[...,i],axis=1))*gamma,axis=1) * weight
+        #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
+        return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
+        # return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
 
     def get_action_table(self,act='rand'):
         asp = self.config['action_space'].copy()
@@ -144,9 +149,11 @@ class chaohu(basescenario):
                     for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
             actions = {act:[[1]*a+[0]*(len(v)-1-a) for a,v in zip(act,asp.values())] for act in product(*asp.values())}
             actions = {k:[v for va in values for v in va] for k,values in actions.items()}
+            if '2' in act:
+                actions = {(k[0]*3+k[1],k[2]*3+k[3]):v for k,v in actions.items()}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False):
+    def get_args(self,directed=False,length=0,order=1,act=False,mac=False):
         args = super().get_args(directed,length,order)
 
         inp = read_inp_file(self.config['swmm_input'])
@@ -161,6 +168,18 @@ class chaohu(basescenario):
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
         if act and self.config['act'] and not act.startswith('conti'):
             args['action_table'] = self.get_action_table(act)
+            # For multi-agent
+            args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
+            if mac:
+                args['n_agents'] = len(self.config['site'])
+                state = [s[0] for s in self.config['states']]
+                args['observ_space'] = [[state.index(o) for o in v['states']]
+                                        for v in self.config['site'].values()]
+                # args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
+            else:
+                args['n_agents'] = 1
+                args['observ_space'] = args['state_shape']
+                # args['action_shape'] = len(args['action_table'])
         return args
     
     def controller(self,mode='rand',state=None,setting=None):

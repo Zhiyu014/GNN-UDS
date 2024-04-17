@@ -1,4 +1,4 @@
-from utilities import get_inp_files
+from utils.utilities import get_inp_files
 import pandas as pd
 import os,time,gc
 import multiprocessing as mp
@@ -123,9 +123,9 @@ def get_runoff(env,event,rate=False,tide=False):
                         if not env.env._isFinished else 0.0]
                        for node in env.elements['nodes']])
         else:
-            runoff = env.state()[...,-1:]
+            runoff = env.state_full()[...,-1:]
         if tide:
-            ti = env.state()[...,:1]
+            ti = env.state_full()[...,:1]
             runoff = np.concatenate([runoff,ti],axis=-1)
         runoffs.append(runoff)
     ts = [t0]+env.data_log['simulation_time'][:-1]
@@ -133,7 +133,7 @@ def get_runoff(env,event,rate=False,tide=False):
     return ts,runoff
 
 if __name__ == '__main__':
-    args,config = parser('config.yaml')
+    args,config = parser(os.path.join(HERE,'utils','config.yaml'))
     # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     ctx = mp.get_context("spawn")
 
@@ -210,9 +210,11 @@ if __name__ == '__main__':
         settings = [setting]
         done,idx = False,0
         while not done:
-            setting = np.array(env.controller('safe',state,ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1])).astype(float)
+            if idx % args.setting_duration == 0:
+                setting = ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1]
+                setting = np.array(env.controller('safe',state,setting)).astype(float)
             done = env.step(setting)
-            state = env.state()
+            state = env.state_full()
             edge_state = env.state_full(False,'links')
             states.append(state)
             perfs.append(env.flood())

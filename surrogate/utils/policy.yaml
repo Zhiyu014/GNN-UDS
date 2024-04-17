@@ -1,0 +1,100 @@
+astlingen:
+  env: astlingen
+  directed: False
+  length: 0
+  order: 1
+  setting_duration: 5
+  act: 'False'
+  mac: False
+
+  model_dir: ./model/astlingen/
+  epsilon: -1.0
+
+  seq_in: 3 # recurrent sequence length
+  seq_out: 3 # recurrent sequence length
+  horizon: 10 # horizon length
+  conv: GATconv
+  recurrent: Conv1D
+  use_edge: False
+  net_dim: 128 # dimension of hidden layers
+  n_layer: 3 # number of network layers
+  conv_dim: 128 # dimension of hidden layers
+  n_sp_layer: 3 # number of network layers
+  hidden_dim: 128 # dimension of hidden layers
+  n_tp_layer: 3 # number of network layers
+  activation: relu # if use dueling layer
+  dueling: False # if use dueling layer
+
+  # Arguments for the training
+  train: False
+  episodes: 5000
+  gamma: 0.98 # discouted rate
+  batch_size: 128 # batch size of the training data
+  max_capacity: 4194304 # maximum capacity of the replay buffer
+  learning_rate: 0.0001 # learning rate
+  act_lr: 0.0001 # learning rate for actor
+  cri_lr: 0.0001 # learning rate for critic
+  update_interval: 0.005 # update the target network per update_interval
+  save_gap: 100 # save the agent & state_norm per save_gap
+  agent_dir: ./agent/astlingen/ # the working directory
+  load_agent: False # if load the current model
+
+  # Arguments for the testing
+  test: False
+  rain_dir: ./envs/config/  # rainfall info dir
+  rain_suffix:  # rain_suffix
+  rain_num: 50 # exploration events
+  processes: 4 
+  eval_gap: 10 # evaluate the agent per eval_gap
+  control_interval: 5
+  result_dir: ./results/astlingen/ # the result directory
+
+chaohu:
+  env: chaohu
+  directed: False
+  length: 0
+  order: 1
+  setting_duration: 10
+  act: 'False'
+  mac: False
+
+  model_dir: ./model/chaohu/
+  epsilon: -1.0
+
+  seq_in: 3 # recurrent sequence length
+  seq_out: 3 # recurrent sequence length
+  horizon: 10 # horizon length
+  conv: GATconv
+  recurrent: Conv1D
+  use_edge: False
+  net_dim: 128 # dimension of hidden layers
+  n_layer: 3 # number of network layers
+  conv_dim: 128 # dimension of hidden layers
+  n_sp_layer: 3 # number of network layers
+  hidden_dim: 128 # dimension of hidden layers
+  n_tp_layer: 3 # number of network layers
+  activation: relu # if use dueling layer
+  dueling: False # if use dueling layer
+
+  # Arguments for the training
+  train: False
+  episodes: 5000
+  gamma: 0.95 # discouted rate
+  max_capacity: 4194304 # maximum capacity of the replay buffer
+  batch_size: 128 # batch size of the training data
+  learning_rate: 0.0001 # learning rate
+  act_lr: 0.0001 # learning rate for actor
+  cri_lr: 0.0001 # learning rate for critic
+  update_interval: 0.005 # update the target network per update_interval
+  save_gap: 100 # save the agent & state_norm per save_gap
+  agent_dir: ./agent/chaohu/ # the working directory
+  load_agent: False # if load the current model
+
+  # Arguments for the testing
+  test: False
+  rain_dir: ./envs/config/  # rainfall info dir
+  rain_suffix:  # rain_suffix
+  rain_num: 50 # exploration events
+  eval_gap: 10 # evaluate the agent per eval_gap
+  control_interval: 10
+  result_dir: ./results/chaohu/ # the result directory

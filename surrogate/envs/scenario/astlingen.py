@@ -87,37 +87,47 @@ class astlingen(basescenario):
         else:
             return - __reward
 
-    def objective_pred(self,preds,states,settings):
+    def objective_pred(self,preds,states,settings,gamma=None,norm=False):
         preds,_ = preds
         state,_ = states
         q_w = preds[...,-1]
         q_in = np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
-        flood = [q_w[...,self.elements['nodes'].index(idx)].sum(axis=1) * weight
+        flood = [(q_w[...,self.elements['nodes'].index(idx)]*gamma).sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [np.abs(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)).sum(axis=1) * weight
+        inflow = [np.abs(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)*gamma).sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' not in idx]
-        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)].sum(axis=1) * weight
+        outflow = [(q_in[:,1:,self.elements['nodes'].index(idx)]*gamma).sum(axis=1) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        # return sum(flood) + sum(inflow) + sum(outflow)
-        return np.array(flood + outflow + inflow).T
+        obj = np.stack(flood + outflow + inflow,axis=0)
+        gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
+        obj *= gamma
+        if norm:
+            obj /= state[...,-1].sum(axis=-1)
+        return obj.sum(axis=-1).T
     
-    def objective_pred_tf(self,preds,states,settings):
+    def objective_pred_tf(self,preds,states,settings,gamma=None,norm=False):
         import tensorflow as tf
         preds,_ = preds
         state,_ = states
         q_w = preds[...,-1]
         q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
-        flood = [tf.reduce_sum(q_w[...,self.elements['nodes'].index(idx)],axis=1) * weight
+        flood = [q_w[...,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)),axis=1) * weight
+        inflow = [tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' not in idx]
-        outflow = [tf.reduce_sum(q_in[:,1:,self.elements['nodes'].index(idx)],axis=1) * weight
+        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        return tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+        gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
+        if norm:
+            obj = tf.reduce_sum(obj*gamma/tf.reduce_sum(state[...,-1],axis=-1),axis=-1)
+        else:
+            obj = tf.reduce_sum(obj*gamma,axis=-1)
+        return obj
 
     def get_action_space(self,act='rand'):
         asp = self.config['action_space'].copy()
@@ -132,7 +142,7 @@ class astlingen(basescenario):
         actions = {act:[v[a] for a,v in zip(act,asp.values())] for act in actions}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False):
+    def get_args(self,directed=False,length=0,order=1,act=False,mac=False):
         args = super().get_args(directed,length,order)
 
         # Rainfall timeseries & events files
@@ -153,6 +163,20 @@ class astlingen(basescenario):
             args['action_space'] = self.get_action_space(act)
             if not act.startswith('conti'):
                 args['action_table'] = self.get_action_table(act)
+                args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
+            else:
+                args['action_shape'] = len(args['action_space'])
+            # For multi-agent
+            if mac:
+                args['n_agents'] = len(self.config['site'])
+                state = [s[0] for s in self.config['states']]
+                args['observ_space'] = [[state.index(o) for o in v['states']]
+                                        for v in self.config['site'].values()]
+                # args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
+            else:
+                args['n_agents'] = 1
+                args['observ_space'] = args['state_shape']
+                # args['action_shape'] = len(args['action_table'])
         return args
 
     def controller(self,mode='rand',state=None,setting=None):

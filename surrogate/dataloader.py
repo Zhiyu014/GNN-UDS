@@ -9,8 +9,9 @@ class DataGenerator:
         self.env = env
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
         self.pre_step = args.rainfall.get('pre_time',0) // args.interval
+        self.interval = getattr(args,"interval",1)
         self.seq_in = getattr(args,"seq_in",6)
-        self.seq_out = getattr(args,"seq_out",1)
+        self.seq_out = getattr(args,"seq_out",getattr(args,"horizon",1))
         recurrent = getattr(args,"recurrent",'False')
         self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.if_flood = getattr(args,"if_flood",False)
@@ -22,8 +23,9 @@ class DataGenerator:
             self.action_space = env.config['action_space']
             # self.adj = env.get_adj()
             # self.act_edges = env.get_edge_list(list(self.action_space.keys()))
+        self.limit = getattr(args,"limit",2**22)
+        self.cur_capa = 0
 
-    
     def simulate(self, event, seq = False, act = False, hotstart = False):
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.flood(seq=seq)
@@ -45,7 +47,7 @@ class DataGenerator:
                 _ = swmm5_run(eval_file)
             setting = self.env.controller(act,state,setting) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
             done = self.env.step(setting)
-            state = self.env.state(seq=seq)
+            state = self.env.state_full(seq=seq)
             perf = self.env.flood(seq=seq)
             states.append(state)
             perfs.append(perf)
@@ -138,28 +140,32 @@ class DataGenerator:
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
         event_idxs = [np.split(data, np.where(np.diff(data) != 1)[0]+1) for data in event_idxs]
-        event_idxs = np.concatenate([np.concatenate([dat[seq:-seq-1] for dat in data],axis=0) for data in event_idxs],axis=0)
+        event_idxs = np.concatenate([np.concatenate([dat[seq+1:-seq] for dat in data],axis=0) for data in event_idxs],axis=0)
         return event_idxs
         
 
-    def prepare_batch(self,event_idxs,seq=0,batch_size=32):
-        idxs = np.random.choice(event_idxs,batch_size,replace=False)
+    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,return_idx=False):
+        if interval > 1:
+            idxs = event_idxs[interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False)]
+        else:
+            idxs = np.random.choice(event_idxs,batch_size,replace=False)
         if seq > 0:
-            ixs = np.apply_along_axis(lambda t:np.arange(t-seq+1,t+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
-            iys = np.apply_along_axis(lambda t:np.arange(t+1,t+seq+1),axis=1,arr=np.expand_dims(idxs,axis=-1))
+            ixs = np.apply_along_axis(lambda t:np.arange(t-seq,t),axis=1,arr=np.expand_dims(idxs,axis=-1))
+            iys = np.apply_along_axis(lambda t:np.arange(t,t+seq),axis=1,arr=np.expand_dims(idxs,axis=-1))
             states = (np.take(self.states,ixs,axis=0),np.take(self.states,iys,axis=0))
             perfs = (np.take(self.perfs,ixs,axis=0),np.take(self.perfs,iys,axis=0))
             edge_states = (np.take(self.edge_states,ixs,axis=0),np.take(self.edge_states,iys,axis=0)) if self.use_edge else None
             settings = np.take(self.settings,iys,axis=0) if self.settings is not None else None
         else:
-            states,perfs = (self.states[idxs],self.states[idxs+1]),(self.perfs[idxs],self.perfs[idxs+1])
-            edge_states = (self.edge_states[idxs],self.edge_states[idxs+1]) if self.use_edge else None
-            settings = self.settings[idxs+1] if self.settings is not None else None
+            states,perfs = (self.states[idxs-1],self.states[idxs]),(self.perfs[idxs-1],self.perfs[idxs])
+            edge_states = (self.edge_states[idxs-1],self.edge_states[idxs]) if self.use_edge else None
+            settings = self.settings[idxs] if self.settings is not None else None
         x,b,y = self.state_split_batch(states,perfs)
         ex,ey = self.edge_state_split_batch(edge_states) if self.use_edge else (None,None)
         if self.settings is not None:
             settings = settings[:,:self.seq_out,...] if self.recurrent else settings
-        return [dat.astype(np.float32) if dat is not None else dat for dat in [x,settings,b,y,ex,ey]]
+        dats = [x,settings,b,y,ex,ey,self.event_id[idxs]] if return_idx else [x,settings,b,y,ex,ey]
+        return [dat.astype(np.float32) if dat is not None else dat for dat in dats]
     
 
         # res = []
@@ -219,6 +225,12 @@ class DataGenerator:
         if self.recurrent:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
+
+    def update(self,data):
+        items = ['states','perfs','settings']
+        items += ['edge_states','event_id'] if self.use_edge else ['event_id']
+        for dat,item in zip(data,items):
+            setattr(self,item,np.concatenate([getattr(self,item),dat],axis=0)[-self.limit:])
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir

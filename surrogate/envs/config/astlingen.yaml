@@ -8,6 +8,75 @@ interval: 1
 # control time step (min)
 # control_interval: 5
 # state definitions
+states:
+  - !!python/tuple
+    - "RG1"
+    - rainfall
+  - !!python/tuple
+    - "RG2"
+    - rainfall
+  - !!python/tuple
+    - "RG3"
+    - rainfall
+  - !!python/tuple
+    - "RG4"
+    - rainfall
+  - !!python/tuple
+    - "T1"
+    - depthN
+  - !!python/tuple
+    - "T2"
+    - depthN
+  - !!python/tuple
+    - "T3"
+    - depthN
+  - !!python/tuple
+    - "T4"
+    - depthN
+  - !!python/tuple
+    - "T5"
+    - depthN
+  - !!python/tuple
+    - "T6"
+    - depthN
+  - !!python/tuple
+    - "V2"
+    - setting
+  - !!python/tuple
+    - "V3"
+    - setting
+  - !!python/tuple
+    - "V4"
+    - setting
+  - !!python/tuple
+    - "V6"
+    - setting
+  # inlet & outlet nodes
+  - !!python/tuple
+    - "J5"
+    - depthN
+  - !!python/tuple
+    - "J6"
+    - depthN
+  - !!python/tuple
+    - "J8"
+    - depthN
+  - !!python/tuple
+    - "J9"
+    - depthN
+  - !!python/tuple
+    - "J12"
+    - depthN
+  - !!python/tuple
+    - "J13"
+    - depthN
+  - !!python/tuple
+    - "J14"
+    - depthN
+  - !!python/tuple
+    - "J17"
+    - depthN
+
 # global state definitions
 global_state:
   - !!python/tuple
@@ -171,6 +240,39 @@ flood:
   - !!python/tuple
     - nodes
     - cumflooding
+
+
+# distributed control sites
+site:
+  V2:
+    states:
+      - "RG3"
+      - "T2"
+      - "V2"
+      - J13
+      - J17
+  V3:
+    states:
+      - "RG1"
+      - "RG2"
+      - "T3"
+      - "V3"
+      - J12
+      - J14
+  V4:
+    states:
+      - "RG3"
+      - "T4"
+      - "V4"
+      - J5
+      - J6
+  V6:
+    states:
+      - "RG2"
+      - "T6"
+      - "V6"
+      - J8
+      - J9
 
 # Rainfall scenario parameters
 rainfall:

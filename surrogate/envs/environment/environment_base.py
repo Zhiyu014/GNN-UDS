@@ -74,6 +74,7 @@ class env_base(environment):
             'flow':self._getLinkFlow,
             'flow_vol':self._getLinkCumFlow,
             'setting':self._getLinkSetting,
+            'cumprecip':self._getSystemRainfall,
             'rainfall':self._getGageRainfall,
             'getlinktype':self._getLinkType,
             'cumpumpenergy':self._getPumpEnergy,
@@ -286,7 +287,9 @@ class env_base(environment):
         else:
             return sum(self._get_step_value('flow_vol',ID))
 
-
+    def _getSystemRainfall(self,ID):
+        return self.sim._model.runoff_routing_stats()['rainfall']
+    
     def _getGageRainfall(self,ID):
         # For Cumrainfall state
         return self.sim._model.getGagePrecip(ID,

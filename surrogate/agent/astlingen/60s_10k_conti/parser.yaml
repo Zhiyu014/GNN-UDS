@@ -1,0 +1,13 @@
+act: conti
+agent_dir: 60s_10k_conti
+batch_size: 16
+conv: GAT
+episodes: 10000
+if_flood: 5
+length: 501.0
+model_dir: 60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs
+rain_dir: ast_test1_events.csv
+seq_in: 60
+seq_out: 60
+train: true
+use_edge: true

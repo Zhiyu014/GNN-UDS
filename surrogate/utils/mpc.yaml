@@ -1,0 +1,117 @@
+astlingen:
+  # env args
+  env: astlingen
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix:
+  rain_num: 50
+
+  # MPC args
+  control_interval: 5
+  setting_duration: 5
+  act: 'False'
+  processes: 5
+  horizon: 60
+  pop_size: 32
+  use_current: False
+  sampling: 0.4
+  learning_rate: 0.1
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  surrogate: False
+  model_dir: ./model/astlingen/
+  epsilon: -1.0
+  gradient: False
+  cross_entropy: 0.0
+  keep: 'False'
+  stochastic: 0
+  error: 0.0
+  result_dir: ./results/astlingen/
+
+
+hague:
+  # env args
+  env: hague
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix:
+  rain_num: 50
+  
+  # MPC args
+  control_interval: 30
+  setting_duration: 15
+  act: 'False'
+  processes: 5
+  horizon: 60
+  pop_size: 32
+  use_current: False
+  sampling: 0.4
+  learning_rate: 0.1
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  surrogate: False
+  model_dir: ./model/hague/
+  epsilon: -1.0
+  gradient: False
+  cross_entropy: 0.0
+  keep: 'False'
+  stochastic: 0
+  error: 0.0
+  result_dir: ./results/hague/
+
+chaohu:
+  # env args
+  env: chaohu
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix: chaohu
+  rain_num: 50
+
+  # MPC args
+  control_interval: 10
+  setting_duration: 10
+  act: 'False'
+  processes: 5
+  horizon: 60
+  pop_size: 32
+  use_current: False
+  sampling: 0.4
+  learning_rate: 0.1
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  keep: 'False'
+  surrogate: False
+  model_dir: ./model/chaohu/
+  epsilon: -1.0
+  gradient: False
+  cross_entropy: 0.0
+  stochastic: 0
+  error: 0.0
+  result_dir: ./results/chaohu/

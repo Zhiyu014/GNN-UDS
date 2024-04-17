@@ -1,5 +1,5 @@
 from emulator import Emulator # Emulator should be imported before env
-from utilities import get_inp_files
+from utils.utilities import get_inp_files
 import pandas as pd
 import os,time,gc
 import multiprocessing as mp
@@ -61,7 +61,7 @@ def parser(config=None):
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--cross_entropy',type=float,default=0,help=' if use cross-entropy method and the kept percentage')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
-    parser.add_argument('--epsilon',type=float,default=0.1,help='the depth threshold of flooding')
+    parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
 
     # Only used to keep the same condition to test internal model efficiency
@@ -100,9 +100,9 @@ def get_runoff(env,event,rate=False,tide=False):
                         if not env.env._isFinished else 0.0]
                        for node in env.elements['nodes']])
         else:
-            runoff = env.state()[...,-1:]
+            runoff = env.state_full()[...,-1:]
         if tide:
-            ti = env.state()[...,:1]
+            ti = env.state_full()[...,:1]
             runoff = np.concatenate([runoff,ti],axis=-1)
         runoffs.append(runoff)
     ts = [t0]+env.data_log['simulation_time'][:-1]
@@ -504,7 +504,7 @@ def run_gr(prob,args,setting=None):
 
 
 if __name__ == '__main__':
-    args,config = parser('config.yaml')
+    args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     ctx = mp.get_context("spawn")
     # de = {'env':'astlingen',
@@ -542,7 +542,7 @@ if __name__ == '__main__':
     events = get_inp_files(env.config['swmm_input'],rain_arg)
 
     if args.surrogate:
-        hyps = yaml.load(open('config.yaml','r'),yaml.FullLoader)
+        hyps = yaml.load(open(os.path.join(HERE,'utils','config.yaml'),'r'),yaml.FullLoader)
         margs = argparse.Namespace(**hyps[args.env])
         margs.model_dir = args.model_dir
         known_hyps = yaml.load(open(os.path.join(margs.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
@@ -615,6 +615,7 @@ if __name__ == '__main__':
             if i*args.interval % args.control_interval == 0:
                 t2 = time.time()
                 if args.surrogate:
+                    state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
                         f = (flood>0).astype(float)
                         # f = np.eye(2)[f].squeeze(-2)
@@ -657,11 +658,12 @@ if __name__ == '__main__':
                 # setting = [env.controller(mode='bc')
                 #             for _ in range(args.prediction['control_horizon']//args.setting_duration)]
                 j = 0
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-            sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             done = env.step(sett)
-            state = env.state(seq=margs.seq_in if args.surrogate else False)
+            state = env.state_full(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)
             edge_state = env.state_full(margs.seq_in if args.surrogate else False,'links')

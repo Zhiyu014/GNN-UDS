@@ -123,9 +123,9 @@ class basescenario(scenario):
 
     def state(self, seq = False):
         # Observe from the environment
-        if self.global_state:
-            state = self.state_full(seq)
-            return state
+        # if self.global_state:
+        #     state = self.state_full(seq)
+        #     return state
         if self.env._isFinished:
             if seq:
                 __state = [list(self.data_log[attribute][ID])[-seq:]
@@ -211,7 +211,10 @@ class basescenario(scenario):
 
         self.global_state = global_state
         self.initialize_logger()
-        state = self.state(seq)
+        if self.global_state:
+            state = self.state_full(seq)
+        else:
+            state = self.state(seq)
         return state
     
     def initialize_logger(self, config=None,maxlen=None):
@@ -229,11 +232,11 @@ class basescenario(scenario):
                     self.data_log[attribute] = {}
                 for ID in self.elements[typ]:
                     self.data_log[attribute][ID] = [] if maxlen is None else deque(maxlen=maxlen)
-        else:
-            for ID, attribute in config["states"]:
-                if attribute not in self.data_log.keys():
-                    self.data_log[attribute] = {}
-                self.data_log[attribute][ID] = [] if maxlen is None else deque(maxlen=maxlen)
+        # else:
+        for ID, attribute in config["states"]:
+            if attribute not in self.data_log.keys():
+                self.data_log[attribute] = {}
+            self.data_log[attribute][ID] = [] if maxlen is None else deque(maxlen=maxlen)
 
         # Data logger for storing _performance & _state data
         for ID, attribute, _ in config["performance_targets"]:

@@ -1,0 +1,7 @@
+act: conti
+agent_dir: ./agent/astlingen/60s_10k_conti
+env: astlingen
+length: 500
+rain_dir: ./envs/config/ast_test1_events.csv
+result_dir: ./results/astlingen/60s_10k_conti_policy2007
+test: true

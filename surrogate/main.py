@@ -1,6 +1,6 @@
 from emulator import Emulator # Emulator should be imported before env
 from dataloader import DataGenerator
-from utilities import get_inp_files
+from utils.utilities import get_inp_files
 import argparse,yaml
 from envs import get_env
 import numpy as np
@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
 # from line_profiler import LineProfiler
+HERE = os.path.dirname(__file__)
 
 def parser(config=None):
     parser = argparse.ArgumentParser(description='surrogate')
@@ -81,7 +82,7 @@ def parser(config=None):
     return args,config
 
 if __name__ == "__main__":
-    args,config = parser('config.yaml')
+    args,config = parser(os.path.join(HERE,'utils','config.yaml'))
 
     # simu_de = {'simulate':True,
     #            'env':'RedChicoSur',
