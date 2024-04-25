@@ -82,22 +82,21 @@ class chaohu(basescenario):
     def objective_pred(self,preds,states,settings,gamma=None):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
-        flood = (q_w.sum(axis=-1)*gamma).sum(axis=-1)
+        flood = q_w.sum(axis=-1).sum(axis=-1)
         nodes,links = self.elements['nodes'],self.elements['links']
         targets = self.config['performance_targets']
-        penal = [((q_w[...,nodes.index(idx)]>0)*gamma).sum(axis=1) * weight
+        penal = [(q_w[...,nodes.index(idx)]>0) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding']
-        outflow = [(q_in[...,nodes.index(idx)]*gamma).sum(axis=1) * weight
+        outflow = [q_in[...,nodes.index(idx)] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
-        wwtp = [(q_in[...,nodes.index(idx)]*gamma).sum(axis=1) * weight
+        wwtp = [q_in[...,nodes.index(idx)] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.config['global_state'][0][-1] == 'head':
-            energy = [((np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)*gamma).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         else:
-            energy = [((np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)*gamma).sum(axis=1)/ 8.814 * KWperHP/3600.0 * weight
+            energy = [(np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)/ 8.814 * KWperHP/3600.0 * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         # Control Roughness
         # asp = list(self.config['action_space'])
@@ -106,7 +105,12 @@ class chaohu(basescenario):
         #                        settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [np.abs(np.diff(sett[...,i],axis=1)*gamma).sum(axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        return np.array([flood] + penal + outflow + wwtp + energy).T
+        obj = np.concatenate([flood] + penal + outflow + wwtp + energy,axis=0)
+        gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
+        obj *= gamma
+        # if norm:
+        #     obj /= state[...,-1].sum(axis=-1)
+        return obj.sum(axis=-1)
         # return np.array([flood] + penal + outflow + wwtp + energy + rough).T
     
     def objective_pred_tf(self,preds,states,settings,gamma=None):

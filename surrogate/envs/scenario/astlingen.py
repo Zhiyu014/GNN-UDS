@@ -92,20 +92,20 @@ class astlingen(basescenario):
         state,_ = states
         q_w = preds[...,-1]
         q_in = np.concatenate([state[:,-1:,:,1],preds[...,1]],axis=1)
-        flood = [(q_w[...,self.elements['nodes'].index(idx)]*gamma).sum(axis=1) * weight
+        flood = [q_w[...,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [np.abs(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)*gamma).sum(axis=1) * weight
+        inflow = [np.abs(np.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)) * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' not in idx]
-        outflow = [(q_in[:,1:,self.elements['nodes'].index(idx)]*gamma).sum(axis=1) * weight
+        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        obj = np.stack(flood + outflow + inflow,axis=0)
+        obj = np.concatenate(flood + outflow + inflow,axis=0)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         if norm:
             obj /= state[...,-1].sum(axis=-1)
-        return obj.sum(axis=-1).T
+        return obj.sum(axis=-1)
     
     def objective_pred_tf(self,preds,states,settings,gamma=None,norm=False):
         import tensorflow as tf

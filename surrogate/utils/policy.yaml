@@ -28,6 +28,7 @@ astlingen:
   # Arguments for the training
   train: False
   episodes: 5000
+  repeats: 5
   gamma: 0.98 # discouted rate
   batch_size: 128 # batch size of the training data
   max_capacity: 4194304 # maximum capacity of the replay buffer
@@ -79,6 +80,7 @@ chaohu:
   # Arguments for the training
   train: False
   episodes: 5000
+  repeats: 10
   gamma: 0.95 # discouted rate
   max_capacity: 4194304 # maximum capacity of the replay buffer
   batch_size: 128 # batch size of the training data

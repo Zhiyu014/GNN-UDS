@@ -1,0 +1,9 @@
+act: rand
+pop_size: 64
+processes: 2
+rain_num: 100
+rain_suffix: chaohu_testall
+result_dir: 60s_simu_test100
+termination:
+- n_gen
+- 5

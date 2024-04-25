@@ -82,7 +82,7 @@ def parser(config=None):
     config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k,v)}
     for k,v in config.items():
         if '_dir' in k:
-            setattr(args,k,os.path.join(hyps[args.env][k],args.env,v))
+            setattr(args,k,os.path.join(hyps[args.env][k],v))
 
     print('MBRL configs: {}'.format(args))
     return args,config
@@ -140,28 +140,29 @@ def interact_steps(env,args,event,runoff,ctrl=None,train=False):
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
-    # train_de = {
-    #     'train':True,
-    #     'env':'astlingen',
-    #     'length':501,
-    #     'act':'conti',
-    #     'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
-    #     'batch_size':2,
-    #     'episodes':1000,
-    #     'seq_in':5,'horizon':60,
-    #     'setting_duration':5,
-    #     'use_edge':True,
-    #     'conv':'GAT',
-    #     'recurrent':'Conv1D',
-    #     'eval_gap':10,
-    #     'agent_dir': './agent/astlingen/5s_10k_conti_mbrl',
-    #     'test':True,
-    #     'rain_dir':'./envs/config/ast_test1_events.csv',
-    #     'result_dir':'./results/astlingen/60s_10k_conti_policy2007',
-    #     }
-    # for k,v in train_de.items():
-    #     setattr(args,k,v)
-    #     config[k] = v
+    train_de = {
+        'train':True,
+        'env':'astlingen',
+        'length':501,
+        'act':'conti',
+        'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
+        'batch_size':2,
+        'episodes':1000,
+        'seq_in':5,'horizon':60,
+        'setting_duration':5,
+        'use_edge':True,
+        'conv':'GAT',
+        'recurrent':'Conv1D',
+        'eval_gap':10,
+        'agent_dir': './agent/astlingen/5s_10k_conti_mbrl',
+        'processes':2,
+        'test':False,
+        'rain_dir':'./envs/config/ast_test1_events.csv',
+        'result_dir':'./results/astlingen/60s_10k_conti_policy2007',
+        }
+    for k,v in train_de.items():
+        setattr(args,k,v)
+        config[k] = v
 
     env = get_env(args.env)()
     env_args = env.get_args(act=args.act,mac=args.mac)
@@ -261,6 +262,8 @@ if __name__ == '__main__':
             dG.update(data)
             train_objss.append(np.array([np.sum(r[-1]) for r in res]))
             if np.mean(train_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in train_objss[:-1]]):
+                if not os.path.exists(os.path.join(args.agent_dir,'train')):
+                    os.mkdir(os.path.join(args.agent_dir,'train'))
                 ctrl.save(os.path.join(ctrl.agent_dir,'train'))
             t2 = time.time()
             print("Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(t2-t1,np.mean(train_objss[-1])))
@@ -295,10 +298,10 @@ if __name__ == '__main__':
                     s += [ex[:,-args.seq_in:,...]]
                     ae = ctrl.emul.get_edge_action(tf.repeat(a,args.setting_duration,axis=1),True)
                     s_ += [tf.concat([ey[:,:args.seq_in,...],ae],axis=-1)]
-                train_loss = ctrl.update(s,a,s_)
+                train_loss = ctrl.update_eval(s,a,s_,train=False)
                 train_losses.append(train_loss)
             t4 = time.time()
-            print("Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(t4-t3,np.mean(train_losses[-args.repeats:])))
+            print("Finish model-free update: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(t4-t3,*np.mean(train_losses[-args.repeats:],axis=0)))
 
             # Model-free validation
             print("Start model-free validation")
@@ -314,10 +317,10 @@ if __name__ == '__main__':
                     s += [ex[:,-args.seq_in:,...]]
                     ae = ctrl.emul.get_edge_action(tf.repeat(a,args.setting_duration,axis=1),True)
                     s_ += [tf.concat([ey[:,:args.seq_in,...],ae],axis=-1)]
-                eval_loss = ctrl.evaluate(s,a,s_)
+                eval_loss = ctrl.update_eval(s,a,s_,train=False)
                 eval_losses.append(eval_loss)
             t5 = time.time()
-            print("Finish model-free validation: {:.2f}s Mean loss: {:.2f}".format(t5-t4,np.mean(eval_losses[-args.repeats:])))
+            print("Finish model-free validation: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(t5-t4,*np.mean(eval_losses[-args.repeats:],axis=0)))
 
             # Evaluate the model in several episodes
             if episode % args.eval_gap == 0:
@@ -338,6 +341,8 @@ if __name__ == '__main__':
                 t6 = time.time()
                 print("Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(t6-t5,np.mean(test_objss[-1])))
                 if np.mean(test_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in test_objss[:-1]]):
+                    if not os.path.exists(os.path.join(args.agent_dir,'test')):
+                        os.mkdir(os.path.join(args.agent_dir,'test'))
                     ctrl.save(os.path.join(ctrl.agent_dir,'test'))
                 secs.append([t2-t1,t3-t2,t4-t3,t5-t4,t6-t5])
             else:

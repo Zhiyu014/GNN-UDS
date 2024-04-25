@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras.losses import MeanSquaredError,SparseCategoricalCrossentropy
 from tensorflow.keras.optimizers import Adam
-from tensorflow_probability.python.distributions import RelaxedOneHotCategorical
+from tensorflow_probability.python.distributions import RelaxedOneHotCategorical,Normal
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow.keras import backend as K
 from tensorflow.keras import activations
@@ -171,7 +171,6 @@ class Actor:
         self.net_dim = getattr(args,"net_dim",128)
         self.n_layer = getattr(args, "n_layer", 3)
         self.hidden_dim = getattr(args,"hidden_dim",self.net_dim)
-        self.n_tp_layer = getattr(args, "n_tp_layer", self.n_layer)
         self.kernel_size = getattr(args,"kernel_size",5)
         self.activation = getattr(args,"activation",False)
         # TODO:Use Graph convolution; Shared conv layer
@@ -205,19 +204,18 @@ class Actor:
         for _ in range(self.n_layer):
             x = Dense(self.net_dim, activation=self.activation)(x)
         if self.recurrent:
-            for i in range(self.n_tp_layer):
-                if self.recurrent == 'Conv1D':
-                    x = Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:])(x)
-                elif self.recurrent == 'GRU':
-                    x = GRU(self.hidden_dim,return_sequences=True)(x)
-                else:
-                    raise AssertionError("Unknown recurrent layer %s"%str(self.recurrent))
-            x = tf.gather(x,range(self.setting_duration-1,self.seq_out,self.setting_duration),axis=-2)
-        if isinstance(self.action_shape,np.ndarray):
+            x = GRU(self.hidden_dim)(x)
+        if self.act.startswith('conti'):
+            mu = Dense(self.action_shape, activation='linear')(x)
+            log_std = Dense(self.action_shape, activation='linear')(x)
+            output = DistributionLambda(lambda t: Normal(loc=t[0],scale=tf.exp(t[1])))([mu,log_std])
+        # TODO: Temperature parameter: 0.5 fpr categorical, maybe a trainable variable?
+        elif isinstance(self.action_shape,np.ndarray):
             output = [Dense(act_shape, activation='softmax')(x) for act_shape in self.action_shape]
-            output = [DistributionLambda(lambda t: RelaxedOneHotCategorical(1e-5,t))(o) for o in output]
+            output = [DistributionLambda(lambda t: RelaxedOneHotCategorical(0.5,t))(o) for o in output]
         else:
-            output = Dense(self.action_shape, activation='sigmoid' if self.act.startswith('conti') else 'softmax')(x)
+            output = Dense(self.action_shape, activation='softmax')(x)
+            output = DistributionLambda(lambda t: RelaxedOneHotCategorical(0.5,t))(output)
         model = Model(inputs=x_in, outputs=output)
         return model
 
@@ -250,22 +248,23 @@ class Actor:
     def get_action(self, observ, train = True):
         probs = self.forward(observ)
         if self.act.startswith('conti'):
-            return probs
+            return tf.sigmoid(probs.sample()) if train else tf.sigmoid(probs.loc)
         elif isinstance(probs,list):
-            # ms = [Categorical(prob) for prob in probs]
-            # logp_action = [prob.log_prob(act) for prob,act in zip(probs,action)]
-            return [prob.sample() if train else tf.argmax(prob.logits,axis=-1) for prob in probs]
+            return [tf.reduce_max(prob.sample(),axis=-1) if train else tf.argmax(prob.logits,axis=-1) for prob in probs]
         else:
-            # m = Categorical(probs)
-            # logp_action = probs.log_prob(action)
-            return probs.sample() if train else tf.argmax(probs.logits,axis=-1)
+            return tf.reduce_max(probs.sample(),axis=-1) if train else tf.argmax(probs.logits,axis=-1)
 
-    def get_action_probs(self, observ, a):
+    def get_action_probs(self, observ):
         probs = self.forward(observ)
         if isinstance(probs,list):
-            return [prob.log_prob(a[...,i]) for i,prob in enumerate(probs)]
+            a = [prob.sample() for prob in probs]
+            logp_action = [prob.log_prob(act) for prob,act in zip(probs,a)]
         else:
-            return probs.log_prob(a)
+            a = probs.sample()
+            logp_action = probs.log_prob(a)
+            if self.act.startswith('conti'):
+                a = tf.sigmoid(a)
+        return tf.squeeze(a,axis=-1),tf.squeeze(logp_action,axis=-1)
         
     def convert_action_to_setting(self,action):
         if self.act.startswith('conti'):
@@ -369,6 +368,7 @@ class QAgent:
         self.update_interval = getattr(args, "update_interval", 0.005)
         self.agent_dir = args.agent_dir
         
+    # TODO: input action into q net
     def build_q_network(self,conv=None):
         if conv is None:
             input_shape = (self.seq_in,self.observ_size) if self.recurrent else (self.observ_size,)
@@ -377,64 +377,50 @@ class QAgent:
         else:
             inp = [Input(shape=ip.shape[1:]) for ip in conv.input]
             x = conv(inp)
-        if self.act.startswith('conti'):
-            a_in = Input(shape=(self.seq_out,self.action_shape) if self.recurrent else (self.action_shape,))
-            a = Dense(self.net_dim, activation=self.activation)(a_in)
-            x = tf.concat([x,a],axis=-1)
-            if isinstance(inp,list):
-                inp += [a_in]
-            else:
-                inp = [inp,a_in]
+        a_dim = sum(self.action_shape) if isinstance(self.action_shape,(np.ndarray,list)) else self.action_shape
+        a_in = Input(shape=(self.seq_out,a_dim) if self.recurrent else (a_dim,))
+        a = Dense(self.net_dim, activation=self.activation)(a_in)
+        x = tf.concat([x,a],axis=-1)
+        inp = inp + [a_in] if isinstance(inp,list) else [inp,a_in]
         for _ in range(self.n_layer):
             x = Dense(self.net_dim, activation=self.activation)(x)
         if self.recurrent:
-            for _ in range(self.n_tp_layer):
-                x = GRU(self.hidden_dim,return_sequences=True)(x)
-            x = tf.gather(x,range(self.setting_duration-1,self.seq_out,self.setting_duration),axis=-2)
-        if isinstance(self.action_shape,(np.ndarray,list)):
-            if self.dueling:
-                o = [Dense(act_shape+1,activation = 'linear')(x) for act_shape in self.action_shape]
-                output = [Lambda(lambda i: K.expand_dims(i[...,0],-1)+i[...,1:] - K.mean(i[...,1:],keepdims = True),
-                                output_shape=(act_shape,))(oi) for oi,act_shape in zip(o,self.action_shape)]
-            else:
-                output = [Dense(act_shape, activation='linear')(x) for act_shape in self.action_shape]
+            x = GRU(self.hidden_dim)(x)
+        # out_dim = self.action_shape if self.act.startswith('conti') else len(self.action_shape) if isinstance(self.action_shape,(np.ndarray,list)) else 1
+        out_dim = 1
+        if self.dueling:
+            o = Dense(out_dim+1,activation = 'linear')(x)
+            output = Lambda(lambda i: K.expand_dims(i[...,0],-1)+i[...,1:] - K.mean(i[...,1:],keepdims = True),
+                            output_shape=(out_dim,))(o)
         else:
-            if self.dueling:
-                o = Dense(self.action_shape+1,activation = 'linear')(x)
-                output = Lambda(lambda i: K.expand_dims(i[...,0],-1)+i[...,1:] - K.mean(i[...,1:],keepdims = True),
-                                output_shape=(self.action_shape,))(o)
-            else:
-                output = Dense(self.action_shape, activation='linear')(x)
+            output = Dense(out_dim, activation='linear')(x)
         model = Model(inputs=inp, outputs=output)
         return model
     
-    def get_input(self,observ,act=None):
+    def get_input(self,observ,act):
         if self.conv:
             inp = observ[:2] + [self.convnet.filter]
             if self.convnet.use_edge:
                 inp += observ[-1:] + [self.convnet.edge_filter]
-            if act is not None:
-                inp += [act]
-        elif act is not None:
-            inp = [observ,act]
+        else:
+            inp = [observ]
+        if isinstance(act,list):
+            act = tf.concat(act,axis=-1)
+        if self.recurrent and act.ndim < 3:
+            act = tf.repeat(act[:,tf.newaxis,:],self.seq_out,axis=1)
+        inp += [act]
         return inp
 
-    def forward(self,observ,act=None,target=False):
-        inp = self.get_input(observ,tf.repeat(act,self.setting_duration,axis=1)) if self.act.startswith('conti') else self.get_input(observ)
-        q = self.target_model(inp) if target else self.model(inp)
-        q = tf.squeeze(q)
-        if self.act.startswith('conti'):
-            return q
-        elif isinstance(self.action_shape,(np.ndarray,list)):
-            return [tf.reduce_sum(q[...,i] * tf.one_hot(act[...,i],act_shape),axis=-1) for i,act_shape in enumerate(self.action_shape)]
-        else:
-            return tf.reduce_sum(q * tf.one_hot(act,self.action_shape),axis=-1,keepdims=True)
-        
-    def critize(self,observ,act=None):
+    def forward(self,observ,act,target=False):
         inp = self.get_input(observ,act)
-        q = self.model(inp)
-        q = [squeeze(qi).numpy().tolist() for qi in q] if isinstance(q,list) else squeeze(q).numpy().tolist()
-        return q
+        q = self.target_model(inp) if target else self.model(inp)
+        return tf.squeeze(q,axis=-1)
+        # if self.act.startswith('conti'):
+        #     return q
+        # elif isinstance(self.action_shape,(np.ndarray,list)):
+        #     return [tf.reduce_sum(q[i] * tf.one_hot(act[i],act_shape),axis=-1) for i,act_shape in enumerate(self.action_shape)]
+        # else:
+        #     return tf.reduce_sum(q * tf.one_hot(act,self.action_shape),axis=-1,keepdims=True)
     
     def _hard_update_target_model(self):
         self.target_model.set_weights(self.model.get_weights())
@@ -447,21 +433,17 @@ class QAgent:
             + tau * model_weights
         self.target_model.set_weights(new_weight)
     
-    def save(self,i,agent_dir=None):
-        if agent_dir is None:
-            self.model.save_weights(join(self.agent_dir,'agent%s.h5'%i))
-            self.target_model.save_weights(join(self.agent_dir,'agent%s_target.h5'%i))
-        else:
-            self.model.save_weights(join(agent_dir,'agent%s.h5'%i))
-            self.target_model.save_weights(join(agent_dir,'agent%s_target.h5'%i))
+    def save(self,agent_dir=None,i=None):
+        i = '' if i is None else str(i)
+        agent_dir = agent_dir if agent_dir is not None else self.agent_dir
+        self.model.save_weights(join(agent_dir,'qnet%s.h5'%i))
+        self.target_model.save_weights(join(agent_dir,'qnet%s_target.h5'%i))
             
-    def load(self,i,agent_dir=None):
-        if agent_dir is None:
-            self.model.load_weights(join(self.agent_dir,'agent%s.h5'%i))
-            self.target_model.load_weights(join(self.agent_dir,'agent%s_target.h5'%i))
-        else:
-            self.model.load_weights(join(agent_dir,'agent%s.h5'%i))
-            self.target_model.load_weights(join(agent_dir,'agent%s_target.h5'%i))
+    def load(self,agent_dir=None,i=None):
+        i = '' if i is None else str(i)
+        agent_dir = agent_dir if agent_dir is not None else self.agent_dir
+        self.model.load_weights(join(agent_dir,'qnet%s.h5'%i))
+        self.target_model.load_weights(join(agent_dir,'qnet%s_target.h5'%i))
 
 class Agent:
     def __init__(self,
@@ -502,7 +484,8 @@ class Agent:
         elif getattr(args,'if_flood',False):
             self.observ_size += 1
             
-        self.critic = QAgent(action_shape,self.state_shape,args,self.convnet if self.conv else False)
+        self.qnet_0 = QAgent(action_shape,self.state_shape,args,self.convnet if self.conv else False)
+        self.qnet_1 = QAgent(action_shape,self.state_shape,args,self.convnet if self.conv else False)
         if self.mac:
             self.actor = [Actor(self.action_shape[i],len(self.observ_space[i]),args) 
             for i in range(self.n_agents)]
@@ -523,6 +506,9 @@ class Agent:
 
             self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
+
+            self.alpha_log = tf.Variable(-1,dtype=tf.float32,trainable=True)
+            self.alpha_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4))
 
         self.agent_dir = args.agent_dir
         if args.load_agent:
@@ -547,16 +533,6 @@ class Agent:
                                    for i in range(self.n_agents)]
         return o
 
-    def criticize(self,state):
-        if self.recurrent:
-            state = [state[0] for _ in range(self.seq_in-len(state))]+state \
-                if len(state)<self.seq_in else state
-        # Get action and logp
-        state = expand_dims(convert_to_tensor(state),0)
-        value = squeeze(self.critic.forward(state))
-        return value
-
-
     def rollout(self,x,b,ex):
         xs,exs,settings,perfs = [],[],[],[]
         for i in range(self.n_step):
@@ -565,7 +541,7 @@ class Agent:
                                       for dat,item in zip([x,bi,ex],'xbe')]
             a = self.actor.get_action([x_norm,b_norm,ex_norm],train=True)
             setting = self.actor.convert_action_to_setting(a)
-            setting = tf.repeat(setting,self.r_step,axis=1)
+            setting = tf.repeat(setting[:,tf.newaxis,:],self.r_step,axis=1).numpy()
             settings.append(setting)
             preds = self.emul.predict_tf(x,bi,setting,ex)
             # objs = self.env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],[x,ex],settings,self.gamma,norm=True)
@@ -583,120 +559,117 @@ class Agent:
             perfs.append(preds[0][...,-1:])
         return [np.concatenate(np.concatenate(dat,axis=1),axis=0) for dat in [xs,exs,settings,perfs]]
 
-    def update(self,s,a,s_):
+    def update_eval(self,s,a,s_,train=True):
         # if self.mac:
         #     o = self._split_observ(s)
-        r = self.env.objective_pred_tf([s_[0],s_[2] if self.emul.use_edge else None],[s[0],s[2] if self.emul.use_edge else None],a,norm=True)
-        value_loss = self.critic_update(s,a,r,s_)
-        advs = self.get_advantages(s,a,r,s_)
-        policy_loss = self.actor_update(s, a, advs)
-        return value_loss,policy_loss
+        r = tf.squeeze(self.env.objective_pred_tf([s_[0],s_[2] if self.emul.use_edge else None],[s[0],s[2] if self.emul.use_edge else None],a,norm=True),axis=-1)
+        value_loss = self.critic_update(s,a,r,s_,train)
+        alpha = self.alpha_update(s) if train else tf.exp(self.alpha_log).numpy()
+        # advs = self.get_advantages(s,a,r,s_)
+        policy_loss = self.actor_update(s,train)
+        return value_loss,alpha,policy_loss
 
-    def evaluate(self,s,a,s_):     
-        # if self.mac:
-        #     o = self._split_observ(s)
-        value_losses,policy_losses = [],[]
-        r = self.env.objective_pred_tf([s_[0],s_[2] if self.emul.use_edge else None],[s[0],s[2] if self.emul.use_edge else None],a,norm=True)
-        a_ = self.actor.get_action(s_,train=True)
-        q,q_ = self.critic.forward(s,a),self.critic.forward(s_,a_,target=True)
-        y_preds = tf.reduce_sum(q,axis=0 if isinstance(q,list) else -1)
-        target_value = r + self.gamma * tf.reduce_sum(q_,axis=0 if isinstance(q_,list) else -1)
-        value_loss = self.mse(y_preds, target_value)
-        
-        advs = target_value - y_preds
-        probs = self.actor.forward(s)
-
-        if self.act.startswith('conti'):
-            policy_loss = tf.reduce_mean(a*advs if a.ndim == 1 else a*tf.repeat(advs[...,tf.newaxis],a.shape[-1],axis=-1))
-        elif isinstance(probs,list):
-            policy_loss = tf.reduce_mean([self.scc(a[...,i],prob,sample_weight=advs) for i,prob in enumerate(probs)])
+    def critic_update(self,s,a,r,s_,train=True):
+        a_,logprobs_ = self.actor.get_action_probs(s_)
+        q_ = tf.minimum(self.qnet_0.forward(s_,a_,target=True),self.qnet_1.forward(s_,a_,target=True))
+        if isinstance(logprobs_,list):
+            logprobs_ = tf.concat(logprobs_,axis=-1)
+        if logprobs_.ndim > 1:
+            q_target = tf.reduce_mean([r + self.gamma * (q_ - tf.exp(self.alpha_log) * logprobs_[:,i]) for i in range(logprobs_.shape[1])],axis=0)
         else:
-            policy_loss = self.scc(a,probs,sample_weight=advs)
-        
-        value_losses.append(value_loss.numpy())
-        policy_losses.append(policy_loss.numpy())
-        return value_losses,policy_losses
-
-    def critic_update(self,s,a,r,s_):
+            q_target = r + self.gamma * (tf.minimum(q0,q1) - tf.exp(self.alpha_log) * logprobs_)
+        train_vars = self.qnet_0.model.trainable_variables+self.qnet_1.model.trainable_variables
         with GradientTape() as tape:
-            tape.watch(self.critic.model.trainable_variables)
-            q = self.critic.forward(s,act=a)
-            a_ = self.actor.get_action(s_,train=True)
-            q_ = self.critic.forward(s_,act=a_,target=True)
-            y_preds = tf.reduce_sum(q,axis=0 if isinstance(q,list) else -1)
-            target_value = r + self.gamma * tf.reduce_sum(q_,axis=0 if isinstance(q_,list) else -1)
-            value_loss = self.mse(y_preds, target_value)
-        grads = tape.gradient(value_loss, self.critic.model.trainable_variables)
-        self.cri_optimizer.apply_gradients(zip(grads, self.critic.model.trainable_variables))
+            tape.watch(train_vars)
+            q0,q1 = self.qnet_0.forward(s,a),self.qnet_1.forward(s,a)
+            value_loss = self.mse(q0, q_target) + self.mse(q1, q_target)
+        if train:
+            grads = tape.gradient(value_loss, train_vars)
+            self.cri_optimizer.apply_gradients(zip(grads, train_vars))
         return value_loss.numpy()
     
+    def alpha_update(self,s):
+        _,log_probs = self.actor.get_action_probs(s)
+        with GradientTape() as tape:
+            tape.watch(self.alpha_log)
+            if isinstance(self.action_shape,list):
+                alpha_loss = tf.reduce_mean([tf.reduce_mean(self.alpha_log * (shp - log_prob),axis=0) for shp,log_prob in zip(self.action_shape,log_probs)],axis=0)
+            else:
+                alpha_loss = self.alpha_log * tf.reduce_mean(self.action_shape - log_probs,axis=0)
+        grads = tape.gradient(alpha_loss, [self.alpha_log])
+        self.alpha_optimizer.apply_gradients(zip(grads, [self.alpha_log]))
+        return tf.exp(self.alpha_log).numpy()
+
     # Output n steps are infeasible in RL
     # Directly train a multi-step policy net instead (maybe with infinite target)
-    def actor_update(self,s,a,advs):
-        actor = self.actor
-        variables = actor.model.trainable_variables
+    def actor_update(self,s,train=True):
+        variables = self.actor.model.trainable_variables
         with GradientTape() as tape:
             tape.watch(variables)
-            if self.act.startswith('conti'):
-                a = tf.squeeze(actor.get_action(s,train=True))
-                policy_loss = - reduce_mean(a*advs if a.ndim == 1 else a*tf.repeat(advs[...,tf.newaxis],a.shape[-1],axis=-1))
+            a_pg,log_probs = self.actor.get_action_probs(s)
+            if isinstance(log_probs,list):
+                log_probs = tf.concat(log_probs,axis=-1)
+            q_pg = tf.minimum(self.qnet_0.forward(s,a_pg,target=True) + self.qnet_1.forward(s,a_pg,target=True))
+            if log_probs.ndim > 1:
+                policy_loss = tf.reduce_mean([tf.reduce_mean(q_pg - log_probs[:,i] * tf.exp(self.alpha_log),axis=0) for i in range(log_probs.shape[1])],axis=0)
             else:
-                log_probs = self.actor.get_action_probs(s,a)
-                if isinstance(log_probs,list):
-                    policy_loss = - reduce_mean([log_prob*advs for log_prob in log_probs])
-                else:
-                    policy_loss = - reduce_mean(log_probs*advs)
-        grads = tape.gradient(policy_loss, variables)
-        self.act_optimizer.apply_gradients(zip(grads, variables))
+                policy_loss = tf.reduce_mean(q_pg - log_probs * tf.exp(self.alpha_log),axis=0)
+        if train:
+            grads = tape.gradient(- policy_loss, variables)
+            self.act_optimizer.apply_gradients(zip(grads, variables))
         return policy_loss.numpy()
 
-    def get_advantages(self,s,a,r,s_,d=None):
-        a_ = self.actor.get_action(s_,train=True)
-        d = tf.zeros_like(r) if d is None else d
-        q,q_ = self.critic.forward(s,a),self.critic.forward(s_,a_,target=True)
-        target_value = r + self.gamma * (1-d) * tf.reduce_sum(q_,axis=0 if isinstance(q_,list) else -1)
-        advantage = target_value - tf.reduce_sum(q,axis=0 if isinstance(q_,list) else -1)
-        return advantage
+    # def get_advantages(self,s,a,r,s_,d=None):
+    #     a_ = self.actor.get_action(s_,train=True)
+    #     d = tf.zeros_like(r) if d is None else d
+    #     q,q_ = self.critic.forward(s,a),self.critic.forward(s_,a_,target=True)
+    #     target_value = r + self.gamma * (1-d) * tf.reduce_sum(q_,axis=0 if isinstance(q_,list) else -1)
+    #     advantage = target_value - tf.reduce_sum(q,axis=0 if isinstance(q_,list) else -1)
+    #     return advantage
 
 
     def _hard_update_target_model(self,episode):
         if episode%self.update_interval == 0:
-            self.critic._hard_update_target_model()
+            self.qnet_0._hard_update_target_model()
+            self.qnet_1._hard_update_target_model()
 
     def _soft_update_target_model(self,episode):
-        self.critic._soft_update_target_model()
+        self.qnet_0._soft_update_target_model()
+        self.qnet_1._soft_update_target_model()
 
 
     def save(self,agent_dir=None,agents=True):
-        # Save the state normalization paras
-        if agent_dir is None:
-            save(join(self.agent_dir,'state_norm.npy'),self.state_norm)
-        else:
-            save(join(agent_dir,'state_norm.npy'),self.state_norm)
+        # Save the normalization paras
+        agent_dir = self.agent_dir if agent_dir is None else agent_dir
+        for item in 'xbye':
+            if hasattr(self,'norm_%s'%item):
+                save(join(agent_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
         # Load the agent paras
         if agents:
             if self.mac:
                 for i,actor in enumerate(self.actor):
-                    actor.save(i,agent_dir)
+                    actor.save(agent_dir,i)
             else:
-                self.actor.save(0,agent_dir)
-            self.critic.save(0,agent_dir)
+                self.actor.save(agent_dir)
+            self.qnet_0.save(agent_dir,0)
+            self.qnet_1.save(agent_dir,1)
 
 
     def load(self,agent_dir=None,agents=True):
-        # Load the state normalization paras
-        if agent_dir is None:
-            self.state_norm = load(join(self.agent_dir,'state_norm.npy'))
-        else:
-            self.state_norm = load(join(agent_dir,'state_norm.npy'))
+        # Load the normalization paras
+        agent_dir = self.agent_dir if agent_dir is None else agent_dir
+        for item in 'xbye':
+            if os.path.exists(join(agent_dir,'norm_%s.npy'%item)):
+                setattr(self,'norm_%s'%item,load(join(agent_dir,'norm_%s.npy'%item)))
         # Load the agent paras
         if agents:
             if self.mac:
                 for i,actor in enumerate(self.actor):
-                    actor.load(i,agent_dir)
+                    actor.load(agent_dir,i)
             else:
-                self.actor.load(0,agent_dir)
-            self.critic.load(0,agent_dir)
+                self.actor.load(agent_dir)
+            self.qnet_0.load(agent_dir,0)
+            self.qnet_1.load(agent_dir,1)
 
     def set_norm(self,norm_x,norm_b,norm_y,norm_e=None):
         setattr(self,'norm_x',norm_x)
