@@ -1,9 +1,17 @@
 act: rand
+crossover:
+- 1.0
+- 3.0
+mutation:
+- 1.0
+- 3.0
 pop_size: 64
-processes: 3
+processes: 12
 rain_num: 100
 rain_suffix: chaohu_testall
 result_dir: maxred_all100
+sampling: 0.4
+setting_duration: 5
 termination:
 - n_gen
 - 100

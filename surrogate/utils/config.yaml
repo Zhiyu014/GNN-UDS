@@ -11,6 +11,7 @@ shunqing:
   # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
+  train_event_id:
   act: 'False'
   processes: 5
   repeats: 1
@@ -65,6 +66,7 @@ RedChicoSur:
   # simulate args
   simulate: False
   data_dir: ./envs/data/RedChicoSur/
+  train_event_id:
   act: 'False'
   processes: 5
   repeats: 1
@@ -119,6 +121,7 @@ astlingen:
   # simulate args
   simulate: False
   data_dir: ./envs/data/astlingen/
+  train_event_id:
   act: 'False'
   processes: 5
   repeats: 1
@@ -173,6 +176,7 @@ hague:
   # simulate args
   simulate: False
   data_dir: ./envs/data/hague/
+  train_event_id:
   act: 'False'
   processes: 5
   repeats: 1
@@ -228,6 +232,7 @@ chaohu:
   # simulate args
   simulate: False
   data_dir: ./envs/data/chaohu/
+  train_event_id:
   act: 'False'
   processes: 5
   repeats: 1

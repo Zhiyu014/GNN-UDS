@@ -173,7 +173,6 @@ class Actor:
         self.hidden_dim = getattr(args,"hidden_dim",self.net_dim)
         self.kernel_size = getattr(args,"kernel_size",5)
         self.activation = getattr(args,"activation",False)
-        # TODO:Use Graph convolution; Shared conv layer
         self.conv = getattr(args,"conv",False)
         self.conv = False if self.conv in ['None','False','NoneType'] else self.conv
         if conv is not None:
@@ -209,13 +208,13 @@ class Actor:
             mu = Dense(self.action_shape, activation='linear')(x)
             log_std = Dense(self.action_shape, activation='linear')(x)
             output = DistributionLambda(lambda t: Normal(loc=t[0],scale=tf.exp(t[1])))([mu,log_std])
-        # TODO: Temperature parameter: 0.5 fpr categorical, maybe a trainable variable?
+        # Temperature parameter: small value for a close to one-hot output.
         elif isinstance(self.action_shape,np.ndarray):
             output = [Dense(act_shape, activation='softmax')(x) for act_shape in self.action_shape]
-            output = [DistributionLambda(lambda t: RelaxedOneHotCategorical(0.5,t))(o) for o in output]
+            output = [DistributionLambda(lambda t: RelaxedOneHotCategorical(1.0,probs=t))(o) for o in output]
         else:
             output = Dense(self.action_shape, activation='softmax')(x)
-            output = DistributionLambda(lambda t: RelaxedOneHotCategorical(0.5,t))(output)
+            output = DistributionLambda(lambda t: RelaxedOneHotCategorical(1.0,probs=t))(output)
         model = Model(inputs=x_in, outputs=output)
         return model
 
@@ -246,25 +245,25 @@ class Actor:
         return probs
 
     def get_action(self, observ, train = True):
-        probs = self.forward(observ)
+        distr = self.forward(observ)
         if self.act.startswith('conti'):
-            return tf.sigmoid(probs.sample()) if train else tf.sigmoid(probs.loc)
-        elif isinstance(probs,list):
-            return [tf.reduce_max(prob.sample(),axis=-1) if train else tf.argmax(prob.logits,axis=-1) for prob in probs]
+            return tf.sigmoid(distr.sample()) if train else tf.sigmoid(distr.loc)
+        elif isinstance(distr,list):
+            return [tf.reduce_max(distri.sample(),axis=-1) if train else tf.argmax(distri.probs,axis=-1) for distri in distr]
         else:
-            return tf.reduce_max(probs.sample(),axis=-1) if train else tf.argmax(probs.logits,axis=-1)
+            return tf.reduce_max(distr.sample(),axis=-1) if train else tf.argmax(distr.probs,axis=-1)
 
     def get_action_probs(self, observ):
-        probs = self.forward(observ)
-        if isinstance(probs,list):
-            a = [prob.sample() for prob in probs]
-            logp_action = [prob.log_prob(act) for prob,act in zip(probs,a)]
+        distr = self.forward(observ)
+        if isinstance(distr,list):
+            a = [distri.sample() for distri in distr]
+            logp_action = [distri.log_prob(act) for distri,act in zip(distr,a)]
         else:
-            a = probs.sample()
-            logp_action = probs.log_prob(a)
+            a = distr.sample()
+            logp_action = distr.log_prob(a)
             if self.act.startswith('conti'):
                 a = tf.sigmoid(a)
-        return tf.squeeze(a,axis=-1),tf.squeeze(logp_action,axis=-1)
+        return a,logp_action
         
     def convert_action_to_setting(self,action):
         if self.act.startswith('conti'):
@@ -273,7 +272,14 @@ class Actor:
             return tf.stack([tf.gather(space,ai) for space,ai in zip(self.action_space,action)],axis=-1)
         else:
             return tf.gather(self.action_space,action)
-
+        
+    def convert_setting_to_action(self,setting):
+        if self.act.startswith('conti'):
+            return setting
+        elif isinstance(self.action_space,list):
+            return tf.concat([tf.one_hot(tf.argmin(tf.abs(setting[...,i]-space),axis=-1),len(space),axis=-1) for i,space in enumerate(self.action_space)],axis=-1)
+        else:
+            return tf.one_hot(tf.argmin(tf.abs(setting-self.action_space),axis=-1),len(self.action_space),axis=-1)
 
     def update(self,x,b,ex, i=None):
         variables = self.model[i].trainable_variables if self.mac else self.model.trainable_variables
@@ -353,7 +359,6 @@ class QAgent:
         self.n_layer = getattr(args, "n_layer", 3)
         self.dueling = getattr(args,"dueling",False)
         self.activation = getattr(args,"activation",False)
-        # TODO:Use Graph convolution; Shared conv layer
         self.conv = getattr(args,"conv",False)
         self.conv = False if self.conv in ['None','False','NoneType'] else self.conv
         if conv is not None:
@@ -406,8 +411,8 @@ class QAgent:
             inp = [observ]
         if isinstance(act,list):
             act = tf.concat(act,axis=-1)
-        if self.recurrent and act.ndim < 3:
-            act = tf.repeat(act[:,tf.newaxis,:],self.seq_out,axis=1)
+        if self.recurrent:
+            act = tf.repeat(act[:,tf.newaxis,:] if act.ndim < 3 else act,self.seq_out,axis=1)
         inp += [act]
         return inp
 
@@ -476,7 +481,6 @@ class Agent:
         self.n_tp_layer = getattr(args, "n_tp_layer", self.n_layer)
         self.kernel_size = getattr(args,"kernel_size",5)
         self.activation = getattr(args,"activation",False)
-        # TODO:Use Graph convolution; Shared conv layer
         self.conv = getattr(args,"conv",False)
         self.conv = False if self.conv in ['None','False','NoneType'] else self.conv
         if self.conv:
@@ -562,10 +566,11 @@ class Agent:
     def update_eval(self,s,a,s_,train=True):
         # if self.mac:
         #     o = self._split_observ(s)
-        r = tf.squeeze(self.env.objective_pred_tf([s_[0],s_[2] if self.emul.use_edge else None],[s[0],s[2] if self.emul.use_edge else None],a,norm=True),axis=-1)
+        r = self.env.objective_pred_tf([s_[0],s_[2] if self.emul.use_edge else None],[s[0],s[2] if self.emul.use_edge else None],a,norm=True)
+        if not self.act.startswith('conti'):
+            a = self.actor.convert_setting_to_action(a)
         value_loss = self.critic_update(s,a,r,s_,train)
         alpha = self.alpha_update(s) if train else tf.exp(self.alpha_log).numpy()
-        # advs = self.get_advantages(s,a,r,s_)
         policy_loss = self.actor_update(s,train)
         return value_loss,alpha,policy_loss
 
@@ -573,11 +578,11 @@ class Agent:
         a_,logprobs_ = self.actor.get_action_probs(s_)
         q_ = tf.minimum(self.qnet_0.forward(s_,a_,target=True),self.qnet_1.forward(s_,a_,target=True))
         if isinstance(logprobs_,list):
-            logprobs_ = tf.concat(logprobs_,axis=-1)
+            logprobs_ = tf.stack(logprobs_,axis=-1)
         if logprobs_.ndim > 1:
             q_target = tf.reduce_mean([r + self.gamma * (q_ - tf.exp(self.alpha_log) * logprobs_[:,i]) for i in range(logprobs_.shape[1])],axis=0)
         else:
-            q_target = r + self.gamma * (tf.minimum(q0,q1) - tf.exp(self.alpha_log) * logprobs_)
+            q_target = r + self.gamma * (q_ - tf.exp(self.alpha_log) * logprobs_)
         train_vars = self.qnet_0.model.trainable_variables+self.qnet_1.model.trainable_variables
         with GradientTape() as tape:
             tape.watch(train_vars)
@@ -608,8 +613,8 @@ class Agent:
             tape.watch(variables)
             a_pg,log_probs = self.actor.get_action_probs(s)
             if isinstance(log_probs,list):
-                log_probs = tf.concat(log_probs,axis=-1)
-            q_pg = tf.minimum(self.qnet_0.forward(s,a_pg,target=True) + self.qnet_1.forward(s,a_pg,target=True))
+                log_probs = tf.stack(log_probs,axis=-1)
+            q_pg = tf.minimum(self.qnet_0.forward(s,a_pg,target=True), self.qnet_1.forward(s,a_pg,target=True))
             if log_probs.ndim > 1:
                 policy_loss = tf.reduce_mean([tf.reduce_mean(q_pg - log_probs[:,i] * tf.exp(self.alpha_log),axis=0) for i in range(log_probs.shape[1])],axis=0)
             else:
@@ -618,15 +623,6 @@ class Agent:
             grads = tape.gradient(- policy_loss, variables)
             self.act_optimizer.apply_gradients(zip(grads, variables))
         return policy_loss.numpy()
-
-    # def get_advantages(self,s,a,r,s_,d=None):
-    #     a_ = self.actor.get_action(s_,train=True)
-    #     d = tf.zeros_like(r) if d is None else d
-    #     q,q_ = self.critic.forward(s,a),self.critic.forward(s_,a_,target=True)
-    #     target_value = r + self.gamma * (1-d) * tf.reduce_sum(q_,axis=0 if isinstance(q_,list) else -1)
-    #     advantage = target_value - tf.reduce_sum(q,axis=0 if isinstance(q_,list) else -1)
-    #     return advantage
-
 
     def _hard_update_target_model(self,episode):
         if episode%self.update_interval == 0:

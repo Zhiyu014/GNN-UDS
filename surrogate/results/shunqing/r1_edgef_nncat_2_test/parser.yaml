@@ -1,0 +1,5 @@
+epsilon: 0.0
+model_dir: r1_edgef_flood_nncat_2
+rain_suffix: test_bpswmm_
+result_dir: r1_edgef_nncat_2_test
+test: true

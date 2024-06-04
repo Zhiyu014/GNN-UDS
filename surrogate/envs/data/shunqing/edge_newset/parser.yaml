@@ -1,0 +1,4 @@
+data_dir: edge
+env: shunqing
+simulate: true
+use_edge: true

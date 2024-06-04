@@ -1,0 +1,5 @@
+epsilon: 0.0
+model_dir: r1_flood_nncat_0
+rain_suffix: test_bpswmm_
+result_dir: r1_nncat_0_test
+test: true

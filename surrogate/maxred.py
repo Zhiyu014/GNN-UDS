@@ -89,6 +89,7 @@ class mpc_problem(Problem):
         y = np.repeat(y,self.r_step,axis=0)
 
         env = get_env(self.args.env)(swmm_file = self.file)
+        state = env.reset(self.file,global_state=True)
         done = False
         idx = 0
         # perf = 0
@@ -96,9 +97,13 @@ class mpc_problem(Problem):
             if self.args.prediction['no_runoff']:
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
-            yi = y[idx]
+            if idx % self.args.setting_duration == 0:
+                yi = y[idx]
+                sett = yi if self.args.act.startswith('conti') else self.actions[tuple(yi)]
+                # sett = np.array(env.controller('safe',state,sett)).astype(float)
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
-            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi)])
+            done = env.step(sett)
+            state = env.state_full()
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()

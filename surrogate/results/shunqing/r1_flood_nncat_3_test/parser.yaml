@@ -1,0 +1,4 @@
+model_dir: r1_flood_nncat_3
+rain_suffix: test_bpswmm_
+result_dir: r1_flood_nncat_3_test
+test: true

@@ -1,0 +1,5 @@
+model_dir: r1_flood_nncat_1
+rain_suffix: bpswmm_
+result_dir: r1_flood_nncat_1_vali
+test: true
+train_event_id: train_id_1.npy

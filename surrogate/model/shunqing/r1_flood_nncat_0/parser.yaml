@@ -1,0 +1,17 @@
+batch_size: 32
+conv: 'False'
+data_dir: edge_newset
+epochs: 50000
+if_flood: 3
+model_dir: r1_flood_nncat_0
+n_sp_layer: 3
+n_tp_layer: 3
+norm: true
+recurrent: Conv1D
+resnet: true
+save_gap: 10000
+seq_in: 60
+seq_out: 60
+train: true
+train_event_id: train_id_0.npy
+use_edge: true

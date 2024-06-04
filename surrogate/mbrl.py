@@ -195,6 +195,7 @@ if __name__ == '__main__':
         margs.use_edge = margs.use_edge or margs.edge_fusion
         
         # Rainfall args
+        # margs.data_dir = './envs/data/astlingen/1s_edge_rand3128_rain50/act1/'
         print("Get training events runoff")
         hyp = yaml.load(open(os.path.join(margs.data_dir,'parser.yaml'),'r'),yaml.FullLoader)
         rain_arg = env.config['rainfall']
@@ -244,7 +245,7 @@ if __name__ == '__main__':
         for episode in range(args.episodes):
             # Model-free sampling
             t1 = time.time()
-            print("Start model-free sampling")
+            print(f"{episode}/{args.episodes} Start model-free sampling")
             if args.processes > 1:
                 args.load_agent = True
                 ctrl.save()
@@ -266,10 +267,10 @@ if __name__ == '__main__':
                     os.mkdir(os.path.join(args.agent_dir,'train'))
                 ctrl.save(os.path.join(ctrl.agent_dir,'train'))
             t2 = time.time()
-            print("Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(t2-t1,np.mean(train_objss[-1])))
+            print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,t2-t1,np.mean(train_objss[-1])))
 
             # Model-based sampling
-            print("Start model-based sampling")
+            print(f"{episode}/{args.episodes} Start model-based sampling")
             train_idxs = dG.get_data_idxs(seq,train_ids)
             train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,return_idx=True)
             x,b,idxs = train_dats[0],train_dats[2],train_dats[-1]
@@ -282,10 +283,10 @@ if __name__ == '__main__':
             idxs = np.repeat(idxs,args.horizon+1)
             dG.update([xs,perfs,settings,exs,idxs])
             t3 = time.time()
-            print("Finish model-based sampling: {:.2f}s".format(t3-t2))
+            print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,t3-t2))
 
             # Model-free update
-            print("Start model-free update")
+            print(f"{episode}/{args.episodes} Start model-free update")
             for _ in range(args.repeats):
                 train_idxs = dG.get_data_idxs(seq,train_ids)
                 train_dats = dG.prepare_batch(train_idxs,args.seq_in*2,args.batch_size,args.setting_duration)
@@ -301,10 +302,10 @@ if __name__ == '__main__':
                 train_loss = ctrl.update_eval(s,a,s_,train=False)
                 train_losses.append(train_loss)
             t4 = time.time()
-            print("Finish model-free update: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(t4-t3,*np.mean(train_losses[-args.repeats:],axis=0)))
+            print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(episode,args.episodes,t4-t3,*np.mean(train_losses[-args.repeats:],axis=0)))
 
             # Model-free validation
-            print("Start model-free validation")
+            print(f"{episode}/{args.episodes} Start model-free validation")
             for _ in range(args.repeats):
                 test_idxs = dG.get_data_idxs(seq,test_ids)
                 test_dats = dG.prepare_batch(test_idxs,args.seq_in*2,args.batch_size,args.setting_duration)
@@ -320,11 +321,11 @@ if __name__ == '__main__':
                 eval_loss = ctrl.update_eval(s,a,s_,train=False)
                 eval_losses.append(eval_loss)
             t5 = time.time()
-            print("Finish model-free validation: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(t5-t4,*np.mean(eval_losses[-args.repeats:],axis=0)))
+            print("{}/{} Finish model-free validation: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(episode,args.episodes,t5-t4,*np.mean(eval_losses[-args.repeats:],axis=0)))
 
             # Evaluate the model in several episodes
             if episode % args.eval_gap == 0:
-                print("Start model-free interaction")
+                print(f"{episode}/{args.episodes} Start model-free interaction")
                 if args.processes > 1:
                     ctrl.save()
                     pool = mp.Pool(args.processes)
@@ -339,7 +340,7 @@ if __name__ == '__main__':
                 # data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
                 test_objss.append(np.array([np.sum(r[-1]) for r in res]))
                 t6 = time.time()
-                print("Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(t6-t5,np.mean(test_objss[-1])))
+                print("{}/{} Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,t6-t5,np.mean(test_objss[-1])))
                 if np.mean(test_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in test_objss[:-1]]):
                     if not os.path.exists(os.path.join(args.agent_dir,'test')):
                         os.mkdir(os.path.join(args.agent_dir,'test'))

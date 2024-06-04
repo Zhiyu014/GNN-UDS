@@ -1,0 +1,4 @@
+model_dir: r1_edgef_flood_nncat_0/20000
+rain_suffix: test_bpswmm_
+result_dir: r1_edgef_flood_nncat_0_test
+test: true

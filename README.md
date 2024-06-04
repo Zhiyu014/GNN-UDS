@@ -51,7 +51,11 @@
 
 ## Requirements
 - tensorflow == 2.6.0
+- keras == 2.6.0
+- tensorflow_probability == 0.11.0
 - spektral == 1.2.0
+- protobuf == 3.20.0
+- pyswmm == 1.5.1
 - pystorms == 1.0.0
 - swmm-api == 0.2.0.18.3
 - matplotlib == 3.5.2

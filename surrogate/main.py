@@ -26,6 +26,7 @@ def parser(config=None):
     # simulate args
     parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
+    parser.add_argument('--train_event_id',type=str,default='',help='the training event id file')
     parser.add_argument('--act',type=str,default='False',help='if and what control actions')
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
@@ -171,6 +172,9 @@ if __name__ == "__main__":
 
         if args.load_model:
             emul.load(args.model_dir)
+        if os.path.isfile(os.path.join(args.data_dir,args.train_event_id)):
+            train_ids = np.load(os.path.join(args.data_dir,args.train_event_id))
+        elif args.load_model:
             train_ids = np.load(os.path.join(args.model_dir,'train_id.npy'))
         else:
             train_ids = np.random.choice(np.arange(n_events),int(n_events*args.ratio),replace=False)
@@ -255,6 +259,8 @@ if __name__ == "__main__":
         for k,v in known_hyps.items():
             if k in ['model_dir','act']:
                 continue
+            elif k == 'data_dir':
+                v = os.path.join(args.data_dir,v)
             setattr(args,k,v)
         env_args = env.get_args(args.directed,args.length,args.order)
         for k,v in env_args.items():
@@ -276,6 +282,9 @@ if __name__ == "__main__":
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg)
+        if 'train_event_id' in config and os.path.isfile(os.path.join(args.data_dir,config['train_event_id'])):
+            train_ids = np.load(os.path.join(args.data_dir,config['train_event_id']))
+            events = [eve for i,eve in enumerate(events) if i not in train_ids]
         for event in events:
             name = os.path.basename(event).strip('.inp')
             if os.path.exists(os.path.join(args.result_dir,name + '_states.npy')):
@@ -360,12 +369,12 @@ if __name__ == "__main__":
                 los_str += "Edge: {:.4f}".format(loss[-1])
             print(los_str+')')
 
-            np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r)
-            np.save(os.path.join(args.result_dir,name + '_true.npy'),true)
-            np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred)
+            np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r.astype(np.float32))
+            np.save(os.path.join(args.result_dir,name + '_true.npy'),true.astype(np.float32))
+            np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred.astype(np.float32))
             if args.use_edge:
                 edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
-                np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true)
-                np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred)
+                np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true.astype(np.float32))
+                np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred.astype(np.float32))
 
 

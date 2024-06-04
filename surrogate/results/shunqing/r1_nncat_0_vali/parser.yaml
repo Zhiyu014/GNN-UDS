@@ -1,0 +1,6 @@
+epsilon: 0.0
+model_dir: r1_flood_nncat_0
+rain_suffix: bpswmm_
+result_dir: r1_nncat_0_vali
+test: true
+train_event_id: train_id_0.npy
