@@ -23,7 +23,7 @@ class DataGenerator:
             self.action_space = env.config['action_space']
             # self.adj = env.get_adj()
             # self.act_edges = env.get_edge_list(list(self.action_space.keys()))
-        self.limit = getattr(args,"limit",2**22)
+        self.limit = 2**getattr(args,"limit",22)
         self.cur_capa = 0
 
     def simulate(self, event, seq = False, act = False, hotstart = False):
@@ -136,15 +136,16 @@ class DataGenerator:
             res.append(r)
         return [np.concatenate([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
-    def get_data_idxs(self,seq=0,event=None):
+    def get_data_idxs(self,event=None,seq=0,seq_out=None):
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
         event_idxs = [np.split(data, np.where(np.diff(data) != 1)[0]+1) for data in event_idxs]
-        event_idxs = np.concatenate([np.concatenate([dat[seq+1:-seq] for dat in data],axis=0) for data in event_idxs],axis=0)
+        seq_out = seq_out if seq_out is not None else seq
+        event_idxs = np.concatenate([np.concatenate([dat[seq:-seq_out] for dat in data],axis=0) for data in event_idxs],axis=0)
         return event_idxs
         
 
-    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,return_idx=False):
+    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,trim=True,return_idx=False):
         if interval > 1:
             idxs = event_idxs[interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False)]
         else:
@@ -160,9 +161,9 @@ class DataGenerator:
             states,perfs = (self.states[idxs-1],self.states[idxs]),(self.perfs[idxs-1],self.perfs[idxs])
             edge_states = (self.edge_states[idxs-1],self.edge_states[idxs]) if self.use_edge else None
             settings = self.settings[idxs] if self.settings is not None else None
-        x,b,y = self.state_split_batch(states,perfs)
-        ex,ey = self.edge_state_split_batch(edge_states) if self.use_edge else (None,None)
-        if self.settings is not None:
+        x,b,y = self.state_split_batch(states,perfs,trim)
+        ex,ey = self.edge_state_split_batch(edge_states,trim) if self.use_edge else (None,None)
+        if self.settings is not None and trim:
             settings = settings[:,:self.seq_out,...] if self.recurrent else settings
         dats = [x,settings,b,y,ex,ey,self.event_id[idxs]] if return_idx else [x,settings,b,y,ex,ey]
         return [dat.astype(np.float32) if dat is not None else dat for dat in dats]
@@ -193,7 +194,7 @@ class DataGenerator:
         #     res.append(r)
         # return [np.stack([r[i] for r in res],axis=0) if r[i] is not None else None for i in range(6)]
 
-    def state_split_batch(self,states,perfs):
+    def state_split_batch(self,states,perfs,trim=True):
         h,q_totin,q_ds,r = [states[0][...,i] for i in range(4)]
         q_us = q_totin - r
         X = np.stack([h,q_us,q_ds,r],axis=-1)
@@ -213,24 +214,30 @@ class DataGenerator:
             # f2 = np.eye(2)[f2].squeeze(-2)
             X,Y = np.concatenate([X[...,:-1],f1,X[...,-1:]],axis=-1),np.concatenate([Y,f2],axis=-1)
         Y = np.concatenate([Y,perfs[1]],axis=-1)
-        if self.recurrent:
+        if self.recurrent and trim:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
             Y = Y[:,:self.seq_out,...]
         return X,B,Y
 
-    def edge_state_split_batch(self,edge_states):
+    def edge_state_split_batch(self,edge_states,trim=True):
         ex = edge_states[0]
         ey = edge_states[1][...,:-1]
-        if self.recurrent:
+        if self.recurrent and trim:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
 
-    def update(self,data):
+    def update(self,data,test_id=None):
         items = ['states','perfs','settings']
         items += ['edge_states','event_id'] if self.use_edge else ['event_id']
         for dat,item in zip(data,items):
-            setattr(self,item,np.concatenate([getattr(self,item),dat],axis=0)[-self.limit:])
+            data = getattr(self,item,np.zeros((0,)+dat.shape[1:],np.float32))
+            if test_id is not None:
+                test_idxs = np.concatenate([np.argwhere(self.event_id == idx).flatten() for idx in test_id],axis=0)
+                train_idxs = np.setdiff1d(np.arange(self.event_id.shape[0]),test_idxs)
+                setattr(self,item,np.concatenate([np.take(data,train_idxs,axis=0),np.take(data,test_idxs,axis=0),dat],axis=0)[-self.limit:])
+            else:
+                setattr(self,item,np.concatenate([data,dat],axis=0)[-self.limit:])
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir

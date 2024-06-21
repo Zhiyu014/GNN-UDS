@@ -31,11 +31,12 @@ astlingen:
   repeats: 5
   gamma: 0.98 # discouted rate
   batch_size: 128 # batch size of the training data
-  max_capacity: 4194304 # maximum capacity of the replay buffer
-  learning_rate: 0.0001 # learning rate
+  limit: 22 # maximum capacity of the replay buffer
   act_lr: 0.0001 # learning rate for actor
-  cri_lr: 0.0001 # learning rate for critic
+  cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  sample_gap: 0 # sample data with swmm per sample gap
+  start_gap: 100 # start updating agent after start gap
   save_gap: 100 # save the agent & state_norm per save_gap
   agent_dir: ./agent/astlingen/ # the working directory
   load_agent: False # if load the current model
@@ -82,12 +83,13 @@ chaohu:
   episodes: 5000
   repeats: 10
   gamma: 0.95 # discouted rate
-  max_capacity: 4194304 # maximum capacity of the replay buffer
+  limit: 22 # maximum capacity of the replay buffer
   batch_size: 128 # batch size of the training data
-  learning_rate: 0.0001 # learning rate
   act_lr: 0.0001 # learning rate for actor
-  cri_lr: 0.0001 # learning rate for critic
+  cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  sample_gap: 0 # sample data with swmm per sample gap
+  start_gap: 100 # start updating agent after start gap
   save_gap: 100 # save the agent & state_norm per save_gap
   agent_dir: ./agent/chaohu/ # the working directory
   load_agent: False # if load the current model

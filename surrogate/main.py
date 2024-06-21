@@ -44,6 +44,7 @@ def parser(config=None):
     parser.add_argument('--epochs',type=int,default=500,help='training epochs')
     parser.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
     parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
+    parser.add_argument('--roll',type=int,default=0,help='if rolls out for curriculum learning')
     parser.add_argument('--balance',action="store_true",help='if use balance not classification loss')
 
     # network args
@@ -96,25 +97,28 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    # train_de = {'train':True,
-    #             'env':'astlingen',
-    #             'length':1000,
-    #             'data_dir':'./envs/data/astlingen/1s_edge_conti_rain50/',
-    #             'act':'conti',
-    #             'model_dir':'./model/shunqing/30s_20k_conti_1000ledgef_res_norm_flood_gat/',
-    #             'batch_size':128,
-    #             'epochs':5000,
-    #             'n_tp_layer':4,
-    #             'resnet':True,
-    #             'norm':True,
-    #             'use_edge':True,'edge_fusion':True,
-    #             'balance':False,
-    #             'seq_in':30,'seq_out':30,
-    #             'if_flood':True,
-    #             'conv':'GAT',
-    #             'recurrent':'Conv1D'}
-    # for k,v in train_de.items():
-    #     setattr(args,k,v)
+    train_de = {'train':True,
+                'env':'astlingen',
+                'length':501,
+                'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+                'act':'conti',
+                'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
+                'load_model':True,
+                'roll':12,
+                'batch_size':128,
+                'epochs':5000,
+                'n_sp_layer':3,
+                'n_tp_layer':3,
+                'resnet':True,
+                'norm':True,
+                'use_edge':True,'edge_fusion':True,
+                'balance':False,
+                'seq_in':5,'seq_out':5,
+                'if_flood':3,
+                'conv':'GAT',
+                'recurrent':'Conv1D'}
+    for k,v in train_de.items():
+        setattr(args,k,v)
 
     # test_de = {'test':True,
     #            'env':'hague',
@@ -163,15 +167,10 @@ if __name__ == "__main__":
         dG.load(args.data_dir)
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
-        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
-        # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
-        yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
         seq = max(args.seq_in,args.seq_out) if args.recurrent else 0
+        seq *= args.roll if args.roll > 0 else 1
         n_events = int(max(dG.event_id))+1
-
-        if args.load_model:
-            emul.load(args.model_dir)
         if os.path.isfile(os.path.join(args.data_dir,args.train_event_id)):
             train_ids = np.load(os.path.join(args.data_dir,args.train_event_id))
         elif args.load_model:
@@ -179,16 +178,26 @@ if __name__ == "__main__":
         else:
             train_ids = np.random.choice(np.arange(n_events),int(n_events*args.ratio),replace=False)
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+        train_idxs = dG.get_data_idxs(train_ids,seq)
+        test_idxs = dG.get_data_idxs(test_ids,seq)
+
+        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
+        # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+        if args.load_model:
+            emul.load(args.model_dir)
+            args.model_dir = os.path.join(args.model_dir,'retrain')
+            if not os.path.exists(args.model_dir):
+                os.mkdir(args.model_dir)
+            if 'model_dir' in config:
+                config['model_dir'] += '/retrain'
         if args.norm:
             emul.set_norm(*dG.get_norm())
-
-        train_idxs = dG.get_data_idxs(seq,train_ids)
-        test_idxs = dG.get_data_idxs(seq,test_ids)
+        yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
         t0 = time.time()
         train_losses,test_losses,secs = [],[],[0]
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             if args.norm:
                 x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
@@ -203,7 +212,7 @@ if __name__ == "__main__":
             if epoch >= 500:
                 train_losses.append(train_loss)
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size)
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             if args.norm:
                 x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
@@ -222,7 +231,7 @@ if __name__ == "__main__":
                 emul.save(os.path.join(args.model_dir,'train'))
             if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
                 emul.save(os.path.join(args.model_dir,'test'))
-            if epoch > 0 and epoch % emul.save_gap == 0:
+            if epoch > 0 and epoch % args.save_gap == 0:
                 emul.save(os.path.join(args.model_dir,'%s'%epoch))
                 
             secs.append(time.time()-t0)

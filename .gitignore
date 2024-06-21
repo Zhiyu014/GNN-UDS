@@ -76,6 +76,7 @@ docs/_build/
 target/
 
 # Jupyter Notebook
+*.ipynb
 .ipynb_checkpoints
 
 # IPython
@@ -166,7 +167,6 @@ cython_debug/
 *.rpt
 *.png
 *.hsf
-*.ipynb
 *.json
 !hague.inp
 !shunqing.inp

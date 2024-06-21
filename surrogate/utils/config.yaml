@@ -11,7 +11,7 @@ shunqing:
   # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
-  train_event_id:
+  train_event_id: ''
   act: 'False'
   processes: 5
   repeats: 1
@@ -28,6 +28,7 @@ shunqing:
   epochs: 500
   save_gap: 500
   batch_size: 256
+  roll: 0
   balance: 0
   
   # network args
@@ -66,7 +67,7 @@ RedChicoSur:
   # simulate args
   simulate: False
   data_dir: ./envs/data/RedChicoSur/
-  train_event_id:
+  train_event_id: ''
   act: 'False'
   processes: 5
   repeats: 1
@@ -83,6 +84,7 @@ RedChicoSur:
   epochs: 500
   save_gap: 500
   batch_size: 256
+  roll: 0
   balance: 0
   
   # network args
@@ -121,7 +123,7 @@ astlingen:
   # simulate args
   simulate: False
   data_dir: ./envs/data/astlingen/
-  train_event_id:
+  train_event_id: ''
   act: 'False'
   processes: 5
   repeats: 1
@@ -138,6 +140,7 @@ astlingen:
   epochs: 500
   save_gap: 500
   batch_size: 256
+  roll: 0
   balance: 0
   
   # network args
@@ -176,7 +179,7 @@ hague:
   # simulate args
   simulate: False
   data_dir: ./envs/data/hague/
-  train_event_id:
+  train_event_id: ''
   act: 'False'
   processes: 5
   repeats: 1
@@ -194,6 +197,7 @@ hague:
   epochs: 500
   save_gap: 500
   batch_size: 256
+  roll: 0
   balance: 0
   
   # network args
@@ -232,7 +236,7 @@ chaohu:
   # simulate args
   simulate: False
   data_dir: ./envs/data/chaohu/
-  train_event_id:
+  train_event_id: ''
   act: 'False'
   processes: 5
   repeats: 1
@@ -249,6 +253,7 @@ chaohu:
   epochs: 500
   save_gap: 500
   batch_size: 256
+  roll: 0
   balance: 0
   
   # network args

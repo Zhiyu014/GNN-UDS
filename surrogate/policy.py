@@ -236,8 +236,8 @@ if __name__ == '__main__':
         n_events = int(max(dG.event_id))+1
         train_ids = np.load(os.path.join(margs.model_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
-        train_idxs = dG.get_data_idxs(seq,train_ids)
-        test_idxs = dG.get_data_idxs(seq,test_ids)
+        train_idxs = dG.get_data_idxs(train_ids,seq)
+        test_idxs = dG.get_data_idxs(test_ids,seq)
 
         t0 = time.time()
         train_losses,test_objss,secs = [],[],[0]

@@ -1,0 +1,15 @@
+act: rand3
+agent_dir: 5s_10k_rand3_mbrl
+batch_size: 64
+conv: GAT
+cri_lr: 0.001
+episodes: 1000
+horizon: 60
+length: 501.0
+limit: 23
+model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat
+rain_num: 1
+result_dir: ./results/
+seq_in: 5
+train: true
+use_edge: true

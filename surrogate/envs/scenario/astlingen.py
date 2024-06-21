@@ -124,7 +124,7 @@ class astlingen(basescenario):
         obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
         gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
         if norm:
-            obj = tf.reduce_sum(obj*gamma/tf.reduce_sum(state[...,-1],axis=-1),axis=-1)
+            obj = tf.reduce_sum(obj*gamma,axis=-1)/(tf.reduce_sum(tf.reduce_max(state[...,1],axis=-1),axis=-1)+1e-5)
         else:
             obj = tf.reduce_sum(obj*gamma,axis=-1)
         return obj

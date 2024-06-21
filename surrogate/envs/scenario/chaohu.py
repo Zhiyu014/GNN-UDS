@@ -82,7 +82,7 @@ class chaohu(basescenario):
     def objective_pred(self,preds,states,settings,gamma=None):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        flood = q_w.sum(axis=-1).sum(axis=-1)
+        flood = q_w.sum(axis=-1)
         nodes,links = self.elements['nodes'],self.elements['links']
         targets = self.config['performance_targets']
         penal = [(q_w[...,nodes.index(idx)]>0) * weight
