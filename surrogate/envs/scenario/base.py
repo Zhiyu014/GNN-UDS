@@ -204,7 +204,10 @@ class basescenario(scenario):
         # clear the data log and reset the environment
         if swmm_file is not None:
             self.config["swmm_input"] = swmm_file
-        if not hasattr(self,'env') or swmm_file is not None:
+        if getattr(self,'env',None) is None:
+            self.env = env_base(self.config, ctrl=True)
+        elif swmm_file is not None:
+            self.env.terminate()
             self.env = env_base(self.config, ctrl=True)
         else:
             _ = self.env.reset()
@@ -272,7 +275,7 @@ class basescenario(scenario):
         args = self.config.copy()
         
         nodes = self.get_features('nodes')
-        if not hasattr(self,'env') or self.env._isFinished:
+        if getattr(self,'env',None) is None or self.env._isFinished:
             inp = read_inp_file(self.config['swmm_input'])
             args['is_outfall'] = np.array([1 if sec == 'OUTFALLS' else 0 for sec in NODE_SECTIONS
                                            for _ in getattr(inp,sec,dict()).values()])

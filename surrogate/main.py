@@ -138,7 +138,7 @@ if __name__ == "__main__":
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
-    env = get_env(args.env)()
+    env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order)
     for k,v in env_args.items():
         if k == 'act':

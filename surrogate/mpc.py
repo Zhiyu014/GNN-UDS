@@ -186,21 +186,21 @@ class mpc_problem(Problem):
         if y.shape[0] < self.eval_hrz // self.step:
             y = np.concatenate([y,np.repeat(y[-1:,:],self.eval_hrz // self.step-y.shape[0],axis=0)],axis=0)
 
-        env = get_env(self.args.env)(swmm_file = self.file)
+        _ = self.env.reset(swmm_file = self.file)
         if getattr(self,'log') is not None:
-            env.data_log.update({k:v for k,v in self.log.items() if 'cum' not in k})
+            self.env.data_log.update({k:v for k,v in self.log.items() if 'cum' not in k})
         done,idx = False,0
         # perf = 0
         while not done and idx < y.shape[0]:
             if self.args.prediction['no_runoff']:
-                for node,ri in zip(env.elements['nodes'],self.runoff_rate[idx]):
-                    env.env._setNodeInflow(node,ri)
+                for node,ri in zip(self.env.elements['nodes'],self.runoff_rate[idx]):
+                    self.env.env._setNodeInflow(node,ri)
             yi = y[idx]
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
-            done = env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi.astype(int))])
+            done = self.env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi.astype(int))])
             # perf += env.performance().sum()
             idx += 1
-        return env.objective(idx).sum()
+        return self.env.objective(idx).sum()
     
     def pred_emu(self,y):
         y = y.reshape((-1,self.n_step,self.n_act))

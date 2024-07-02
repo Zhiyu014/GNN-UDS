@@ -8,13 +8,10 @@ import numpy as np
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 from dataloader import DataGenerator
-from emulator import Emulator
 from agent import Actor,Agent
 from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
-from utils.memory import RandomMemory
-from functools import reduce
 import pandas as pd
 import argparse,time
 HERE = os.path.dirname(__file__)
@@ -152,7 +149,7 @@ if __name__ == '__main__':
         'eval_gap':10,'start_gap':0,
         'agent_dir': './agent/astlingen/5s_10k_conti_mbrl',
         'load_agent':False,
-        'processes':1,
+        'processes':2,
         # 'test':False,
         # 'rain_dir':'./envs/config/ast_test1_events.csv',
         # 'result_dir':'./results/astlingen/60s_10k_conti_policy2007',
@@ -161,7 +158,7 @@ if __name__ == '__main__':
         setattr(args,k,v)
         config[k] = v
 
-    env = get_env(args.env)()
+    env = get_env(args.env)(initialize=False)
     env_args = env.get_args(act=args.act,mac=args.mac)
     for k,v in env_args.items():
         if k == 'act':
@@ -275,7 +272,7 @@ if __name__ == '__main__':
             print(f"{episode}/{args.episodes} Start model-based sampling")
             seq = max(args.seq_in,args.horizon) if args.recurrent else 0
             train_idxs = dG.get_data_idxs(train_ids,seq)
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,return_idx=True)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,args.setting_duration,return_idx=True)
             i,rand = 0,np.arange(train_dats[-1].shape[0])
             # Split the trajs within the same event
             while any(np.diff(train_dats[-1])==0):
@@ -314,8 +311,8 @@ if __name__ == '__main__':
                     # Get reward from env as -obj_pred
                     states = (x[:,-args.seq_in:,...],ex[:,-args.seq_in:,...] if margs.use_edge else None)
                     preds = (y[:,:args.seq_in,...],ey[:,:args.seq_in,...] if margs.use_edge else None)
-                    r = - env.objective_pred_tf(preds,states,tf.repeat(settings,args.setting_duration,axis=1),norm=True)
-                    r = tf.clip_by_value(r, -10, 10)
+                    r = - env.objective_pred_tf(preds,states,tf.repeat(settings,args.setting_duration,axis=1))/100
+                    # r = tf.clip_by_value(r, -10, 10)
                     a = ctrl.actor.convert_setting_to_action(settings)
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
                     train_losses.append([los.numpy() for los in train_loss])

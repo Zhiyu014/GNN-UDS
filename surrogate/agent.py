@@ -211,10 +211,11 @@ class Actor:
         if self.conti:
             mu = Dense(self.action_shape, activation='sigmoid')(x)
             log_std = Dense(self.action_shape, activation='linear')(x)
-            low = tf.convert_to_tensor([min(sp) for sp in self.action_space])
-            high = tf.convert_to_tensor([max(sp) for sp in self.action_space])
-            output = tfp.layers.DistributionLambda(lambda t: tfd.TruncatedNormal(loc=t[0],scale=tf.exp(t[1]),
-                                                                                 low=tf.ones_like(t[0])*low,high=tf.ones_like(t[0])*high))([mu,log_std])
+            # low = tf.convert_to_tensor([min(sp) for sp in self.action_space])
+            # high = tf.convert_to_tensor([max(sp) for sp in self.action_space])
+            # output = tfp.layers.DistributionLambda(lambda t: tfd.TruncatedNormal(loc=t[0],scale=tf.exp(t[1]),
+            #                                                                      low=tf.ones_like(t[0])*low,high=tf.ones_like(t[0])*high))([mu,log_std])
+            output = tfp.layers.DistributionLambda(lambda t: tfd.Normal(loc=t[0],scale=tf.exp(t[1])))([mu,log_std])
         elif isinstance(self.action_shape,np.ndarray):
             output = [Dense(act_shape, activation='softmax')(x) for act_shape in self.action_shape]
             output = [tfp.layers.DistributionLambda(lambda t: tfd.RelaxedOneHotCategorical(1.0,probs=t))(o) for o in output]
@@ -253,7 +254,7 @@ class Actor:
     def get_action(self, observ, train = True):
         distr = self.forward(observ)
         if self.conti:
-            return distr.sample() if train else distr.loc
+            return tf.tanh(distr.sample()) if train else tf.tanh(distr.loc)
         elif isinstance(distr,list):
             return [tf.argmax(distri.sample(),axis=-1) if train else tf.argmax(distri.probs,axis=-1) for distri in distr]
         else:
@@ -267,11 +268,14 @@ class Actor:
         else:
             a = distr.sample()
             logp_action = distr.log_prob(a)
+            if self.conti:
+                a = tf.tanh(a)   # Restrict action to be between -1 and 1
+                logp_action -= tf.math.log(1.000001-tf.pow(a,2))   # Adjusted Log Probability due to tanh
         return a,logp_action
         
     def convert_action_to_setting(self,action):
         if self.conti:
-            return action
+            return (action+1)/2
         elif isinstance(action,list):
             return tf.stack([tf.gather(space,ai) for space,ai in zip(self.action_space,action)],axis=-1)
         else:
@@ -279,7 +283,7 @@ class Actor:
         
     def convert_setting_to_action(self,setting):
         if self.conti:
-            return setting
+            return tf.multiply(setting,2)-1
         elif isinstance(self.action_space,list):
             return [tf.argmin(tf.abs(setting[...,i]-space),axis=-1) for i,space in enumerate(self.action_space)]
         else:
@@ -493,16 +497,15 @@ class Agent:
             self.update_interval = getattr(args,"update_interval",0.005)
             self.target_update_func = self._hard_update_target_model if self.update_interval >1\
                 else self._soft_update_target_model
-            self.act_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4))
-            self.cri_optimizer = Adam(learning_rate=getattr(args,"cri_lr",1e-3))
+            self.act_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0)
+            self.cri_optimizer = Adam(learning_rate=getattr(args,"cri_lr",1e-3),clipnorm=1.0)
             self.mse = MeanSquaredError()
-            self.scc = SparseCategoricalCrossentropy(from_logits=True)
 
             self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
 
-            self.alpha_log = tf.Variable(-2,dtype=tf.float32,trainable=True)
-            self.alpha_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4))
+            self.alpha_log = tf.Variable(-1,dtype=tf.float32,trainable=True)
+            self.alpha_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0)
 
         self.agent_dir = args.agent_dir
         if args.load_agent:
@@ -570,14 +573,14 @@ class Agent:
     @tf.function
     def critic_update(self,s,a,r,s_,train=True):
         if self.conti:
-            a_,logprobs_ = self.actor.get_action_probs(s_,target=True)
+            a_,logprobs_ = self.actor.get_action_probs(s_)
             q_ = tf.minimum(self.qnet_0.forward(s_,a_,target=True),self.qnet_1.forward(s_,a_,target=True))
             if len(logprobs_.shape)>1:
                 q_target = tf.expand_dims(r,axis=-1) + self.gamma * (q_ - tf.exp(self.alpha_log) * logprobs_)
             else:
                 q_target = r + self.gamma * (tf.squeeze(q_,axis=-1) - tf.exp(self.alpha_log) * logprobs_)
         else:
-            distr_ = self.actor.forward(s_,target=True)
+            distr_ = self.actor.forward(s_)
             if isinstance(self.action_shape,(list,np.ndarray)):
                 logprobs_ = [tf.math.log(distri_.probs+1e-5) for distri_ in distr_]
                 q_ = self.qnet_0.forward(s_,target=True),self.qnet_1.forward(s_,target=True)
@@ -595,6 +598,9 @@ class Agent:
             value_loss = self.mse(q_target,q0) + self.mse(q_target,q1)
             if train:
                 grads = tape.gradient(value_loss, train_vars)
+                grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
+                          for grad in grads]
+                grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
                 self.cri_optimizer.apply_gradients(zip(grads, train_vars))
         return value_loss
     
@@ -608,6 +614,9 @@ class Agent:
             else:
                 alpha_loss = self.alpha_log * tf.reduce_mean(self.action_shape - log_probs,axis=0)
             grads = tape.gradient(alpha_loss, [self.alpha_log])
+            grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
+                     for grad in grads]
+            grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
             self.alpha_optimizer.apply_gradients(zip(grads, [self.alpha_log]))
         return tf.exp(self.alpha_log)
 
@@ -641,6 +650,9 @@ class Agent:
             policy_loss = tf.reduce_mean(policy_loss,axis=0)
             if train:
                 grads = tape.gradient(-policy_loss, variables)
+                grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
+                         for grad in grads]
+                grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
                 self.act_optimizer.apply_gradients(zip(grads, variables))
         return policy_loss
 

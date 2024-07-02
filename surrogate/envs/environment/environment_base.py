@@ -119,19 +119,27 @@ class env_base(environment):
         if self._advance_seconds is None:
             elapsed_time = self.sim._model.swmm_step()
         else:
-            # time = self.sim._model.swmm_stride(self._advance_seconds)
-            # src from the func swmm_stride
-            ctime = self.sim._model.curSimTime
-            self.log = self.ini_log(ctime)
-            advanceDays = self._advance_seconds / self.sec_per_day
-            eps = advanceDays * 0.00001
-            elapsed_time = 0
-            while self.sim._model.curSimTime <= ctime + advanceDays - eps:
-                elapsed_time = self.sim._model.swmm_step()
+            routing_step = self.sim._model.getSimAnalysisSetting(tkai.SimulationParameters.RouteStep)
+            if self.sim._model.getSimAnalysisSetting(routing_step) > 1:
+                # use swmm-stride in dll in pyswmm==2.0, avoid time lag when step==30/60s
+                self.log = self.ini_log(self.sim._model.curSimTime)
+                elapsed_time = self.sim._model.swmm_stride(self._advance_seconds)
                 self._log(elapsed_time)
-                if elapsed_time == 0:
-                    break
-                self.sim._model.curSimTime = elapsed_time
+            else:
+                # src from the func swmm_stride in pyswmm==1.5.1, no time lag when step==1s
+                # Try swmm_stride(routestep), works similar
+                ctime = self.sim._model.curSimTime
+                self.log = self.ini_log(ctime)
+                advanceDays = self._advance_seconds / self.sec_per_day
+                eps = advanceDays * 0.00001
+                elapsed_time = 0
+                while self.sim._model.curSimTime <= ctime + advanceDays - eps:
+                    elapsed_time = self.sim._model.swmm_step()
+                    # elapsed_time = self.sim._model.swmm_stride(routing_step)
+                    self._log(elapsed_time)
+                    if elapsed_time == 0:
+                        break
+                    self.sim._model.curSimTime = elapsed_time
             
         done = False if elapsed_time > 0 else True
         return done
@@ -140,7 +148,8 @@ class env_base(environment):
         r"""
         Terminates the simulation
         """
-        super().terminate()
+        # super().terminate()
+        self.sim.close()
         self._isFinished = True
 
     def reset(self):

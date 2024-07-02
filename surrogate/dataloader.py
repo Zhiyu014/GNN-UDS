@@ -29,12 +29,12 @@ class DataGenerator:
     def simulate(self, event, seq = False, act = False, hotstart = False):
         state = self.env.reset(event,global_state=True,seq=seq)
         perf = self.env.flood(seq=seq)
-        states,perfs = [state],[perf]
+        states,perfs = [],[]
         if self.use_edge:
             edge_state = self.env.state_full(seq,'links')
-            edge_states = [edge_state]
+            edge_states = []
         setting = [1 for _ in self.action_space] if act else None
-        settings = [setting]
+        settings = []
         done,i = False,0
         while not done:
             if hotstart:
