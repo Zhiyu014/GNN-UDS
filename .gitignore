@@ -168,8 +168,10 @@ cython_debug/
 *.png
 *.hsf
 *.json
+*.rar
 !hague.inp
 !shunqing.inp
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
+*.rar

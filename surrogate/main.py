@@ -97,28 +97,28 @@ if __name__ == "__main__":
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
-    train_de = {'train':True,
-                'env':'astlingen',
-                'length':501,
-                'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
-                'act':'conti',
-                'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
-                'load_model':True,
-                'roll':12,
-                'batch_size':128,
-                'epochs':5000,
-                'n_sp_layer':3,
-                'n_tp_layer':3,
-                'resnet':True,
-                'norm':True,
-                'use_edge':True,'edge_fusion':True,
-                'balance':False,
-                'seq_in':5,'seq_out':5,
-                'if_flood':3,
-                'conv':'GAT',
-                'recurrent':'Conv1D'}
-    for k,v in train_de.items():
-        setattr(args,k,v)
+    # train_de = {'train':True,
+    #             'env':'astlingen',
+    #             'length':501,
+    #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+    #             'act':'conti',
+    #             'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
+    #             'load_model':True,
+    #             'roll':12,
+    #             'batch_size':128,
+    #             'epochs':5000,
+    #             'n_sp_layer':3,
+    #             'n_tp_layer':3,
+    #             'resnet':True,
+    #             'norm':True,
+    #             'use_edge':True,'edge_fusion':True,
+    #             'balance':False,
+    #             'seq_in':5,'seq_out':5,
+    #             'if_flood':3,
+    #             'conv':'GAT',
+    #             'recurrent':'Conv1D'}
+    # for k,v in train_de.items():
+    #     setattr(args,k,v)
 
     # test_de = {'test':True,
     #            'env':'hague',
@@ -146,7 +146,7 @@ if __name__ == "__main__":
         setattr(args,k,v)
     args.use_edge = args.use_edge or args.edge_fusion
 
-    dG = DataGenerator(env,args.data_dir,args)
+    dG = DataGenerator(env.config,args.data_dir,args)
     
     if args.simulate:
         if not os.path.exists(args.data_dir):
@@ -277,7 +277,7 @@ if __name__ == "__main__":
                 v = v and args.act != 'False' and args.act
             setattr(args,k,v)
         args.use_edge = args.use_edge or args.edge_fusion
-        dG = DataGenerator(env,args.data_dir,args)
+        dG = DataGenerator(env.config,args.data_dir,args)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         emul.load(args.model_dir)
         if not os.path.exists(args.result_dir):
@@ -306,7 +306,7 @@ if __name__ == "__main__":
             else:
                 t0 = time.time()
                 pre_step = rain_arg.get('pre_time',0) // args.interval
-                res = dG.simulate(event,act=args.act,hotstart=args.seq_out*args.hotstart)
+                res = dG.simulate(env,event,act=args.act,hotstart=args.seq_out*args.hotstart)
                 states,perfs,settings = [r[pre_step:] if r is not None else None for r in res[:3]]
                 print("{} Simulation time: {}".format(name,time.time()-t0))
                 np.save(os.path.join(args.result_dir,name + '_states.npy'),states)

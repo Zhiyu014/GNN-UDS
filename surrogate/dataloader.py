@@ -3,11 +3,12 @@ import multiprocessing as mp
 import os
 from swmm_api import swmm5_run,read_inp_file
 from datetime import timedelta
+from envs import get_env
 
 class DataGenerator:
-    def __init__(self,env,data_dir=None,args=None):
-        self.env = env
-        self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(env.config['env_name'])
+    def __init__(self,env_config,data_dir=None,args=None):
+        self.config = env_config
+        self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
         self.pre_step = args.rainfall.get('pre_time',0) // args.interval
         self.interval = getattr(args,"interval",1)
         self.seq_in = getattr(args,"seq_in",6)
@@ -20,40 +21,40 @@ class DataGenerator:
         self.act = getattr(args,"act",False)
         self.setting_duration = getattr(args,"setting_duration",5)
         if self.act:
-            self.action_space = env.config['action_space']
+            self.action_space = self.config['action_space']
             # self.adj = env.get_adj()
             # self.act_edges = env.get_edge_list(list(self.action_space.keys()))
         self.limit = 2**getattr(args,"limit",22)
         self.cur_capa = 0
 
-    def simulate(self, event, seq = False, act = False, hotstart = False):
-        state = self.env.reset(event,global_state=True,seq=seq)
-        perf = self.env.flood(seq=seq)
+    def simulate(self, env, event, seq = False, act = False, hotstart = False):
+        state = env.reset(event,global_state=True,seq=seq)
+        perf = env.flood(seq=seq)
         states,perfs = [],[]
         if self.use_edge:
-            edge_state = self.env.state_full(seq,'links')
+            edge_state = env.state_full(seq,'links')
             edge_states = []
         setting = [1 for _ in self.action_space] if act else None
         settings = []
         done,i = False,0
         while not done:
             if hotstart:
-                eval_file = self.env.get_eval_file()
-                ct = self.env.env.methods['simulation_time']()
+                eval_file = env.get_eval_file()
+                ct = env.env.methods['simulation_time']()
                 inp = read_inp_file(eval_file)
                 inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
                 inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
                 inp.write_file(eval_file)
                 _ = swmm5_run(eval_file)
-            setting = self.env.controller(act,state,setting) if act and i % (self.setting_duration//self.env.config['interval']) == 0 else setting
-            done = self.env.step(setting)
-            state = self.env.state_full(seq=seq)
-            perf = self.env.flood(seq=seq)
+            setting = env.controller(act,state,setting) if act and i % (self.setting_duration//self.config['interval']) == 0 else setting
+            done = env.step(setting)
+            state = env.state_full(seq=seq)
+            perf = env.flood(seq=seq)
             states.append(state)
             perfs.append(perf)
             settings.append(setting)
             if self.use_edge:
-                edge_state = self.env.state_full(seq,'links')
+                edge_state = env.state_full(seq,'links')
                 edge_states.append(edge_state)
             i += 1
         if self.use_edge:
@@ -62,15 +63,16 @@ class DataGenerator:
             return np.array(states),np.array(perfs),np.array(settings) if act else None
         
     def generate(self,events,processes=1,repeats=1,seq=False,act=False):
+        env = get_env(self.config['env_name'])(initialize=False)
         if processes > 1:
             pool = mp.Pool(processes)
-            res = [pool.apply_async(func=self.simulate,args=(event,seq,act,))
+            res = [pool.apply_async(func=self.simulate,args=(env,event,seq,act,))
                     for _ in range(repeats) for event in events]
             pool.close()
             pool.join()
             res = [r.get() for r in res]
         else:
-            res = [self.simulate(event,seq,act)
+            res = [self.simulate(env,event,seq,act)
                     for _ in range(repeats) for event in events]
         self.states,self.perfs = [np.concatenate([r[i][self.pre_step:] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2][self.pre_step:] for r in res],axis=0) if act else None
@@ -94,7 +96,7 @@ class DataGenerator:
             X,Y = np.concatenate([X[...,:-1],f[:-n_spl],X[...,-1:]],axis=-1),np.concatenate([Y,f[n_spl:]],axis=-1)
         Y = np.concatenate([Y,perfs[n_spl:]],axis=-1)
         B = np.expand_dims(r[n_spl:],axis=-1)
-        if self.env.config['tide']:
+        if self.config['tide']:
             t = h[n_spl:] * self.is_outfall
             B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
         if self.recurrent:
@@ -203,7 +205,7 @@ class DataGenerator:
         q_us = q_totin - r
         Y = np.stack([h,q_us,q_ds],axis=-1)
         B = np.expand_dims(r,axis=-1)
-        if self.env.config['tide']:
+        if self.config['tide']:
             t = h * self.is_outfall
             B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
 
@@ -269,12 +271,12 @@ class DataGenerator:
         norm[...,1] = norm[...,1] - norm[...,3]
         while len(norm.shape) > 2:
             norm = norm.max(axis=0)
-        if self.env.config['global_state'][0][-1] == 'head':
+        if self.config['global_state'][0][-1] == 'head':
             norm_h = np.tile(np.float32(norm[...,0].max()+1e-6),(norm.shape[0],1))
         else:
             norm_h = norm[...,0:1]+1e-6
         norm_b = (norm[...,-2:-1] + 1e-6).astype(np.float32)
-        if self.env.config['tide']:
+        if self.config['tide']:
             norm_b = np.concatenate([norm_b,norm_h],axis=-1).astype(np.float32)
         if self.if_flood:
             norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,),dtype=np.float32),norm[...,-2:-1] + 1e-6],axis=-1)
@@ -284,9 +286,9 @@ class DataGenerator:
             norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         norm_x = norm_x.astype(np.float32)
         norm_y = norm_y.astype(np.float32)
-        if self.env.config['global_state'][0][-1] == 'head':
+        if self.config['global_state'][0][-1] == 'head':
             norm_hmin = np.tile(np.float32(self.states[...,0].min()),(norm.shape[0],1))
-            if self.env.config['tide']:
+            if self.config['tide']:
                 norm_b = np.stack([norm_b,np.concatenate([np.zeros_like(norm_b[...,:1],dtype=np.float32),norm_hmin],axis=-1)])
             else:
                 norm_b = np.stack([norm_b,np.zeros_like(norm_b,dtype=np.float32)])

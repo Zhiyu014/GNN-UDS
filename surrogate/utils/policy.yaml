@@ -23,7 +23,6 @@ astlingen:
   hidden_dim: 128 # dimension of hidden layers
   n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
-  dueling: False # if use dueling layer
 
   # Arguments for the training
   train: False
@@ -35,6 +34,7 @@ astlingen:
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap
   start_gap: 100 # start updating agent after start gap
   save_gap: 100 # save the agent & state_norm per save_gap
@@ -46,7 +46,7 @@ astlingen:
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
-  processes: 4 
+  processes: 1
   eval_gap: 10 # evaluate the agent per eval_gap
   control_interval: 5
   result_dir: ./results/astlingen/ # the result directory
@@ -76,7 +76,6 @@ chaohu:
   hidden_dim: 128 # dimension of hidden layers
   n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
-  dueling: False # if use dueling layer
 
   # Arguments for the training
   train: False
@@ -88,6 +87,7 @@ chaohu:
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap
   start_gap: 100 # start updating agent after start gap
   save_gap: 100 # save the agent & state_norm per save_gap
@@ -99,6 +99,7 @@ chaohu:
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
+  processes: 1
   eval_gap: 10 # evaluate the agent per eval_gap
   control_interval: 10
   result_dir: ./results/chaohu/ # the result directory

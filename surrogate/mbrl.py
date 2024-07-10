@@ -42,7 +42,6 @@ def parser(config=None):
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of graphconv layers')
     parser.add_argument('--hidden_dim',type=int,default=128,help='number of recurrent channels')
     parser.add_argument('--n_tp_layer',type=int,default=3,help='number of recurrent layers')
-    parser.add_argument('--dueling',action="store_true",help='if use dueling network')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
 
     # agent training args
@@ -55,6 +54,7 @@ def parser(config=None):
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
+    parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
     parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
     parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
     parser.add_argument('--save_gap',type=int,default=100,help='save the agent per gap')
@@ -227,10 +227,10 @@ if __name__ == '__main__':
         print("Finish training events runoff")
 
         # Real data for sampling base points
-        dG = DataGenerator(env,margs.data_dir,args)
+        dG = DataGenerator(env.config,margs.data_dir,args)
         dG.load(margs.data_dir)
         # Virtual data buffer for model-based rollout trajs
-        dGv = DataGenerator(env,args=args)
+        dGv = DataGenerator(env.config,args=args)
         ctrl = Agent(args.action_shape,args.observ_space,args,act_only=False,margs=margs)
         ctrl.set_norm(*dG.get_norm())
         n_events = int(max(dG.event_id))+1
@@ -256,9 +256,10 @@ if __name__ == '__main__':
                 else:
                     res = [interact_steps(env,args,event,runoffs[idx],ctrl=ctrl,train=True)
                         for idx,event in zip(train_ids,train_events)]
-                data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
-                data.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
-                dGv.update(data)
+                trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
+                trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
+                dG.update(trajs)
+                dGv.update(trajs)
                 train_objss.append(np.array([np.sum(r[-1]) for r in res]))
                 if np.mean(train_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in train_objss[:-1]]):
                     if not os.path.exists(os.path.join(args.agent_dir,'train')):
@@ -269,28 +270,31 @@ if __name__ == '__main__':
                 print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])))
                 
             # Model-based sampling
-            print(f"{episode}/{args.episodes} Start model-based sampling")
-            seq = max(args.seq_in,args.horizon) if args.recurrent else 0
-            train_idxs = dG.get_data_idxs(train_ids,seq)
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,args.setting_duration,return_idx=True)
-            i,rand = 0,np.arange(train_dats[-1].shape[0])
-            # Split the trajs within the same event
-            while any(np.diff(train_dats[-1])==0):
-                np.random.shuffle(rand)
-                train_dats = [dat[rand] for dat in train_dats]
-                i += 1
-                if i > 100:
-                    break
-            trajs = ctrl.rollout(train_dats[:-1])
-            xs,exs,settings,perfs = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs]
-            xs[...,1] += xs[...,-1]
-            if margs.if_flood:
-                xs = np.concatenate([xs[...,:-2],xs[...,-1:]],axis=-1)
-            idxs = np.repeat(train_dats[-1],args.horizon+args.seq_in)
-            dGv.update([xs,perfs,settings,exs,idxs])
-            sec.append(time.time()-t)
-            t = time.time()
-            print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
+            if args.model_based or args.sample_gap == 0:
+                print(f"{episode}/{args.episodes} Start model-based sampling")
+                seq = max(args.seq_in,args.horizon) if args.recurrent else 0
+                train_idxs = dG.get_data_idxs(train_ids,seq)
+                train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,args.setting_duration,return_idx=True)
+                i,rand = 0,np.arange(train_dats[-1].shape[0])
+                # Split the trajs within the same event
+                while any(np.diff(train_dats[-1])==0):
+                    np.random.shuffle(rand)
+                    train_dats = [dat[rand] for dat in train_dats]
+                    i += 1
+                    if i > 100:
+                        break
+                trajs_v = ctrl.rollout(train_dats[:-1])
+                xs,exs,settings,perfs = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
+                xs[...,1] += xs[...,-1]
+                if margs.if_flood:
+                    xs = np.concatenate([xs[...,:-2],xs[...,-1:]],axis=-1)
+                idxs = np.repeat(train_dats[-1],args.horizon+args.seq_in)
+                trajs_v = [xs,perfs,settings,exs,idxs]
+                dGv.update(trajs_v)
+                # data num: batch * (horizon + seq_in)
+                sec.append(time.time()-t)
+                t = time.time()
+                print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
 
             if episode > args.start_gap:
                 # Model-free update
@@ -347,7 +351,7 @@ if __name__ == '__main__':
                 # print("{}/{} Finish model-free validation: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(episode,args.episodes,sec[-1],*np.mean(eval_losses[-args.repeats:],axis=0)))
 
             # Evaluate the model in several episodes
-            if episode > args.start_gap and episode % args.eval_gap == 0:
+            if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free interaction")
                 if args.processes > 1:
                     ctrl.save()
@@ -369,7 +373,7 @@ if __name__ == '__main__':
                     if not os.path.exists(os.path.join(args.agent_dir,'test')):
                         os.mkdir(os.path.join(args.agent_dir,'test'))
                     ctrl.save(os.path.join(ctrl.agent_dir,'test'))
-                secs.append(sec)
+            secs.append(sec)
 
             if episode % args.save_gap == 0:
                 ctrl.save()

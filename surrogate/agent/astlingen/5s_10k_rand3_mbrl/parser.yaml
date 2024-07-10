@@ -3,7 +3,7 @@ agent_dir: 5s_10k_rand3_mbrl
 batch_size: 64
 conv: GAT
 cri_lr: 0.001
-episodes: 1000
+episodes: 10000
 horizon: 60
 length: 501.0
 limit: 23
