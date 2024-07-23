@@ -1,19 +1,23 @@
 import os,yaml
 import multiprocessing as mp
 import numpy as np
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 # os.environ['CUDA_VISIBLE_DEVICES'] = '/gpu:0'
+import warnings
+warnings.filterwarnings("ignore")
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
+from emulator import Emulator
 from dataloader import DataGenerator
 from agent import Actor,Agent
 from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
 import pandas as pd
-import argparse,time
+import argparse,time,datetime
+
 HERE = os.path.dirname(__file__)
 
 def parser(config=None):
@@ -31,6 +35,8 @@ def parser(config=None):
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
     # agent network args
+    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the training data')
+    parser.add_argument('--if_flood',action="store_true",help='if use flood probability')
     parser.add_argument('--seq_in',type=int,default=1,help='recurrent information for agent')
     parser.add_argument('--horizon',type=int,default=60,help='prediction & control horizon')
     parser.add_argument('--conv',type=str,default='GATconv',help='convolution type')
@@ -40,20 +46,23 @@ def parser(config=None):
     parser.add_argument('--n_layer',type=int,default=3,help='number of decision-making layers')
     parser.add_argument('--conv_dim',type=int,default=128,help='number of graphconv channels')
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of graphconv layers')
-    parser.add_argument('--hidden_dim',type=int,default=128,help='number of recurrent channels')
+    parser.add_argument('--hidden_dim',type=int,default=64,help='number of recurrent channels')
     parser.add_argument('--n_tp_layer',type=int,default=3,help='number of recurrent layers')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
-
+    parser.add_argument('--vnet',action="store_true",help='if use state value network')
     # agent training args
     parser.add_argument('--train',action="store_true",help='if train')
     parser.add_argument('--episodes',type=int,default=1000,help='training episode')
     parser.add_argument('--repeats',type=int,default=5,help='training repeats per episode')
     parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
-    parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
+    parser.add_argument('--norm',action="store_true",help='if use reward normalization')
+    parser.add_argument('--scale',type=float,default=1.0,help='reward scaling factor')
+    parser.add_argument('--batch_size',type=int,default=128,help='training batch size')
     parser.add_argument('--limit',type=int,default=23,help='maximum capacity 2^n of the buffer')
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
+    parser.add_argument('--value_tau',type=float,default=0.0,help='value running average tau')
     parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
     parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
     parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
@@ -88,10 +97,11 @@ def parser(config=None):
 
 
 def interact_steps(env,args,event,runoff,ctrl=None,train=False):
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
     if ctrl is None:
         args.load_agent = True
-        ctrl = Actor(args.action_shape,args.observ_space,args,act_only=True)
+        ctrl = Actor(args.action_shape,args.observ_space,args)
     # trajs = []
     tss,runoff = runoff
     state = env.reset(event,env.global_state,args.seq_in if args.recurrent else False)
@@ -134,22 +144,25 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
-        'train':True,
-        'env':'astlingen',
-        'length':501,
-        'act':'conti',
-        'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
-        'batch_size':64,
-        'episodes':1000,
-        'seq_in':5,'horizon':60,
-        'setting_duration':5,
-        'use_edge':True,
-        'conv':'GAT',
-        'recurrent':'Conv1D',
-        'eval_gap':10,'start_gap':0,
-        'agent_dir': './agent/astlingen/5s_10k_conti_mbrl',
-        'load_agent':False,
-        'processes':2,
+        # 'train':True,
+        # 'env':'astlingen',
+        # 'length':501,
+        # 'act':'conti',
+        # 'model_based':True,
+        # 'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
+        # 'batch_size':64,
+        # 'episodes':10000,
+        # 'seq_in':5,'horizon':60,
+        # 'setting_duration':5,
+        # 'use_edge':True,
+        # 'conv':'GAT',
+        # 'recurrent':'Conv1D',
+        # 'vnet':True,
+        # 'eval_gap':0,'start_gap':0,
+        # 'agent_dir': './agent/astlingen/5s_10k_conti_mbrl',
+        # 'load_agent':False,
+        # 'processes':2,
+        # 'norm':True,
         # 'test':False,
         # 'rain_dir':'./envs/config/ast_test1_events.csv',
         # 'result_dir':'./results/astlingen/60s_10k_conti_policy2007',
@@ -171,27 +184,32 @@ if __name__ == '__main__':
         yaml.dump(data=config,stream=open(os.path.join(args.agent_dir,'parser.yaml'),'w'))
 
         # Model args
-        hyps = yaml.load(open(os.path.join(HERE,'utils','config.yaml'),'r'),yaml.FullLoader)
-        margs = argparse.Namespace(**hyps[args.env])
-        margs.model_dir = args.model_dir
-        known_hyps = yaml.load(open(os.path.join(margs.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
-        for k,v in known_hyps.items():
-            if '_dir' in k:
-                setattr(margs,k,os.path.join(hyps[args.env][k],v))
-                continue
-            setattr(margs,k,v)
-        setattr(margs,'epsilon',args.epsilon)
-        setattr(args,'if_flood',margs.if_flood)
-        config['if_flood'] = args.if_flood
-        env_args = env.get_args(margs.directed,margs.length,margs.order)
-        for k,v in env_args.items():
-            setattr(margs,k,v)
-        margs.use_edge = margs.use_edge or margs.edge_fusion
+        if args.model_based or args.sample_gap == 0:
+            hyps = yaml.load(open(os.path.join(HERE,'utils','config.yaml'),'r'),yaml.FullLoader)
+            margs = argparse.Namespace(**hyps[args.env])
+            margs.model_dir = args.model_dir
+            known_hyps = yaml.load(open(os.path.join(margs.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
+            for k,v in known_hyps.items():
+                if '_dir' in k:
+                    setattr(margs,k,os.path.join(hyps[args.env][k],v))
+                    continue
+                setattr(margs,k,v)
+            setattr(margs,'epsilon',args.epsilon)
+            setattr(args,'if_flood',margs.if_flood)
+            setattr(args,'data_dir',margs.data_dir)
+            config['if_flood'] = args.if_flood
+            config['data_dir'] = args.data_dir
+            env_args = env.get_args(margs.directed,margs.length,margs.order)
+            for k,v in env_args.items():
+                setattr(margs,k,v)
+            margs.use_edge = margs.use_edge or margs.edge_fusion
+            emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+            emul.load(margs.model_dir)
         
         # Rainfall args
         # margs.data_dir = './envs/data/astlingen/1s_edge_rand3128_rain50/act1/'
         print("Get training events runoff")
-        hyp = yaml.load(open(os.path.join(margs.data_dir,'parser.yaml'),'r'),yaml.FullLoader)
+        hyp = yaml.load(open(os.path.join(args.data_dir,'parser.yaml'),'r'),yaml.FullLoader)
         rain_arg = env.config['rainfall']
         if 'rain_dir' in hyp:
             rain_arg['rainfall_events'] = os.path.join('./envs/config/',hyp['rain_dir'])
@@ -199,8 +217,8 @@ if __name__ == '__main__':
             rain_arg['suffix'] = hyp['rain_suffix']
         if 'rain_num' in hyp:
             rain_arg['rain_num'] = hyp['rain_num']
-        # events = get_inp_files(env.config['swmm_input'],rain_arg)
-        events = ['./envs/network/astlingen/astlingen_03_05_2006_01.inp', './envs/network/astlingen/astlingen_07_30_2004_21.inp', './envs/network/astlingen/astlingen_01_13_2002_12.inp', './envs/network/astlingen/astlingen_08_12_2003_08.inp', './envs/network/astlingen/astlingen_10_05_2005_16.inp', './envs/network/astlingen/astlingen_04_12_2003_18.inp', './envs/network/astlingen/astlingen_05_27_2004_06.inp', './envs/network/astlingen/astlingen_12_02_2004_23.inp', './envs/network/astlingen/astlingen_12_28_2006_08.inp', './envs/network/astlingen/astlingen_12_13_2006_23.inp', './envs/network/astlingen/astlingen_03_11_2002_09.inp', './envs/network/astlingen/astlingen_08_11_2003_19.inp', './envs/network/astlingen/astlingen_09_16_2006_05.inp', './envs/network/astlingen/astlingen_03_23_2006_08.inp', './envs/network/astlingen/astlingen_06_13_2000_20.inp', './envs/network/astlingen/astlingen_11_15_2003_17.inp', './envs/network/astlingen/astlingen_02_07_2001_07.inp', './envs/network/astlingen/astlingen_04_17_2005_12.inp', './envs/network/astlingen/astlingen_06_29_2002_07.inp', './envs/network/astlingen/astlingen_05_06_2004_19.inp', './envs/network/astlingen/astlingen_08_21_2001_08.inp', './envs/network/astlingen/astlingen_04_30_2001_09.inp', './envs/network/astlingen/astlingen_03_13_2001_16.inp', './envs/network/astlingen/astlingen_07_27_2000_14.inp', './envs/network/astlingen/astlingen_04_27_2005_00.inp', './envs/network/astlingen/astlingen_08_01_2002_11.inp', './envs/network/astlingen/astlingen_11_28_2006_01.inp', './envs/network/astlingen/astlingen_10_29_2004_11.inp', './envs/network/astlingen/astlingen_07_25_2000_01.inp', './envs/network/astlingen/astlingen_09_11_2006_11.inp', './envs/network/astlingen/astlingen_06_01_2005_10.inp', './envs/network/astlingen/astlingen_02_10_2004_00.inp', './envs/network/astlingen/astlingen_03_07_2003_20.inp', './envs/network/astlingen/astlingen_10_25_2000_13.inp', './envs/network/astlingen/astlingen_12_23_2000_19.inp', './envs/network/astlingen/astlingen_08_08_2005_22.inp', './envs/network/astlingen/astlingen_12_15_2006_17.inp', './envs/network/astlingen/astlingen_04_17_2000_07.inp', './envs/network/astlingen/astlingen_11_12_2005_09.inp', './envs/network/astlingen/astlingen_03_07_2006_18.inp', './envs/network/astlingen/astlingen_10_13_2003_15.inp', './envs/network/astlingen/astlingen_09_26_2002_16.inp', './envs/network/astlingen/astlingen_10_28_2000_08.inp', './envs/network/astlingen/astlingen_10_23_2004_17.inp', './envs/network/astlingen/astlingen_06_11_2006_01.inp', './envs/network/astlingen/astlingen_12_16_2004_17.inp', './envs/network/astlingen/astlingen_03_27_2004_11.inp', './envs/network/astlingen/astlingen_01_04_2004_17.inp', './envs/network/astlingen/astlingen_11_17_2001_18.inp', './envs/network/astlingen/astlingen_04_17_2000_22.inp', './envs/network/astlingen/astlingen_08_22_2006_02.inp']
+        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        # events = ['./envs/network/astlingen/astlingen_03_05_2006_01.inp', './envs/network/astlingen/astlingen_07_30_2004_21.inp', './envs/network/astlingen/astlingen_01_13_2002_12.inp', './envs/network/astlingen/astlingen_08_12_2003_08.inp', './envs/network/astlingen/astlingen_10_05_2005_16.inp', './envs/network/astlingen/astlingen_04_12_2003_18.inp', './envs/network/astlingen/astlingen_05_27_2004_06.inp', './envs/network/astlingen/astlingen_12_02_2004_23.inp', './envs/network/astlingen/astlingen_12_28_2006_08.inp', './envs/network/astlingen/astlingen_12_13_2006_23.inp', './envs/network/astlingen/astlingen_03_11_2002_09.inp', './envs/network/astlingen/astlingen_08_11_2003_19.inp', './envs/network/astlingen/astlingen_09_16_2006_05.inp', './envs/network/astlingen/astlingen_03_23_2006_08.inp', './envs/network/astlingen/astlingen_06_13_2000_20.inp', './envs/network/astlingen/astlingen_11_15_2003_17.inp', './envs/network/astlingen/astlingen_02_07_2001_07.inp', './envs/network/astlingen/astlingen_04_17_2005_12.inp', './envs/network/astlingen/astlingen_06_29_2002_07.inp', './envs/network/astlingen/astlingen_05_06_2004_19.inp', './envs/network/astlingen/astlingen_08_21_2001_08.inp', './envs/network/astlingen/astlingen_04_30_2001_09.inp', './envs/network/astlingen/astlingen_03_13_2001_16.inp', './envs/network/astlingen/astlingen_07_27_2000_14.inp', './envs/network/astlingen/astlingen_04_27_2005_00.inp', './envs/network/astlingen/astlingen_08_01_2002_11.inp', './envs/network/astlingen/astlingen_11_28_2006_01.inp', './envs/network/astlingen/astlingen_10_29_2004_11.inp', './envs/network/astlingen/astlingen_07_25_2000_01.inp', './envs/network/astlingen/astlingen_09_11_2006_11.inp', './envs/network/astlingen/astlingen_06_01_2005_10.inp', './envs/network/astlingen/astlingen_02_10_2004_00.inp', './envs/network/astlingen/astlingen_03_07_2003_20.inp', './envs/network/astlingen/astlingen_10_25_2000_13.inp', './envs/network/astlingen/astlingen_12_23_2000_19.inp', './envs/network/astlingen/astlingen_08_08_2005_22.inp', './envs/network/astlingen/astlingen_12_15_2006_17.inp', './envs/network/astlingen/astlingen_04_17_2000_07.inp', './envs/network/astlingen/astlingen_11_12_2005_09.inp', './envs/network/astlingen/astlingen_03_07_2006_18.inp', './envs/network/astlingen/astlingen_10_13_2003_15.inp', './envs/network/astlingen/astlingen_09_26_2002_16.inp', './envs/network/astlingen/astlingen_10_28_2000_08.inp', './envs/network/astlingen/astlingen_10_23_2004_17.inp', './envs/network/astlingen/astlingen_06_11_2006_01.inp', './envs/network/astlingen/astlingen_12_16_2004_17.inp', './envs/network/astlingen/astlingen_03_27_2004_11.inp', './envs/network/astlingen/astlingen_01_04_2004_17.inp', './envs/network/astlingen/astlingen_11_17_2001_18.inp', './envs/network/astlingen/astlingen_04_17_2000_22.inp', './envs/network/astlingen/astlingen_08_22_2006_02.inp']
         if os.path.exists(os.path.join(args.agent_dir,'train_runoff.npy')):
             res = [np.load(os.path.join(args.agent_dir,'train_runoff_ts.npy'),allow_pickle=True),
                    np.load(os.path.join(args.agent_dir,'train_runoff.npy'),allow_pickle=True)]
@@ -227,18 +245,20 @@ if __name__ == '__main__':
         print("Finish training events runoff")
 
         # Real data for sampling base points
-        dG = DataGenerator(env.config,margs.data_dir,args)
-        dG.load(margs.data_dir)
+        dG = DataGenerator(env.config,args.data_dir,args)
+        dG.load(args.data_dir)
         # Virtual data buffer for model-based rollout trajs
         dGv = DataGenerator(env.config,args=args)
-        ctrl = Agent(args.action_shape,args.observ_space,args,act_only=False,margs=margs)
+        ctrl = Agent(args.action_shape,args.observ_space,args,act_only=False)
         ctrl.set_norm(*dG.get_norm())
         n_events = int(max(dG.event_id))+1
-        train_ids = np.load(os.path.join(margs.model_dir,'train_id.npy'))
+        train_ids = np.load(os.path.join(margs.model_dir,'train_id.npy') if args.model_based else os.path.join(args.data_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
 
         train_losses,eval_losses,train_objss,test_objss,secs = [],[],[],[],[]
+        log_dir = "logs/agent/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for episode in range(args.episodes):
             sec,t = [],time.time()
             # Model-free sampling
@@ -268,7 +288,9 @@ if __name__ == '__main__':
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])))
-                
+                with tf.summary.create_file_writer(log_dir).as_default():
+                    tf.summary.scalar('Model-free training objectives', np.mean(train_objss[-1]), step=episode)
+
             # Model-based sampling
             if args.model_based or args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-based sampling")
@@ -283,10 +305,10 @@ if __name__ == '__main__':
                     i += 1
                     if i > 100:
                         break
-                trajs_v = ctrl.rollout(train_dats[:-1])
+                trajs_v = ctrl.rollout(train_dats[:-1],emul)
                 xs,exs,settings,perfs = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
                 xs[...,1] += xs[...,-1]
-                if margs.if_flood:
+                if emul.if_flood:
                     xs = np.concatenate([xs[...,:-2],xs[...,-1:]],axis=-1)
                 idxs = np.repeat(train_dats[-1],args.horizon+args.seq_in)
                 trajs_v = [xs,perfs,settings,exs,idxs]
@@ -304,51 +326,42 @@ if __name__ == '__main__':
                     train_dats = dGv.prepare_batch(train_idxs,args.seq_in*2,args.batch_size,args.setting_duration,trim=False)
                     x,settings,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
                     x_norm,b_norm,y_norm = [ctrl.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]    
-                    s,settings = [x_norm[:,-args.seq_in:,...],b_norm[:,:args.seq_in,...]],settings[:,0:1,...]
+                    s,settings = [x_norm[:,-args.seq_in:,...],b_norm[:,:args.seq_in,...]],settings[:,0:1,:]
                     s_ = [tf.concat([y_norm[:,:args.seq_in,...,:-1],b_norm[:,:args.seq_in,...]],axis=-1),b_norm[:,args.seq_in:,...]]
-                    if margs.use_edge:
+                    if args.use_edge:
                         ex,ey = train_dats[-2:]
                         ex_norm,ey_norm = [ctrl.normalize(dat,'e') for dat in [ex,ey]]
                         s += [ex_norm[:,-args.seq_in:,...]]
-                        ae = ctrl.emul.get_edge_action(tf.repeat(settings,args.setting_duration,axis=1),True)
+
+                        # Get edge action
+                        # ae = emul.get_edge_action(tf.repeat(settings,args.setting_duration,axis=1),True)
+                        setts = tf.repeat(settings,args.setting_duration,axis=1)
+                        act_edges = [i for act_edge in args.act_edges for i in np.where((args.edges==act_edge).all(1))[0]]
+                        act_edges = sorted(list(set(act_edges)),key=act_edges.index)
+                        ae = np.zeros(args.edges.shape[0])
+                        ae[act_edges] = range(1,setts.shape[-1]+1)
+                        ae = tf.expand_dims(tf.gather(tf.concat([tf.ones_like(setts[...,:1]),setts],axis=-1),tf.cast(ae,tf.int32),axis=-1),axis=-1)                        
+
                         s_ += [tf.concat([ey_norm[:,:args.seq_in,...],ae],axis=-1)]
                     # Get reward from env as -obj_pred
-                    states = (x[:,-args.seq_in:,...],ex[:,-args.seq_in:,...] if margs.use_edge else None)
-                    preds = (y[:,:args.seq_in,...],ey[:,:args.seq_in,...] if margs.use_edge else None)
-                    r = - env.objective_pred_tf(preds,states,tf.repeat(settings,args.setting_duration,axis=1))/100
+                    states = (x[:,-args.seq_in:,...],ex[:,-args.seq_in:,...] if args.use_edge else None)
+                    preds = (y[:,:args.seq_in,...],ey[:,:args.seq_in,...] if args.use_edge else None)
+                    r = - env.objective_pred_tf(preds,states,tf.repeat(settings,args.setting_duration,axis=1),norm=args.norm)
+                    r *= args.scale
                     # r = tf.clip_by_value(r, -10, 10)
-                    a = ctrl.actor.convert_setting_to_action(settings)
+                    a = ctrl.actor.convert_setting_to_action(settings[:,0,:])
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
                     train_losses.append([los.numpy() for los in train_loss])
                 sec.append(time.time()-t)
                 t = time.time()
-                print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(episode,args.episodes,sec[-1],*np.mean(train_losses[-args.repeats:],axis=0)))
-
-                # Model-free validation
-                # print(f"{episode}/{args.episodes} Start model-free validation")
-                # for _ in range(args.repeats):
-                #     test_idxs = dGv.get_data_idxs(test_ids,args.seq_in,args.seq_in*2)
-                #     test_dats = dGv.prepare_batch(test_idxs,args.seq_in*2,args.batch_size,args.setting_duration,trim=False)
-                #     x,settings,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
-                #     x_norm,b_norm,y_norm = [ctrl.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]    
-                #     s,settings = [x_norm[:,-args.seq_in:,...],b_norm[:,:args.seq_in,...]],settings[:,0:1,...]
-                #     s_ = [tf.concat([y_norm[:,:args.seq_in,...,:-1],b_norm[:,:args.seq_in,...]],axis=-1),b_norm[:,args.seq_in:,...]]
-                #     if margs.use_edge:
-                #         ex,ey = test_dats[-2:]
-                #         ex_norm,ey_norm = [ctrl.normalize(dat,'e') for dat in [ex,ey]]
-                #         s += [ex_norm[:,-args.seq_in:,...]]
-                #         ae = ctrl.emul.get_edge_action(tf.repeat(settings,args.setting_duration,axis=1),True)
-                #         s_ += [tf.concat([ey_norm[:,:args.seq_in,...],ae],axis=-1)]
-                #     # Get reward from env as -obj_pred
-                #     states = (x[:,-args.seq_in:,...],ex[:,-args.seq_in:,...] if margs.use_edge else None)
-                #     preds = (y[:,:args.seq_in,...],ey[:,:args.seq_in,...] if margs.use_edge else None)
-                #     r = - env.objective_pred_tf(preds,states,tf.repeat(settings,args.setting_duration,axis=1),norm=True)
-                #     a = ctrl.actor.convert_setting_to_action(settings)
-                #     eval_loss = ctrl.update_eval(s,a,r,s_,train=False)
-                #     eval_losses.append(eval_loss)
-                # sec.append(time.time()-t)
-                # t = time.time()
-                # print("{}/{} Finish model-free validation: {:.2f}s Mean loss: {:.2f} {:.2f} {:.2f}".format(episode,args.episodes,sec[-1],*np.mean(eval_losses[-args.repeats:],axis=0)))
+                loss = np.mean(train_losses[-args.repeats:],axis=0)
+                print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(loss)*" {:.2f}").format(*loss))
+                with tf.summary.create_file_writer(log_dir).as_default():
+                    tf.summary.scalar('Value loss', loss[0], step=episode)
+                    tf.summary.scalar('Alpha', loss[1], step=episode)
+                    tf.summary.scalar('Policy loss', loss[2], step=episode)
+                    if args.vnet:
+                        tf.summary.scalar('VNet loss', loss[3], step=episode)
 
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
@@ -360,15 +373,18 @@ if __name__ == '__main__':
                            for idx,event in zip(test_ids,test_events)]
                     pool.close()
                     pool.join()
-                    res = [r.get() for r in res]
+                    res = [np.sum(r.get()[-1]) for r in res]
                 else:
                     res = [interact_steps(env,args,event,runoffs[idx],ctrl,train=False)
                         for idx,event in zip(test_ids,test_events)]
+                    res = [np.sum(r[-1]) for r in res]
                 # data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
-                test_objss.append(np.array([np.sum(r[-1]) for r in res]))
+                test_objss.append(np.array(res))
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(test_objss[-1])))
+                with tf.summary.create_file_writer(log_dir).as_default():
+                    tf.summary.scalar('Testing objectives', np.mean(test_objss[-1]), step=episode)
                 if np.mean(test_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in test_objss[:-1]]):
                     if not os.path.exists(os.path.join(args.agent_dir,'test')):
                         os.mkdir(os.path.join(args.agent_dir,'test'))

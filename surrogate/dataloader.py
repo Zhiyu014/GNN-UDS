@@ -9,8 +9,7 @@ class DataGenerator:
     def __init__(self,env_config,data_dir=None,args=None):
         self.config = env_config
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
-        self.pre_step = args.rainfall.get('pre_time',0) // args.interval
-        self.interval = getattr(args,"interval",1)
+        self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval']
         self.seq_in = getattr(args,"seq_in",6)
         self.seq_out = getattr(args,"seq_out",getattr(args,"horizon",1))
         recurrent = getattr(args,"recurrent",'False')
@@ -229,17 +228,17 @@ class DataGenerator:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
 
-    def update(self,data,test_id=None):
+    def update(self,trajs,test_id=None):
         items = ['states','perfs','settings']
         items += ['edge_states','event_id'] if self.use_edge else ['event_id']
-        for dat,item in zip(data,items):
-            data = getattr(self,item,np.zeros((0,)+dat.shape[1:],np.float32))
+        for traj,item in zip(trajs,items):
+            data = getattr(self,item,np.zeros((0,)+traj.shape[1:],np.float32))
             if test_id is not None:
                 test_idxs = np.concatenate([np.argwhere(self.event_id == idx).flatten() for idx in test_id],axis=0)
                 train_idxs = np.setdiff1d(np.arange(self.event_id.shape[0]),test_idxs)
-                setattr(self,item,np.concatenate([np.take(data,train_idxs,axis=0),np.take(data,test_idxs,axis=0),dat],axis=0)[-self.limit:])
+                setattr(self,item,np.concatenate([np.take(data,train_idxs,axis=0),np.take(data,test_idxs,axis=0),traj],axis=0)[-self.limit:])
             else:
-                setattr(self,item,np.concatenate([data,dat],axis=0)[-self.limit:])
+                setattr(self,item,np.concatenate([data,traj],axis=0)[-self.limit:])
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir

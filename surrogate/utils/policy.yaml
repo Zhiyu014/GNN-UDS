@@ -10,6 +10,8 @@ astlingen:
   model_dir: ./model/astlingen/
   epsilon: -1.0
 
+  data_dir: ./envs/data/astlingen/
+  if_flood: False
   seq_in: 3 # recurrent sequence length
   seq_out: 3 # recurrent sequence length
   horizon: 10 # horizon length
@@ -20,20 +22,24 @@ astlingen:
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  hidden_dim: 128 # dimension of hidden layers
+  hidden_dim: 64 # dimension of hidden layers
   n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
+  vnet: False # if use state value network
 
   # Arguments for the training
   train: False
   episodes: 5000
   repeats: 5
   gamma: 0.98 # discouted rate
+  norm: False # normalize the reward
+  scale: 1.0 # scale the reward
   batch_size: 128 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  value_tau: 0.0 # value running average tau
   model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap
   start_gap: 100 # start updating agent after start gap
@@ -63,6 +69,8 @@ chaohu:
   model_dir: ./model/chaohu/
   epsilon: -1.0
 
+  data_dir: ./envs/data/chaohu/
+  if_flood: False
   seq_in: 3 # recurrent sequence length
   seq_out: 3 # recurrent sequence length
   horizon: 10 # horizon length
@@ -73,20 +81,24 @@ chaohu:
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  hidden_dim: 128 # dimension of hidden layers
+  hidden_dim: 64 # dimension of hidden layers
   n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
+  vnet: False # if use state value network
 
   # Arguments for the training
   train: False
   episodes: 5000
   repeats: 10
   gamma: 0.95 # discouted rate
+  norm: False # normalize the reward
+  scale: 1.0 # scale the reward
   limit: 22 # maximum capacity of the replay buffer
   batch_size: 128 # batch size of the training data
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  value_tau: 0.0 # value running average tau
   model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap
   start_gap: 100 # start updating agent after start gap

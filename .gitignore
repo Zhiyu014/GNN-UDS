@@ -169,9 +169,9 @@ cython_debug/
 *.hsf
 *.json
 *.rar
+*.v2
 !hague.inp
 !shunqing.inp
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
-*.rar

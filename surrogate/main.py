@@ -4,7 +4,7 @@ from utils.utilities import get_inp_files
 import argparse,yaml
 from envs import get_env
 import numpy as np
-import os,time
+import os,time,datetime
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
@@ -196,6 +196,8 @@ if __name__ == "__main__":
 
         t0 = time.time()
         train_losses,test_losses,secs = [],[],[0]
+        log_dir = "logs/model/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for epoch in range(args.epochs):
             train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
@@ -249,6 +251,14 @@ if __name__ == "__main__":
                 log += " Edge: {:.4f}".format(test_loss[i])
             log += ")"
             print(log)
+            with tf.summary.create_file_writer(log_dir).as_default():
+                tf.summary.scalar('Node loss', test_loss[0], step=epoch)
+                i = 1
+                if args.if_flood and not args.balance:
+                    tf.summary.scalar('Flood classification', test_loss[i], step=epoch)
+                    i += 1
+                if args.use_edge:
+                    tf.summary.scalar('Edge loss', test_loss[i], step=epoch)
 
 
         # save
