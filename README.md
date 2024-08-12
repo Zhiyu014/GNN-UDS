@@ -1,5 +1,11 @@
 # GNN-UDS
- A GNN-based surrogate model of urban drainage networks.
+ A GNN-based surrogate model of urban drainage networks. 
+ 
+ Please feel free to read or cite our paper below.
+
+ Zhang, Z., Tian, W., Lu, C., Liao, Z. and Yuan, Z. 2024. Graph neural network-based surrogate modelling for real-time hydraulic prediction of urban drainage networks. Water Research, 263, 122142. https://doi.org/10.1016/j.watres.2024.122142
+
+ [Full text](https://authors.elsevier.com/c/1jWvN9pi-e1Yo) Please contact me for full text if the link fails.
 
 ## How-to
 1. generate labels
