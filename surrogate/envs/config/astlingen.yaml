@@ -7,7 +7,7 @@ act: True
 interval: 1
 # control time step (min)
 # control_interval: 5
-# state definitions
+# state definitions: Rainfall first!!
 states:
   - !!python/tuple
     - "RG1"
@@ -52,30 +52,30 @@ states:
     - "V6"
     - setting
   # inlet & outlet nodes
-  - !!python/tuple
-    - "J5"
-    - depthN
-  - !!python/tuple
-    - "J6"
-    - depthN
-  - !!python/tuple
-    - "J8"
-    - depthN
-  - !!python/tuple
-    - "J9"
-    - depthN
-  - !!python/tuple
-    - "J12"
-    - depthN
-  - !!python/tuple
-    - "J13"
-    - depthN
-  - !!python/tuple
-    - "J14"
-    - depthN
-  - !!python/tuple
-    - "J17"
-    - depthN
+  # - !!python/tuple
+  #   - "J5"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J6"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J8"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J9"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J12"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J13"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J14"
+  #   - depthN
+  # - !!python/tuple
+  #   - "J17"
+  #   - depthN
 
 # global state definitions
 global_state:

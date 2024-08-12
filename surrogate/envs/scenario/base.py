@@ -157,7 +157,12 @@ class basescenario(scenario):
             state.append(np.asarray(__value))
         state = np.asarray(state).T if seq else np.asarray(state)
         return state
-    
+        
+    def rainfall(self, seq = False):
+        state = self.state(seq)
+        rain_ind = [idx for idx,(_,attr) in enumerate(self.config['states'])
+                     if attr in ['rainfall','cumprecip']]
+        return state[:,rain_ind] if seq else state[rain_ind]
 
     def performance(self, seq = False, metric = 'recent'):
         shape = [len(self.elements[typ]) if typ in ['nodes','links','subcatchments'] else 1
@@ -304,6 +309,9 @@ class basescenario(scenario):
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
         args['nwei'] = np.array([self.config['loss_weight'].get(node,1.0) if self.config.get('loss_weight') is not None else 1.0 for node in nodes])
+        args['elements'] = self.elements
+        args['attrs'] = {'nodes':[attr for ele,attr in self.config['global_state'] if ele == 'nodes'],
+                         'links':[attr for ele,attr in self.config['global_state'] if ele == 'links']}
 
         if self.global_state:
             args['edges'] = self.get_edge_list()

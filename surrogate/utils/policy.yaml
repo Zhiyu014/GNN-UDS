@@ -12,18 +12,14 @@ astlingen:
 
   data_dir: ./envs/data/astlingen/
   if_flood: False
-  seq_in: 3 # recurrent sequence length
-  seq_out: 3 # recurrent sequence length
   horizon: 10 # horizon length
   conv: GATconv
-  recurrent: Conv1D
+  use_pred: False  # if use prediction runoff as states
   use_edge: False
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  hidden_dim: 64 # dimension of hidden layers
-  n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
   vnet: False # if use state value network
 
@@ -71,18 +67,14 @@ chaohu:
 
   data_dir: ./envs/data/chaohu/
   if_flood: False
-  seq_in: 3 # recurrent sequence length
-  seq_out: 3 # recurrent sequence length
   horizon: 10 # horizon length
   conv: GATconv
-  recurrent: Conv1D
+  use_pred: False  # if use prediction runoff as states
   use_edge: False
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  hidden_dim: 64 # dimension of hidden layers
-  n_tp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
   vnet: False # if use state value network
 

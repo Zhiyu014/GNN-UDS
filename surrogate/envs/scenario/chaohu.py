@@ -182,7 +182,7 @@ class chaohu(basescenario):
                 # args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
             else:
                 args['n_agents'] = 1
-                args['observ_space'] = args['state_shape']
+                args['observ_space'] = self.config['states']
                 # args['action_shape'] = len(args['action_table'])
         return args
     

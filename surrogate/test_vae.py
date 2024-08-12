@@ -23,6 +23,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress infos and warnings
 
 HERE = os.path.dirname(__file__)
 
+# TODO: No conv and recurrent, directly flatten states
+# TODO: Add static features: volume, depth, diameter, slope
 class ConvNet:
     def __init__(self,args,conv):
         self.seq_in = getattr(args,"seq_in",None)
@@ -204,10 +206,11 @@ class ConvNet:
         self.optimizer.apply_gradients(zip(grads,self.vars))
         return mse_loss.numpy(),kl_loss.numpy()
 
-    def set_norm(self,norm_x,norm_b,norm_y,norm_e=None):
+    def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e=None):
         setattr(self,'norm_x',norm_x)
         setattr(self,'norm_b',norm_b)
         setattr(self,'norm_y',norm_y)
+        setattr(self,'norm_r',norm_r)
         if norm_e is not None:
             setattr(self,'norm_e',norm_e)
 

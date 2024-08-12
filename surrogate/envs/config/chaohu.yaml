@@ -7,41 +7,41 @@ act: True
 interval: 1
 # control time step (min)
 # control_interval: 5
-# state definitions
+# state definitions: Rainfall first!!
 states:
-    - !!python/tuple
-      - "system"
-      - cumprecip
-    - !!python/tuple
-      - "CC-storage"
-      - depthN
-    - !!python/tuple
-      - "JK-storage"
-      - depthN
-    - !!python/tuple
-      - "YS02001757"
-      - depthN
-    - !!python/tuple
-      - "YS02001907"
-      - depthN
-    - !!python/tuple
-      - "WS02006253"
-      - depthN
-    - !!python/tuple
-      - "WS02006238"
-      - depthN
-    - !!python/tuple
-      - "CC-1"
-      - cuminflow        
-    - !!python/tuple
-      - "CC-2"
-      - cuminflow        
-    - !!python/tuple
-      - "JK-1"
-      - cuminflow 
-    - !!python/tuple
-      - "JK-2"
-      - cuminflow
+  - !!python/tuple
+    - "system"
+    - cumprecip
+  - !!python/tuple
+    - "CC-storage"
+    - depthN
+  - !!python/tuple
+    - "JK-storage"
+    - depthN
+  - !!python/tuple
+    - "YS02001757"
+    - depthN
+  - !!python/tuple
+    - "YS02001907"
+    - depthN
+  - !!python/tuple
+    - "WS02006253"
+    - depthN
+  - !!python/tuple
+    - "WS02006238"
+    - depthN
+  - !!python/tuple
+    - "CC-1"
+    - cuminflow        
+  - !!python/tuple
+    - "CC-2"
+    - cuminflow        
+  - !!python/tuple
+    - "JK-1"
+    - cuminflow 
+  - !!python/tuple
+    - "JK-2"
+    - cuminflow
  
 # global state definitions
 global_state:

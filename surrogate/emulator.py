@@ -124,7 +124,7 @@ class Emulator:
         B_in = Input(shape=bound_shape)
         inp = [X_in,B_in]
         if conv:
-            Adj_in = Input(shape=(self.n_node,self.n_node,))
+            Adj_in = Input(shape=(self.n_node,))
             inp += [Adj_in]
             # maybe problematic for directed graph, use GeneralConv instead
             if 'GCN' in conv:
@@ -139,14 +139,18 @@ class Emulator:
                     self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
             elif 'GAT' in conv:
                 net = GATConv
-                self.filter = self.adj.astype(int)
+                # self.filter = self.adj.astype(int)
+                # filter needs changed <1 -->0 for models (2024.8.9)
+                # It seems that no adj is better in 5s rolling. try 60s predict
+                self.filter = (self.adj>0).astype(int)
                 if self.use_edge:
-                    self.edge_filter = self.edge_adj.astype(int)
+                    # self.edge_filter = self.edge_adj.astype(int)
+                    self.edge_filter = (self.edge_adj>0).astype(int)
             elif 'General' in conv:
                 net = GeneralConv
-                self.filter = self.adj.astype(int)
+                self.filter = (self.adj>0).astype(int)
                 if self.use_edge:
-                    self.edge_filter = self.edge_adj.astype(int)
+                    self.edge_filter = (self.edge_adj>0).astype(int)
             else:
                 raise AssertionError("Unknown Convolution layer %s"%str(conv))
             if self.act and self.use_adj:
@@ -160,7 +164,7 @@ class Emulator:
             E_in = Input(shape=edge_state_shape)
             inp += [E_in]
             if conv:
-                Eadj_in = Input(shape=(self.n_edge,self.n_edge,))
+                Eadj_in = Input(shape=(self.n_edge,))
                 inp += [Eadj_in]
             if self.act:
                 AE_in = Input(shape=edge_state_shape[:-1]+(1,))
@@ -872,10 +876,11 @@ class Emulator:
         h = tf.clip_by_value(h,self.hmin,self.hmax)
         return (h-self.hmin)/(self.hmax-self.hmin)
 
-    def set_norm(self,norm_x,norm_b,norm_y,norm_e=None):
+    def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e=None):
         setattr(self,'norm_x',norm_x)
         setattr(self,'norm_b',norm_b)
         setattr(self,'norm_y',norm_y)
+        setattr(self,'norm_r',norm_r)
         if norm_e is not None:
             setattr(self,'norm_e',norm_e)
 
@@ -883,10 +888,11 @@ class Emulator:
     def normalize(self,dat,item,inverse=False):
         dim = dat.shape[-1]
         normal = getattr(self,'norm_%s'%item)
+        maxi,mini = normal[0,...,:dim],normal[1,...,:dim]
         if inverse:
-            return dat * (normal[0,:,:dim]-normal[1,:,:dim]) + normal[1,:,:dim]
+            return dat * (maxi-mini) + mini
         else:
-            return (dat - normal[1,:,:dim])/(normal[0,:,:dim]-normal[1,:,:dim])
+            return (dat - mini)/(maxi-mini)
 
 
 

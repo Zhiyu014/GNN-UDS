@@ -1,0 +1,16 @@
+act: rand
+agent_dir: 5s_10k_rand_mbrl_observ2
+batch_size: 64
+conv: GAT
+data_dir: 1s_edge_conti128_rain50
+episodes: 10000
+horizon: 60
+limit: 19
+model_based: true
+model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat
+norm: true
+processes: 2
+rain_num: 1
+result_dir: ./results/
+train: true
+use_edge: true
