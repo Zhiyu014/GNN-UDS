@@ -1,0 +1,4 @@
+model_dir: r2_edgef_flood_gat1o_1
+rain_suffix: test_bpswmm_
+result_dir: r2_edgef_flood_gat1o_1_test
+test: true

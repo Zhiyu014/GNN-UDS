@@ -11,7 +11,7 @@ import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 from emulator import Emulator
 from dataloader import DataGenerator
-from agent import Actor,Agent
+from agent import get_agent
 from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
@@ -30,7 +30,8 @@ def parser(config=None):
     # control args
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
-    parser.add_argument('--mac',action="store_true",help='if use multi-agent')
+    parser.add_argument('--mac',action="store_true",help='if use multi-agent action space')
+    parser.add_argument('--dec',action="store_true",help='if use dec-pomdp observation space')
     # surrogate args
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
@@ -46,8 +47,8 @@ def parser(config=None):
     parser.add_argument('--conv_dim',type=int,default=128,help='number of graphconv channels')
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of graphconv layers')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
-    parser.add_argument('--vnet',action="store_true",help='if use state value network')
     # agent training args
+    parser.add_argument('--agent',type=str,default='SAC',help='agent name')
     parser.add_argument('--train',action="store_true",help='if train')
     parser.add_argument('--episodes',type=int,default=1000,help='training episode')
     parser.add_argument('--repeats',type=int,default=5,help='training repeats per episode')
@@ -59,6 +60,7 @@ def parser(config=None):
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
+    parser.add_argument('--epsilon_decay',type=float,default=0.9996,help='epsilon decay rate in QMIX')
     parser.add_argument('--value_tau',type=float,default=0.0,help='value running average tau')
     parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
     parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
@@ -93,15 +95,16 @@ def parser(config=None):
     return args,config
 
 # TODO: if use_pred for not conv
-def interact_steps(env,args,event,runoff,ctrl=None,train=False):
+def interact_steps(args,event,runoff,ctrl=None,train=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
     if ctrl is None:
         args.load_agent = True
-        ctrl = Actor(args.action_shape,len(args.observ_space),args)
+        ctrl = get_agent(args.agent)(args.action_shape,args.observ_space,args,act_only=True)
     # trajs = []
     tss,runoff = runoff
-    state = env.reset(event,env.global_state,args.setting_duration)
+    env = get_env(args.env)(swmm_file=event)
+    state = env.state_full(seq=args.setting_duration)
     if args.if_flood:
         flood = env.flood(seq=args.setting_duration)
     states = [state[-1]]
@@ -139,7 +142,7 @@ def interact_steps(env,args,event,runoff,ctrl=None,train=False):
                 observ = tf.concat([r_norm,observ],axis=-1)
                 observ = tf.stack([tf.reduce_sum(observ[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else observ[...,-1,i]
                                    for i,(_,attr) in enumerate(args.states)],axis=-1)
-            setting = ctrl.control(observ,train)
+            setting = ctrl.control(observ,train).numpy()
             setting = env.controller('safe',state[-1],setting)
         done = env.step([float(sett) for sett in setting.tolist()])
         state = env.state_full(seq=args.setting_duration)
@@ -153,6 +156,7 @@ def interact_steps(env,args,event,runoff,ctrl=None,train=False):
         settings.append(setting)        
         rains.append(env.rainfall())
         i += 1
+    env.initialize_logger()
     return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,rains,objects]]
 
 @tf.function
@@ -184,8 +188,7 @@ def rollout(ctrl,dat,emul,args):
             s_norm = tf.concat([r_norm,s_norm],axis=-1)
             s_norm = tf.stack([tf.reduce_sum(s_norm[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else s_norm[...,-1,i]
                                 for i,(_,attr) in enumerate(args.states)],axis=-1)
-        a = ctrl.get_action(s_norm,train=True)
-        setting = ctrl.convert_action_to_setting(a)
+        setting = ctrl.control(s_norm,train=True,batch=True)
         setting = tf.repeat(setting[:,tf.newaxis,:],r_step,axis=1)
         settings.append(setting)
         preds = emul.predict_tf(x,bi,setting,ex)
@@ -207,18 +210,21 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
+        # 'agent':'QMIX',
         # 'train':True,
         # 'env':'astlingen',
-        # 'length':501,
-        # 'act':'rand',
+        # 'act':'rand3',
+        # 'mac':True,
+        # 'dec':False,
         # 'model_based':True,'sample_gap':0,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
         # 'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
         # 'batch_size':64,
         # 'episodes':10000,
+        # 'limit':20,
         # 'horizon':60,
-        # 'conv':'GAT','use_pred':True,
+        # 'norm':True,
+        # 'conv':False,'use_pred':False,
         # 'use_edge':True,
-        # 'vnet':True,
         # 'eval_gap':10,'start_gap':100,
         # 'agent_dir': './agent/astlingen/test',
         # 'load_agent':False,
@@ -233,7 +239,7 @@ if __name__ == '__main__':
         config[k] = v
 
     env = get_env(args.env)(initialize=False)
-    env_args = env.get_args(args.directed,args.length,args.order,act=args.act,mac=args.mac)
+    env_args = env.get_args(args.directed,args.length,args.order,act=args.act,dec=args.dec)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act
@@ -314,7 +320,7 @@ if __name__ == '__main__':
         dG.load(args.data_dir)
         # Virtual data buffer for model-based rollout trajs
         dGv = DataGenerator(env.config,args=args)
-        ctrl = Agent(args.action_shape,args.observ_space,args,act_only=False)
+        ctrl = get_agent(args.agent)(args.action_shape,args.observ_space,args,act_only=False)
         ctrl.set_norm(*dG.get_norm())
         args.use_edge = args.use_edge or not ctrl.conv
         n_events = int(max(dG.event_id))+1
@@ -322,26 +328,23 @@ if __name__ == '__main__':
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
 
-        train_losses,eval_losses,train_objss,test_objss,secs = [],[],[],[],[]
+        train_losses,train_objss,test_objss,secs = [],[],[],[]
         log_dir = "logs/agent/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for episode in range(args.episodes):
+            setattr(args,"episode",episode)
             sec,t = [],time.time()
             # Model-free sampling
             if args.sample_gap > 0 and episode % args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free sampling")
-                if args.processes > 1:
-                    args.load_agent = True
-                    ctrl.save()
-                    pool = mp.Pool(args.processes)
-                    res = [pool.apply_async(func=interact_steps,args=(env,args,event,runoffs[idx],None,True,))
-                        for idx,event in zip(train_ids,train_events)]
-                    pool.close()
-                    pool.join()
-                    res = [r.get() for r in res]
-                else:
-                    res = [interact_steps(env,args,event,runoffs[idx],ctrl=ctrl.actor,train=True)
-                        for idx,event in zip(train_ids,train_events)]
+                args.load_agent = True
+                ctrl.save()
+                pool = mp.Pool(args.processes)
+                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,True,))
+                    for idx,event in zip(train_ids,train_events)]
+                pool.close()
+                pool.join()
+                res = [r.get() for r in res]
                 trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
                 trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
                 dGv.update(trajs)
@@ -372,7 +375,7 @@ if __name__ == '__main__':
                     i += 1
                     if i > 100:
                         break
-                trajs_v = rollout(ctrl.actor,train_dats[:-1],emul,vars(args))
+                trajs_v = rollout(ctrl,train_dats[:-1],emul,vars(args))
                 xs,exs,settings,perfs,rains = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
                 xs[...,1] += xs[...,-1]
                 if emul.if_flood:
@@ -385,8 +388,8 @@ if __name__ == '__main__':
                 t = time.time()
                 print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
 
+            # Model-free update
             if episode > args.start_gap:
-                # Model-free update
                 print(f"{episode}/{args.episodes} Start model-free update")
                 for _ in range(args.repeats):
                     train_idxs = dGv.get_data_idxs(train_ids,args.setting_duration,args.setting_duration*2)
@@ -435,35 +438,36 @@ if __name__ == '__main__':
                     r = - env.objective_pred_tf(preds,states,settings,norm=args.norm)
                     r *= args.scale
                     # r = tf.clip_by_value(r, -10, 10)
-                    a = ctrl.actor.convert_setting_to_action(settings[:,0,:])
+                    a = ctrl.convert_setting_to_action(settings[:,0,:])
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
-                    train_losses.append([los.numpy() for los in train_loss])
+                    train_losses.append([los.numpy() for los in train_loss] if isinstance(train_loss,list) else train_loss)
                 sec.append(time.time()-t)
                 t = time.time()
                 loss = np.mean(train_losses[-args.repeats:],axis=0)
-                print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(loss)*" {:.2f}").format(*loss))
-                with tf.summary.create_file_writer(log_dir).as_default():
-                    tf.summary.scalar('Value loss', loss[0], step=episode)
-                    tf.summary.scalar('Alpha', loss[1], step=episode)
-                    tf.summary.scalar('Policy loss', loss[2], step=episode)
-                    if args.vnet:
-                        tf.summary.scalar('VNet loss', loss[3], step=episode)
+                if isinstance(train_loss,list):
+                    print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(loss)*" {:.2f}").format(*loss))
+                    with tf.summary.create_file_writer(log_dir).as_default():
+                        tf.summary.scalar('Value loss', loss[0], step=episode)
+                        tf.summary.scalar('Alpha', loss[1], step=episode)
+                        tf.summary.scalar('Policy loss', loss[2], step=episode)
+                        if hasattr(ctrl,'vnet'):
+                            tf.summary.scalar('VNet loss', loss[3], step=episode)
+                else:
+                    print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(episode,args.episodes,sec[-1],loss))
+                    with tf.summary.create_file_writer(log_dir).as_default():
+                        tf.summary.scalar('Value loss', loss, step=episode)
+                        tf.summary.scalar('Epsilon', ctrl.epsilon, step=episode)
 
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free interaction")
-                if args.processes > 1:
-                    ctrl.save()
-                    pool = mp.Pool(args.processes)
-                    res = [pool.apply_async(func=interact_steps,args=(env,args,event,runoffs[idx],None,False,))
-                           for idx,event in zip(test_ids,test_events)]
-                    pool.close()
-                    pool.join()
-                    res = [np.sum(r.get()[-1]) for r in res]
-                else:
-                    res = [interact_steps(env,args,event,runoffs[idx],ctrl.actor,train=False)
+                ctrl.save()
+                pool = mp.Pool(args.processes)
+                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,False,))
                         for idx,event in zip(test_ids,test_events)]
-                    res = [np.sum(r[-1]) for r in res]
+                pool.close()
+                pool.join()
+                res = [np.sum(r.get()[-1]) for r in res]
                 # data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
                 test_objss.append(np.array(res))
                 sec.append(time.time()-t)
@@ -479,11 +483,11 @@ if __name__ == '__main__':
 
             if episode % args.save_gap == 0:
                 ctrl.save()
-            ctrl.target_update_func(episode)
+            ctrl.update_func(episode)
         ctrl.save()
         dGv.save(args.agent_dir)
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),np.array(train_losses))
-        np.save(os.path.join(ctrl.agent_dir,'eval_loss.npy'),np.array(eval_losses))
-        np.save(os.path.join(ctrl.agent_dir,'train_objs.npy'),np.array(train_objss))
+        if args.sample_gap > 0:
+            np.save(os.path.join(ctrl.agent_dir,'train_objs.npy'),np.array(train_objss))
         np.save(os.path.join(ctrl.agent_dir,'test_objs.npy'),np.array(test_objss))
         np.save(os.path.join(ctrl.agent_dir,'time.npy'),np.array(secs))

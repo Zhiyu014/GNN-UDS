@@ -21,10 +21,6 @@ tf.config.list_physical_devices(device_type='GPU')
 # policy = mixed_precision.Policy('mixed_float16')
 # mixed_precision.set_global_policy(policy)
 
-# - **Model**: STGCN may be a possible method to handle with spatial-temporal prediction. Why such structure is needed?  TO reduce model
-#     - [pytorch implementation](https://github.com/LMissher/STGNN)
-#     - [original](https://github.com/VeritasYin/STGCN_IJCAI-18)
-# - **Predict**: *T*-times 1-step prediction OR T-step prediction?
 
 class NodeEdge(tf.keras.layers.Layer):
     def __init__(self, inci, **kwargs):
@@ -46,7 +42,7 @@ class NodeEdge(tf.keras.layers.Layer):
         mat = self.w * self.inci + self.b
         return tf.matmul(mat, inputs)
     
-
+# TODO: replace use_edge with node_edge for the class NodeEdge
 class Emulator:
     def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
@@ -907,7 +903,7 @@ class Emulator:
             self.model.save_weights(os.path.join(model_dir,'model.h5'))
 
         if self.norm:
-            for item in 'xbye':
+            for item in 'xbyre':
                 if hasattr(self,'norm_%s'%item):
                     np.save(os.path.join(model_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
 
@@ -920,6 +916,6 @@ class Emulator:
             self.model.load_weights(os.path.join(model_dir,'model.h5'))
 
         if self.norm:
-            for item in 'xbye':
+            for item in 'xbyre':
                 if os.path.exists(os.path.join(model_dir,'norm_%s.npy'%item)):
                     setattr(self,'norm_%s'%item,np.load(os.path.join(model_dir,'norm_%s.npy'%item)))

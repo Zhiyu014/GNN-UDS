@@ -1,0 +1,2 @@
+Node depth,Node inflow,Node outflow,Flooding,Edge depth,Edge volume,Edge flow,Accuracy,Precision,Recall,F1-score
+0.08717822, 1.4108937, 1.4578023, 2.36034, 0.008990458, 3.9571304, 1.2629151, 0.9966365459536904, 0.998430686682636, 0.9877545605891282, 0.9930639305246729

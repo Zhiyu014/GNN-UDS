@@ -41,13 +41,13 @@ loss_weight:
     
 states:
   - !!python/tuple
+    - RainGage
+    - rainfall
+  - !!python/tuple
     - jd1
     - depthN
   - !!python/tuple
     - jd2
-    - depthN
-  - !!python/tuple
-    - jd3
     - depthN
 
 # Performance Targets

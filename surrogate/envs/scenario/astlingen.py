@@ -67,7 +67,7 @@ class astlingen(basescenario):
         outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        obj = np.concatenate(flood + outflow + inflow,axis=0)
+        obj = np.stack(flood + outflow + inflow,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         if norm:
@@ -108,7 +108,7 @@ class astlingen(basescenario):
         actions = {act:[v[a] for a,v in zip(act,asp.values())] for act in actions}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False,mac=False):
+    def get_args(self,directed=False,length=0,order=1,act=False,dec=False):
         args = super().get_args(directed,length,order)
 
         # Rainfall timeseries & events files
@@ -133,7 +133,7 @@ class astlingen(basescenario):
             else:
                 args['action_shape'] = len(args['action_space'])
             # For multi-agent
-            if mac:
+            if dec:
                 args['n_agents'] = len(self.config['site'])
                 state = [s[0] for s in self.config['states']]
                 args['observ_space'] = [[state.index(o) for o in v['states']]

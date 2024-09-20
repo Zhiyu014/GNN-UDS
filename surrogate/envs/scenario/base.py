@@ -283,14 +283,14 @@ class basescenario(scenario):
         if getattr(self,'env',None) is None or self.env._isFinished:
             inp = read_inp_file(self.config['swmm_input'])
             args['is_outfall'] = np.array([1 if sec == 'OUTFALLS' else 0 for sec in NODE_SECTIONS
-                                           for _ in getattr(inp,sec,dict()).values()])
+                                            if sec in inp for _ in getattr(inp,sec,dict()).values()])
             args['is_storage'] = np.array([1 if sec == 'STORAGE' else 0 for sec in NODE_SECTIONS
-                                           for _ in getattr(inp,sec,dict()).values()])
+                                            if sec in inp for _ in getattr(inp,sec,dict()).values()])
             args['hmax'] = np.array([getattr(node,'MaxDepth',0)+getattr(node,'SurDepth',0) for sec in NODE_SECTIONS
-                                      for node in getattr(inp,sec,dict()).values()])
+                                     if sec in inp for node in getattr(inp,sec,dict()).values()])
             if args['global_state'][0][-1] == 'head':
                 args['hmin'] = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
-                                      for node in getattr(inp,sec,dict()).values()])
+                                         if sec in inp for node in getattr(inp,sec,dict()).values()])
                 args['hmax'] += args['hmin']
             else:
                 args['hmin'] = np.zeros_like(args['hmax'])

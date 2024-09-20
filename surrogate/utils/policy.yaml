@@ -6,6 +6,7 @@ astlingen:
   setting_duration: 5
   act: 'False'
   mac: False
+  dec: False
 
   model_dir: ./model/astlingen/
   epsilon: -1.0
@@ -24,6 +25,7 @@ astlingen:
   vnet: False # if use state value network
 
   # Arguments for the training
+  agent: SAC  # agent name
   train: False
   episodes: 5000
   repeats: 5
@@ -35,6 +37,7 @@ astlingen:
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
   value_tau: 0.0 # value running average tau
   model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap
@@ -61,6 +64,7 @@ chaohu:
   setting_duration: 10
   act: 'False'
   mac: False
+  dec: False
 
   model_dir: ./model/chaohu/
   epsilon: -1.0
@@ -79,6 +83,7 @@ chaohu:
   vnet: False # if use state value network
 
   # Arguments for the training
+  agent: SAC  # agent name
   train: False
   episodes: 5000
   repeats: 10
@@ -90,6 +95,7 @@ chaohu:
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
+  epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
   value_tau: 0.0 # value running average tau
   model_based: False # if use model-based sampling
   sample_gap: 0 # sample data with swmm per sample gap

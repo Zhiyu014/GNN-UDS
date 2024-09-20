@@ -105,7 +105,7 @@ class chaohu(basescenario):
         #                        settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [np.abs(np.diff(sett[...,i],axis=1)*gamma).sum(axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        obj = np.concatenate([flood] + penal + outflow + wwtp + energy,axis=0)
+        obj = np.stack([flood] + penal + outflow + wwtp + energy,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         # if norm:
@@ -157,7 +157,7 @@ class chaohu(basescenario):
                 actions = {(k[0]*3+k[1],k[2]*3+k[3]):v for k,v in actions.items()}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False,mac=False):
+    def get_args(self,directed=False,length=0,order=1,act=False,dec=False):
         args = super().get_args(directed,length,order)
 
         inp = read_inp_file(self.config['swmm_input'])
@@ -174,7 +174,7 @@ class chaohu(basescenario):
             args['action_table'] = self.get_action_table(act)
             # For multi-agent
             args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
-            if mac:
+            if dec:
                 args['n_agents'] = len(self.config['site'])
                 state = [s[0] for s in self.config['states']]
                 args['observ_space'] = [[state.index(o) for o in v['states']]
