@@ -54,7 +54,7 @@ class astlingen(basescenario):
         # return __object
         return np.array(__object).sum(axis=-1) if seq else np.array(__object)
          
-    def objective_pred(self,preds,states,settings,gamma=None,norm=False):
+    def objective_pred(self,preds,states,settings,gamma=None,norm=False,keepdim=False):
         preds,_ = preds
         state,_ = states
         q_w = preds[...,-1]
@@ -69,10 +69,11 @@ class astlingen(basescenario):
                     if attr == 'cuminflow' and 'WWTP' in idx]
         obj = np.stack(flood + outflow + inflow,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
-        obj *= gamma
+        obj = (obj*gamma).sum(axis=-1) if not keepdim else np.transpose(obj*gamma,(0,2,1))
         if norm:
-            obj /= (state[...,-1].sum(axis=-1).sum(axis=-1)+1e-5)
-        return obj.sum(axis=-1)
+            __norm = (state[...,-1].sum(axis=-1).sum(axis=-1)+1e-5)[:,None]
+            obj /= __norm if not keepdim else __norm[:,None]
+        return obj
     
     def objective_pred_tf(self,preds,states,settings,gamma=None,norm=False):
         import tensorflow as tf
@@ -82,18 +83,34 @@ class astlingen(basescenario):
         q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
         flood = [q_w[...,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        inflow = [tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)) * weight
-                for idx,attr,weight in self.config['performance_targets']
-                    if attr == 'cuminflow' and 'WWTP' not in idx]
+        # inflow = [tf.abs(tf.reduce_sum(preds[...,self.elements['nodes'].index(idx),1],axis=-1,keepdims=True)-\
+        #                  tf.reduce_sum(state[...,self.elements['nodes'].index(idx),1],axis=-1,keepdims=True)) * weight
+        #                  for idx,attr,weight in self.config['performance_targets']
+        #                  if attr == 'cuminflow' and 'WWTP' not in idx]
+        # inflow = [tf.repeat(inf,preds.shape[1],axis=-1)/preds.shape[1] for inf in inflow]
+        # inflow = [tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)) * weight
+        #         for idx,attr,weight in self.config['performance_targets']
+        #             if attr == 'cuminflow' and 'WWTP' not in idx]
         outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
                 for idx,attr,weight in self.config['performance_targets']
                     if attr == 'cuminflow' and 'WWTP' in idx]
-        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(inflow,axis=0) + tf.reduce_sum(outflow,axis=0)
+        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(outflow,axis=0)
         gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
         obj = tf.reduce_sum(obj*gamma,axis=-1)
         if norm:
             obj /= (tf.reduce_sum(tf.reduce_sum(state[...,-1],axis=-1),axis=-1)+1e-5)
         return obj
+
+    def get_obj_norm(self,norm_y,norm_e=None):
+        nodes = self.elements['nodes']
+        targets = self.config['performance_targets']
+        fl = [norm_y[...,nodes.index(idx),-1] * weight
+              for idx,attr,weight in targets if attr == 'cumflooding']
+        infl = [norm_y[...,nodes.index(idx),1] * weight
+                for idx,attr,weight in targets if attr == 'cuminflow' and 'WWTP' not in idx]
+        outfl = [norm_y[...,nodes.index(idx),1] * weight
+                for idx,attr,weight in targets if attr == 'cuminflow' and 'WWTP' in idx]
+        return np.stack(fl + outfl + infl,axis=-1)
 
     def get_action_space(self,act='rand'):
         asp = self.config['action_space'].copy()

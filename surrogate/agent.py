@@ -471,10 +471,10 @@ class AgentSAC:
         self.action_shape = action_shape
 
         self.dec = getattr(args, "dec", False)
-        self.n_agents = len(action_shape)
         self.act = getattr(args,"act","")
         self.conti = self.act.startswith('conti')
-        
+        self.n_agents = action_shape if self.conti else len(action_shape)
+
         self.conv = getattr(args,"conv",False)
         self.conv = False if str(self.conv) in ['None','False','NoneType'] else self.conv
         if self.conv:

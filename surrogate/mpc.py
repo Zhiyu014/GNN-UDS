@@ -1,4 +1,5 @@
 from emulator import Emulator # Emulator should be imported before env
+from predictor import Predictor
 from utils.utilities import get_inp_files
 import pandas as pd
 import os,time,gc
@@ -58,6 +59,7 @@ def parser(config=None):
     parser.add_argument('--termination',nargs='+',type=str,default=['n_eval','256'],help='Iteration termination criteria')
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
+    parser.add_argument('--predict',action='store_true',help='if use predictor for emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--cross_entropy',type=float,default=0,help=' if use cross-entropy method and the kept percentage')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
@@ -141,8 +143,12 @@ class mpc_problem(Problem):
         self.args = args
         if margs is not None:
             tf.keras.backend.clear_session()    # to clear backend occupied models
-            self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
-            self.emul.load(margs.model_dir)
+            if args.predict:
+                self.emul = Predictor(margs.recurrent,margs)
+                self.emul.load(margs.model_dir)
+            else:
+                self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+                self.emul.load(margs.model_dir)
             self.stochastic = getattr(args,"stochastic",False)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
@@ -220,7 +226,10 @@ class mpc_problem(Problem):
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         # env = get_env(self.args.env)(initialize=False)
-        objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings).sum(axis=-1)
+        if self.args.predict:
+            objs = preds.numpy().sum(axis=-1).sum(axis=-1)
+        else:
+            objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -658,10 +667,9 @@ if __name__ == '__main__':
                 # setting = [env.controller(mode='bc')
                 #             for _ in range(args.prediction['control_horizon']//args.setting_duration)]
                 j = 0
-                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
+            sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             done = env.step(sett)
             state = env.state_full(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:

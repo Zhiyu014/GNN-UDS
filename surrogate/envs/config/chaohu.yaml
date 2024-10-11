@@ -189,10 +189,10 @@ performance_targets:
   #   - rainfall
   #   - -5
   # flooding
-  # - !!python/tuple
-  #   - "system"
-  #   - cumflooding
-  #   - 1
+  - !!python/tuple
+    - "nodes"
+    - cumflooding
+    - 1
   # tank flooding penalty
   - !!python/tuple
     - "CC-storage"

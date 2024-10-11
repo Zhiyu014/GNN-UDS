@@ -73,9 +73,9 @@ class basescenario(scenario):
                 __volume = [self.env.methods[attribute](ID) for ID in features]
                 if 'cum' in attribute:
                     __lastvolume = [self.data_log[attribute][ID][-2] if len(self.data_log[attribute][ID])>1 else 0 for ID in features]
-                    __perf = np.array(__volume) - np.array(__lastvolume)
+                    __perf = (np.array(__volume) - np.array(__lastvolume)).sum()
                 else:
-                    __perf = np.array(__volume)
+                    __perf = np.array(__volume).sum()
             else:
                 __volume = self.env.methods[attribute](typ)
                 if 'cum' in attribute:
@@ -84,7 +84,7 @@ class basescenario(scenario):
                 else:
                     __perf = __volume
             __performance.append(__perf)
-        __performance = np.array(__performance).T if typ in ['nodes','links','subcatchments'] else np.array(__performance)
+        __performance = np.array(__performance)
 
         # Record the _performance
         self.data_log["performance_measure"].append(__performance)
@@ -165,9 +165,7 @@ class basescenario(scenario):
         return state[:,rain_ind] if seq else state[rain_ind]
 
     def performance(self, seq = False, metric = 'recent'):
-        shape = [len(self.elements[typ]) if typ in ['nodes','links','subcatchments'] else 1
-                    for typ,_,_ in self.config['performance_targets']]
-        shape = (max(shape),len(shape)) if max(shape)>1 else (len(shape),)
+        shape = (len(self.config['performance_targets']),)
         if not seq:
             if len(self.data_log['performance_measure']) > 0:
                 return super().performance(metric)

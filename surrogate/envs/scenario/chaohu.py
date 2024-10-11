@@ -54,10 +54,8 @@ class chaohu(basescenario):
         
     # TODO
     def objective(self, seq = False):
-        # __object = np.zeros(seq) if seq else 0.0
-        # __object += self.flood(seq).squeeze().sum(axis=-1)
         __object = []
-        __object += [self.flood(seq).squeeze().sum(axis=-1)]
+        # __object += [self.flood(seq).squeeze().sum(axis=-1)]  # move sum flood in performance
         perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
         # _is_raining = False
         for i,(ID,attr,target) in enumerate(self.config['performance_targets']):
@@ -82,11 +80,12 @@ class chaohu(basescenario):
     def objective_pred(self,preds,states,settings,gamma=None):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        flood = q_w.sum(axis=-1)
         nodes,links = self.elements['nodes'],self.elements['links']
         targets = self.config['performance_targets']
+        flood = [q_w.sum(axis=-1) * weight
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx=='nodes']
         penal = [(q_w[...,nodes.index(idx)]>0) * weight
-                for idx,attr,weight in targets if attr == 'cumflooding']
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx.endswith('storage')]
         outflow = [q_in[...,nodes.index(idx)] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         wwtp = [q_in[...,nodes.index(idx)] * weight
@@ -105,7 +104,7 @@ class chaohu(basescenario):
         #                        settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [np.abs(np.diff(sett[...,i],axis=1)*gamma).sum(axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        obj = np.stack([flood] + penal + outflow + wwtp + energy,axis=1)
+        obj = np.stack(flood + penal + outflow + wwtp + energy,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         # if norm:
@@ -118,11 +117,12 @@ class chaohu(basescenario):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
         gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
-        flood = tf.reduce_sum(tf.reduce_sum(q_w,axis=-1)*gamma,axis=1)
         nodes,links = self.elements['nodes'],self.elements['links']
         targets = self.config['performance_targets']
+        flood = [tf.reduce_sum(tf.reduce_sum(q_w,axis=-1)*gamma,axis=1) * weight
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx=='nodes']
         penal = [tf.reduce_sum(tf.cast(q_w[...,nodes.index(idx)]>0,tf.float32)*gamma,axis=1) * weight
-                for idx,attr,weight in targets if attr == 'cumflooding']
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx.endswith('storage')]
         outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
                    for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         wwtp = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
@@ -141,8 +141,23 @@ class chaohu(basescenario):
         #                   settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(sett[...,i],axis=1))*gamma,axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
+        return tf.reduce_sum(flood,axis=0) + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
         # return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
+
+    def get_obj_norm(self,norm_y,norm_e):
+        nodes,links = self.elements['nodes'],self.elements['links']
+        targets = self.config['performance_targets']
+        fl = [norm_y[...,-1].mean(axis=-1) * weight
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx=='nodes']
+        pen = [(norm_y[...,nodes.index(idx),-1]>0).astype(np.float32) * weight
+                for idx,attr,weight in targets if attr == 'cumflooding' and idx.endswith('storage')]
+        outfl = [norm_y[...,nodes.index(idx),1] * weight
+                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
+        wwtp = [norm_y[...,nodes.index(idx),1] * weight
+                for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
+        ene = [norm_e[...,links.index(idx),-1]/cfs_cms * (self.hmin[nodes.index(self.pumps[idx][0])] - self.hmax[nodes.index(self.pumps[idx][1])])/ft_m/8.814 * KWperHP/3600.0 * weight
+               for idx,attr,weight in targets if attr == 'cumpumpenergy']
+        return np.stack(fl + pen + outfl + wwtp + ene,axis=-1)
 
     def get_action_table(self,act='rand'):
         asp = self.config['action_space'].copy()

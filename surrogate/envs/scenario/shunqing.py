@@ -34,4 +34,4 @@ class shunqing(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
 
     def objective(self, seq = False):
-        return self.performance(seq = max(seq,1) + 1 if seq else 2).sum(axis=-1)
+        return self.performance(seq = max(seq,1) + 1 if seq else 2)

@@ -15,7 +15,7 @@ from agent import get_agent
 from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
-import pandas as pd
+import pandas as pd,matplotlib.pyplot as plt
 import argparse,time,datetime
 
 HERE = os.path.dirname(__file__)
@@ -99,6 +99,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
     if ctrl is None:
+        tf.keras.backend.clear_session()    # to clear backend occupied models
         args.load_agent = True
         ctrl = get_agent(args.agent)(args.action_shape,args.observ_space,args,act_only=True)
     # trajs = []
@@ -158,53 +159,6 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
         i += 1
     env.initialize_logger()
     return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,rains,objects]]
-
-@tf.function
-def rollout(ctrl,dat,emul,args):
-    args = argparse.Namespace(**args)
-    n_step,r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
-    x,a,b,y = dat[:4]
-    r = tf.concat(dat[4:6],axis=1)
-    ex = dat[-2]
-    # Initial perf is not included in the rollout
-    xs,exs,settings,perfs = [x],[ex],[a[:,:args.seq_in,:]],[y[:,:args.seq_in,:,-1:]]
-    for i in range(n_step):
-        bi = b[:,i*r_step:(i+1)*r_step,:]
-        x_norm,b_norm,e_norm = [ctrl.normalize(dat,item) if dat is not None else None
-                                for dat,item in zip([x,bi,ex],'xbe')]
-        if ctrl.conv:
-            x_norm,e_norm = [tf.stack([tf.reduce_sum(dat[...,i],axis=1) if 'cum' in attr or '_vol' in attr else dat[:,-1,:,i]
-                                       for i,attr in enumerate(args.attrs[items])],axis=-1)
-                                         for dat,items in zip([x_norm,e_norm],['nodes','links'])]
-            if args.use_pred:
-                b_norm = tf.stack([tf.reduce_sum(b_norm[...,i],axis=1) if i==0 else b_norm[:,-1,:,i]
-                                   for i in range(b_norm.shape[-1])],axis=-1)
-            s_norm = [x_norm,b_norm,e_norm] if args.use_pred else [x_norm,e_norm]
-        else:
-            r_norm = ctrl.normalize(r[:,i*r_step:(i+1)*r_step,:],'r')
-            s_norm = tf.stack([x_norm[...,args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr)] if attr in args.attrs['nodes']
-                               else e_norm[...,args.elements['links'].index(idx),args.attrs['links'].index(attr)]
-                               for idx,attr in args.states if attr in args.attrs['nodes']+args.attrs['links']],axis=-1)
-            s_norm = tf.concat([r_norm,s_norm],axis=-1)
-            s_norm = tf.stack([tf.reduce_sum(s_norm[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else s_norm[...,-1,i]
-                                for i,(_,attr) in enumerate(args.states)],axis=-1)
-        setting = ctrl.control(s_norm,train=True,batch=True)
-        setting = tf.repeat(setting[:,tf.newaxis,:],r_step,axis=1)
-        settings.append(setting)
-        preds = emul.predict_tf(x,bi,setting,ex)
-        if emul.if_flood:
-            x = tf.concat([preds[0][...,:-2],tf.cast(preds[0][...,-2:-1]>0.5,tf.float32),bi],axis=-1)
-        else:
-            x = tf.concat([preds[0][...,:-1],bi],axis=-1)
-        if emul.use_edge:
-            ae = emul.get_edge_action(setting,True)
-            ex = tf.concat([preds[1],ae],axis=-1)
-        else:
-            ex = None
-        xs.append(x)
-        exs.append(ex)
-        perfs.append(preds[0][...,-1:])
-    return [tf.concat(tf.concat(dat,axis=1),axis=0) for dat in [xs,exs,settings,perfs]]+[tf.concat(r,axis=0)]
 
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
@@ -328,6 +282,53 @@ if __name__ == '__main__':
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
 
+        @tf.function
+        def rollout(dat):
+            # args = argparse.Namespace(**args)
+            n_step,r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
+            x,a,b,y = dat[:4]
+            r = tf.concat(dat[4:6],axis=1)
+            ex = dat[-2]
+            # Initial perf is not included in the rollout
+            xs,exs,settings,perfs = [x],[ex],[a[:,:args.seq_in,:]],[y[:,:args.seq_in,:,-1:]]
+            for i in range(n_step):
+                bi = b[:,i*r_step:(i+1)*r_step,:]
+                x_norm,b_norm,e_norm = [ctrl.normalize(dat,item) if dat is not None else None
+                                        for dat,item in zip([x,bi,ex],'xbe')]
+                if ctrl.conv:
+                    x_norm,e_norm = [tf.stack([tf.reduce_sum(dat[...,i],axis=1) if 'cum' in attr or '_vol' in attr else dat[:,-1,:,i]
+                                            for i,attr in enumerate(args.attrs[items])],axis=-1)
+                                                for dat,items in zip([x_norm,e_norm],['nodes','links'])]
+                    if args.use_pred:
+                        b_norm = tf.stack([tf.reduce_sum(b_norm[...,i],axis=1) if i==0 else b_norm[:,-1,:,i]
+                                        for i in range(b_norm.shape[-1])],axis=-1)
+                    s_norm = [x_norm,b_norm,e_norm] if args.use_pred else [x_norm,e_norm]
+                else:
+                    r_norm = ctrl.normalize(r[:,i*r_step:(i+1)*r_step,:],'r')
+                    s_norm = tf.stack([x_norm[...,args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr)] if attr in args.attrs['nodes']
+                                    else e_norm[...,args.elements['links'].index(idx),args.attrs['links'].index(attr)]
+                                    for idx,attr in args.states if attr in args.attrs['nodes']+args.attrs['links']],axis=-1)
+                    s_norm = tf.concat([r_norm,s_norm],axis=-1)
+                    s_norm = tf.stack([tf.reduce_sum(s_norm[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else s_norm[...,-1,i]
+                                        for i,(_,attr) in enumerate(args.states)],axis=-1)
+                setting = ctrl.control(s_norm,train=True,batch=True)
+                setting = tf.repeat(setting[:,tf.newaxis,:],r_step,axis=1)
+                settings.append(setting)
+                preds = emul.predict_tf(x,bi,setting,ex)
+                if emul.if_flood:
+                    x = tf.concat([preds[0][...,:-2],tf.cast(preds[0][...,-2:-1]>0.5,tf.float32),bi],axis=-1)
+                else:
+                    x = tf.concat([preds[0][...,:-1],bi],axis=-1)
+                if emul.use_edge:
+                    ae = emul.get_edge_action(setting,True)
+                    ex = tf.concat([preds[1],ae],axis=-1)
+                else:
+                    ex = None
+                xs.append(x)
+                exs.append(ex)
+                perfs.append(preds[0][...,-1:])
+            return [tf.concat(tf.concat(dat,axis=1),axis=0) for dat in [xs,exs,settings,perfs]]+[tf.concat(r,axis=0)]
+
         train_losses,train_objss,test_objss,secs = [],[],[],[]
         log_dir = "logs/agent/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
@@ -375,7 +376,8 @@ if __name__ == '__main__':
                     i += 1
                     if i > 100:
                         break
-                trajs_v = rollout(ctrl,train_dats[:-1],emul,vars(args))
+                train_dats = [tf.convert_to_tensor(dat) for dat in train_dats]
+                trajs_v = rollout(train_dats[:-1])
                 xs,exs,settings,perfs,rains = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
                 xs[...,1] += xs[...,-1]
                 if emul.if_flood:
@@ -440,11 +442,11 @@ if __name__ == '__main__':
                     # r = tf.clip_by_value(r, -10, 10)
                     a = ctrl.convert_setting_to_action(settings[:,0,:])
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
-                    train_losses.append([los.numpy() for los in train_loss] if isinstance(train_loss,list) else train_loss)
+                    train_losses.append([los.numpy() for los in train_loss] if isinstance(train_loss,tuple) else train_loss.numpy())
                 sec.append(time.time()-t)
                 t = time.time()
                 loss = np.mean(train_losses[-args.repeats:],axis=0)
-                if isinstance(train_loss,list):
+                if isinstance(loss,np.ndarray):
                     print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(loss)*" {:.2f}").format(*loss))
                     with tf.summary.create_file_writer(log_dir).as_default():
                         tf.summary.scalar('Value loss', loss[0], step=episode)
@@ -487,7 +489,16 @@ if __name__ == '__main__':
         ctrl.save()
         dGv.save(args.agent_dir)
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),np.array(train_losses))
+        plt.plot(train_losses,label='train_loss')
+        plt.savefig(os.path.join(ctrl.agent_dir,'train_loss.png'),dpi=300)
+        plt.clf()
         if args.sample_gap > 0:
             np.save(os.path.join(ctrl.agent_dir,'train_objs.npy'),np.array(train_objss))
+            plt.plot(np.mean(train_objss,axis=-1),label='train_objs')
+            plt.savefig(os.path.join(ctrl.agent_dir,'train_objs.png'),dpi=300)
+            plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'test_objs.npy'),np.array(test_objss))
+        plt.plot(np.mean(test_objss,axis=-1),label='test_objs')
+        plt.savefig(os.path.join(ctrl.agent_dir,'test_objs.png'),dpi=300)
+        plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'time.npy'),np.array(secs))

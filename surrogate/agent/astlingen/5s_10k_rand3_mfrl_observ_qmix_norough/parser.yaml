@@ -1,11 +1,10 @@
 act: rand3
 agent: QMIX
-agent_dir: ./agent/
+agent_dir: 5s_10k_rand3_mfrl_observ_qmix_norough
 batch_size: 64
 data_dir: 1s_edge_conti128_rain50
 episodes: 10000
 horizon: 60
-limit: 21
 mac: true
 model_dir: ./model/
 n_layer: 5

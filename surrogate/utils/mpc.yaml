@@ -28,6 +28,7 @@ astlingen:
     - n_eval
     - '256'
   surrogate: False
+  predict: False
   model_dir: ./model/astlingen/
   epsilon: -1.0
   gradient: False
@@ -68,6 +69,7 @@ hague:
     - n_eval
     - '256'
   surrogate: False
+  predict: False
   model_dir: ./model/hague/
   epsilon: -1.0
   gradient: False
@@ -108,6 +110,7 @@ chaohu:
     - '256'
   keep: 'False'
   surrogate: False
+  predict: False
   model_dir: ./model/chaohu/
   epsilon: -1.0
   gradient: False

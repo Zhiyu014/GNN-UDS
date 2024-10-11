@@ -1,0 +1,15 @@
+act: conti
+batch_size: 128
+data_dir: 1s_edge_conti128_rain50
+epochs: 50000
+hidden_dim: 128
+if_flood: 3
+model_dir: 60s_20k_conti_pred_flood
+n_sp_layer: 0
+n_tp_layer: 5
+norm: true
+recurrent: LSTM
+seq_in: 60
+seq_out: 60
+train: true
+use_edge: true
