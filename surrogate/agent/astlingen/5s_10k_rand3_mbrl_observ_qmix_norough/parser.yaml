@@ -6,7 +6,10 @@ conv: 'False'
 data_dir: ./envs/data/
 episodes: 10000
 horizon: 60
+<<<<<<< Updated upstream
 limit: 21
+=======
+>>>>>>> Stashed changes
 mac: true
 model_based: true
 model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat

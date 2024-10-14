@@ -1,15 +1,10 @@
 act: rand3
-<<<<<<< Updated upstream
 <<<<<<<< Updated upstream:surrogate/agent/astlingen/5s_10k_rand3_mfrl_observ_qmix_norough/parser.yaml
 agent: QMIX
 agent_dir: 5s_10k_rand3_mfrl_observ_qmix_norough
 ========
 agent_dir: 5s_10k_rand3_mfrl_observ_sac_norough
 >>>>>>>> Stashed changes:surrogate/agent/astlingen/5s_10k_rand3_mfrl_observ_sac_norough/parser.yaml
-=======
-agent: QMIX
-agent_dir: 5s_10k_rand3_mfrl_observ_qmix_norough
->>>>>>> Stashed changes
 batch_size: 64
 conv: 'False'
 data_dir: 1s_edge_conti128_rain50

@@ -316,7 +316,7 @@ class QAgent:
         if self.mac and isinstance(self.action_shape,(np.ndarray,list)):
             output = [Dense(shp, activation='linear')(x) for shp in self.action_shape]
         else:
-            out_dim = 1 if self.conti else np.product(self.action_shape)
+            out_dim = 1 if self.conti else np.product(np.asarray(self.action_shape))
             output = Dense(out_dim, activation='linear')(x)
         model = Model(inputs=inp, outputs=output)
         return model
@@ -473,7 +473,9 @@ class AgentSAC:
         self.dec = getattr(args, "dec", False)
         self.act = getattr(args,"act","")
         self.conti = self.act.startswith('conti')
-        self.n_agents = action_shape if self.conti else len(action_shape)
+        self.mac = getattr(args,"mac",False)
+        if self.mac:
+            self.n_agents = action_shape if self.conti else action_shape.shape[0]
 
         self.conv = getattr(args,"conv",False)
         self.conv = False if str(self.conv) in ['None','False','NoneType'] else self.conv
@@ -492,7 +494,6 @@ class AgentSAC:
         if not self.act_only:
             self.qnet_0 = QAgent(action_shape,state_shape,args,self.convnet if self.conv else None)
             self.qnet_1 = QAgent(action_shape,state_shape,args,self.convnet if self.conv else None)
-            self.mac = getattr(args,"mac",False)
             if not self.conti and self.mac:
                 self.vnet = VAgent(state_shape,args,self.convnet if self.conv else None)
             self.gamma = getattr(args, "gamma", 0.98)
@@ -742,12 +743,15 @@ class AgentQMIX:
             args = None,
             act_only = False):
         self.action_shape = action_shape
+        self.observ_space = observ_space
 
         self.net_dim = getattr(args,"net_dim",128)
         self.activation = getattr(args,"activation",False)
 
+        self.mac = getattr(args,"mac",False)
+        if self.mac:
+            self.n_agents = self.action_shape.shape[0]
         self.dec = getattr(args, "dec", False)
-        self.n_agents = len(action_shape)
         self.act = getattr(args,"act","")
         self.action_space = [tf.convert_to_tensor(space,dtype=tf.float32)
                               for space in getattr(args,'action_space',{}).values()]
@@ -759,19 +763,18 @@ class AgentQMIX:
             self.convnet = ConvNet(args,self.conv)
             
         if self.dec:
-            self.qnet = [QAgent(action_shape[i],len(observ_space[i]),args) 
+            self.qnet = [QAgent(self.action_shape[i],len(self.observ_space[i]),args) 
             for i in range(self.n_agents)]
             state_shape = len(getattr(args,"states"))
         else:
-            state_shape = len(observ_space)
-            self.qnet = QAgent(action_shape,state_shape,args,self.convnet if self.conv else None)
-        self.mac = getattr(args,"mac",False)
+            state_shape = len(self.observ_space)
+            self.qnet = QAgent(self.action_shape,state_shape,args,self.convnet if self.conv else None)
         self.epsilon_decay,self.epsilon_min = getattr(args,"epsilon_decay",0.9996),0.1
         self._epsilon_decay(getattr(args,"episode",0))
         self.act_only = act_only
         if not self.act_only:
             if self.mac:
-                self.mix = MixNet(action_shape,state_shape,args,self.convnet if self.conv else None)
+                self.mix = MixNet(self.action_shape,state_shape,args,self.convnet if self.conv else None)
             self.double = getattr(args,"double",True) # Not defined in args
             self.gamma = getattr(args, "gamma", 0.98)
             self.update_interval = getattr(args,"update_interval",0.005)
@@ -780,16 +783,19 @@ class AgentQMIX:
 
         self.agent_dir = args.agent_dir
         if args.load_agent:
-            self.load()
+            self.load(self.agent_dir)
         # TODO: reward normalization
         self.value_tau = getattr(args,"value_tau",0.0)
         self.reward_std = tf.constant(1.0)
 
     def control(self, observ,train=False,batch=False):
         if train and np.random.uniform() < self.epsilon:
-            action = [tf.random.uniform((1 if not batch else observ[0].shape[0] if isinstance(observ,list) else observ.shape[0],),
-                                        maxval=self.action_shape[i],dtype=tf.int32)
-                       for i in range(self.n_agents)]
+            batch_size = 1 if not batch else observ[0].shape[0] if isinstance(observ,list) else observ.shape[0]
+            if self.mac:
+                action = [tf.random.uniform((batch_size,),maxval=self.action_shape[i],dtype=tf.int32)
+                          for i in range(self.n_agents)]
+            else:
+                action = tf.random.uniform((batch_size,),maxval=self.action_shape,dtype=tf.int32)
         else:  
             if not batch:
                 observ = [ob[tf.newaxis,...] for ob in observ] if isinstance(observ,list) else observ[tf.newaxis,...]

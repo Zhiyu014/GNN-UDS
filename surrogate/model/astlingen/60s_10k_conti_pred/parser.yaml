@@ -1,1 +1,17 @@
+<<<<<<< Updated upstream
 {}
+=======
+train: True
+data_dir: 1s_edge_conti128_rain50
+act: conti
+model_dir: 60s_10k_conti_pred
+batch_size: 128
+epochs: 10000
+n_sp_layer: 5
+n_tp_layer: 5
+norm: True
+use_edge: True
+seq_in: 60
+seq_out: 60
+recurrent: GRU
+>>>>>>> Stashed changes

@@ -1,0 +1,17 @@
+act: conti
+agent_dir: 5s_10k_conti_mfrl_observ_sac_norough
+batch_size: 64
+conv: 'False'
+data_dir: 1s_edge_conti128_rain50
+episodes: 10000
+horizon: 60
+mac: true
+model_dir: ./model/
+n_layer: 5
+norm: true
+processes: 4
+rain_num: 1
+result_dir: ./results/
+sample_gap: 5
+train: true
+use_edge: true
