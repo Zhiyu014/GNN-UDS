@@ -99,7 +99,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
     if ctrl is None:
-        tf.keras.backend.clear_session()    # to clear backend occupied models
+        # tf.keras.backend.clear_session()    # to clear backend occupied models
         args.load_agent = True
         ctrl = get_agent(args.agent)(args.action_shape,args.observ_space,args,act_only=True)
     # trajs = []
@@ -161,6 +161,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
     return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,rains,objects]]
 
 if __name__ == '__main__':
+    mp.set_start_method('spawn')
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
@@ -242,8 +243,7 @@ if __name__ == '__main__':
             rain_arg['suffix'] = hyp['rain_suffix']
         if 'rain_num' in hyp:
             rain_arg['rain_num'] = hyp['rain_num']
-        # events = get_inp_files(env.config['swmm_input'],rain_arg)
-        events = ['./envs/network/astlingen/astlingen_03_05_2006_01.inp', './envs/network/astlingen/astlingen_07_30_2004_21.inp', './envs/network/astlingen/astlingen_01_13_2002_12.inp', './envs/network/astlingen/astlingen_08_12_2003_08.inp', './envs/network/astlingen/astlingen_10_05_2005_16.inp', './envs/network/astlingen/astlingen_04_12_2003_18.inp', './envs/network/astlingen/astlingen_05_27_2004_06.inp', './envs/network/astlingen/astlingen_12_02_2004_23.inp', './envs/network/astlingen/astlingen_12_28_2006_08.inp', './envs/network/astlingen/astlingen_12_13_2006_23.inp', './envs/network/astlingen/astlingen_03_11_2002_09.inp', './envs/network/astlingen/astlingen_08_11_2003_19.inp', './envs/network/astlingen/astlingen_09_16_2006_05.inp', './envs/network/astlingen/astlingen_03_23_2006_08.inp', './envs/network/astlingen/astlingen_06_13_2000_20.inp', './envs/network/astlingen/astlingen_11_15_2003_17.inp', './envs/network/astlingen/astlingen_02_07_2001_07.inp', './envs/network/astlingen/astlingen_04_17_2005_12.inp', './envs/network/astlingen/astlingen_06_29_2002_07.inp', './envs/network/astlingen/astlingen_05_06_2004_19.inp', './envs/network/astlingen/astlingen_08_21_2001_08.inp', './envs/network/astlingen/astlingen_04_30_2001_09.inp', './envs/network/astlingen/astlingen_03_13_2001_16.inp', './envs/network/astlingen/astlingen_07_27_2000_14.inp', './envs/network/astlingen/astlingen_04_27_2005_00.inp', './envs/network/astlingen/astlingen_08_01_2002_11.inp', './envs/network/astlingen/astlingen_11_28_2006_01.inp', './envs/network/astlingen/astlingen_10_29_2004_11.inp', './envs/network/astlingen/astlingen_07_25_2000_01.inp', './envs/network/astlingen/astlingen_09_11_2006_11.inp', './envs/network/astlingen/astlingen_06_01_2005_10.inp', './envs/network/astlingen/astlingen_02_10_2004_00.inp', './envs/network/astlingen/astlingen_03_07_2003_20.inp', './envs/network/astlingen/astlingen_10_25_2000_13.inp', './envs/network/astlingen/astlingen_12_23_2000_19.inp', './envs/network/astlingen/astlingen_08_08_2005_22.inp', './envs/network/astlingen/astlingen_12_15_2006_17.inp', './envs/network/astlingen/astlingen_04_17_2000_07.inp', './envs/network/astlingen/astlingen_11_12_2005_09.inp', './envs/network/astlingen/astlingen_03_07_2006_18.inp', './envs/network/astlingen/astlingen_10_13_2003_15.inp', './envs/network/astlingen/astlingen_09_26_2002_16.inp', './envs/network/astlingen/astlingen_10_28_2000_08.inp', './envs/network/astlingen/astlingen_10_23_2004_17.inp', './envs/network/astlingen/astlingen_06_11_2006_01.inp', './envs/network/astlingen/astlingen_12_16_2004_17.inp', './envs/network/astlingen/astlingen_03_27_2004_11.inp', './envs/network/astlingen/astlingen_01_04_2004_17.inp', './envs/network/astlingen/astlingen_11_17_2001_18.inp', './envs/network/astlingen/astlingen_04_17_2000_22.inp', './envs/network/astlingen/astlingen_08_22_2006_02.inp']
+        events = get_inp_files(env.config['swmm_input'],rain_arg)
         if os.path.exists(os.path.join(args.agent_dir,'train_runoff.npy')):
             res = [np.load(os.path.join(args.agent_dir,'train_runoff_ts.npy'),allow_pickle=True),
                    np.load(os.path.join(args.agent_dir,'train_runoff.npy'),allow_pickle=True)]

@@ -101,7 +101,7 @@ class astlingen(basescenario):
             obj /= (tf.reduce_sum(tf.reduce_sum(state[...,-1],axis=-1),axis=-1)+1e-5)
         return obj
 
-    def get_obj_norm(self,norm_y,norm_e=None):
+    def get_obj_norm(self,norm_y,norm_e=None,perfs=None):
         nodes = self.elements['nodes']
         targets = self.config['performance_targets']
         fl = [norm_y[...,nodes.index(idx),-1] * weight

@@ -36,7 +36,9 @@ class Predictor:
         self.targets = getattr(args,"performance_targets")
         self.n_out = len(self.targets)
         self.flood_nodes = [args.elements['nodes'].index(i)
-                             for i,attr,_ in self.targets if attr == 'cumflooding']
+                             for i,attr,_ in self.targets 
+                             if attr == 'cumflooding' and i in args.elements['nodes']]
+        self.flood_nodes = list(set(self.flood_nodes + np.where(args.area>0)[0].tolist()))
         self.if_flood = getattr(args,"if_flood",0)
         self.n_flood = len(self.flood_nodes)
         if self.if_flood:
@@ -102,7 +104,7 @@ class Predictor:
             x = self.get_tem_nets(recurrent)(tf.concat([b[:,:self.seq_in],h],axis=-1))
             x = self.get_tem_nets(recurrent)(tf.concat([x,b[:,-self.seq_out:]],axis=-1))
                     
-        out = Dense(self.n_out,activation='sigmoid' if self.norm else 'linear')(x)
+        out = Dense(self.n_out,activation='hard_sigmoid' if self.norm else 'linear')(x)
         if self.if_flood:
             for _ in range(self.if_flood):
                 fl = Dense(self.embed_size,activation=self.activation)(x)
@@ -208,21 +210,22 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','config.yaml'))
 
     train_de = {
-        # 'train':True,
-        # 'env':'astlingen',
-        # 'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
-        # 'act':'conti',
-        # 'model_dir':'./model/astlingen/60s_10k_conti_pred/',
-        # 'load_model':False,
-        # 'batch_size':128,
-        # 'epochs':10000,
-        # 'n_sp_layer':5,
-        # 'n_tp_layer':5,
-        # 'norm':True,
-        # 'use_edge':True,
-        # 'seq_in':60,'seq_out':60,
+        'train':True,
+        'env':'chaohu',
+        'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+        'act':'conti',
+        'model_dir':'./model/chaohu/60s_50k_rand_pred/',
+        'load_model':False,
+        'setting_duration':10,
+        'batch_size':64,
+        'epochs':10000,
+        'n_sp_layer':5,
+        'n_tp_layer':5,
+        'norm':True,
+        'use_edge':True,
+        'seq_in':60,'seq_out':60,
         # 'if_flood':3,
-        # 'recurrent':'GRU',
+        'recurrent':'LSTM',
         }
     for k,v in train_de.items():
         setattr(args,k,v)
@@ -269,7 +272,7 @@ if __name__ == '__main__':
             config['model_dir'] += '/retrain'
     if args.norm:
         emul.set_norm(*dG.get_norm())
-        emul.norm_o = env.get_obj_norm(emul.norm_y,emul.norm_e)
+        emul.norm_o = env.get_obj_norm(emul.norm_y,emul.norm_e,dG.perfs)
     yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
     t0 = time.time()
@@ -277,7 +280,7 @@ if __name__ == '__main__':
     log_dir = "logs/model/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for epoch in range(args.epochs):
-        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,trim=False)
+        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
@@ -289,7 +292,7 @@ if __name__ == '__main__':
         train_loss = emul.fit_eval(h,b,a,objs)
         train_losses.append(train_loss.numpy())
 
-        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,trim=False)
+        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)

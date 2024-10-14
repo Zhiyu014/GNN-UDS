@@ -11,7 +11,8 @@ model_based: true
 model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat
 n_layer: 5
 norm: true
-processes: 4
+processes: 8
+rain_dir: ast_train50_events.csv
 rain_num: 1
 result_dir: ./results/
 train: true

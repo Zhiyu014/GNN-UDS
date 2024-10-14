@@ -194,14 +194,14 @@ performance_targets:
     - cumflooding
     - 1
   # tank flooding penalty
-  - !!python/tuple
-    - "CC-storage"
-    - cumflooding
-    - 1000
-  - !!python/tuple
-    - "JK-storage"
-    - cumflooding
-    - 1000
+  # - !!python/tuple
+  #   - "CC-storage"
+  #   - cumflooding
+  #   - 1000
+  # - !!python/tuple
+  #   - "JK-storage"
+  #   - cumflooding
+  #   - 1000
   # CSOs
   - !!python/tuple
     - "CC-1"

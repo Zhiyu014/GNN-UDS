@@ -1,0 +1,7 @@
+act: rand
+data_dir: 1s_edge_rand64_rain50/act1
+processes: 8
+rain_suffix: chaohu_train
+repeats: 4
+simulate: true
+use_edge: true

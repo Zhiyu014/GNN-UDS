@@ -199,7 +199,7 @@ if __name__ == "__main__":
         log_dir = "logs/model/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,trim=False)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             if args.norm:
                 x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
@@ -214,7 +214,7 @@ if __name__ == "__main__":
             if epoch >= 500:
                 train_losses.append(train_loss)
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,trim=False)
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             if args.norm:
                 x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
