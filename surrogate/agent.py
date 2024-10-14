@@ -473,13 +473,9 @@ class AgentSAC:
         self.dec = getattr(args, "dec", False)
         self.act = getattr(args,"act","")
         self.conti = self.act.startswith('conti')
-<<<<<<< Updated upstream
-        self.n_agents = action_shape if self.conti else len(action_shape)
-=======
         self.mac = getattr(args,"mac",False)
         if self.mac:
             self.n_agents = action_shape if self.conti else action_shape.shape[0]
->>>>>>> Stashed changes
 
         self.conv = getattr(args,"conv",False)
         self.conv = False if str(self.conv) in ['None','False','NoneType'] else self.conv
