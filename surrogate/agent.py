@@ -28,12 +28,11 @@ class ConvNet:
         self.use_pred = getattr(args,"use_pred",False)
         if self.use_pred:
             self.b_in = 2 if getattr(args,'tide',False) else 1
-        self.use_edge = getattr(args,"use_edge",False)
+        self.graph_base = getattr(args,"graph_base",0)
         self.adj = getattr(args,"adj",np.eye(self.n_node))
-        if self.use_edge:
-            self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,3))
-            self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
-            self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
+        self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,3))
+        self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
+        self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
         self.activation = getattr(args,"activation",False)
         net = self.get_conv(conv)
         self.model = self.build_network(net)
@@ -42,25 +41,21 @@ class ConvNet:
         if 'GCN' in conv:
             net = GCNConv
             self.filter = GCNConv.preprocess(self.adj)
-            if self.use_edge:
-                self.edge_filter = GCNConv.preprocess(self.edge_adj)
+            self.edge_filter = GCNConv.preprocess(self.edge_adj)
         elif 'Diff' in conv:
             net = DiffusionConv
             self.filter = DiffusionConv.preprocess(self.adj)
-            if self.use_edge:
-                self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
+            self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
         elif 'GAT' in conv:
             net = GATConv
             # self.filter = self.adj.astype(int)
             self.filter = (self.adj>0).astype(int)
-            if self.use_edge:
-                # self.edge_filter = self.edge_adj.astype(int)
-                self.edge_filter = (self.edge_adj>0).astype(int)
+            # self.edge_filter = self.edge_adj.astype(int)
+            self.edge_filter = (self.edge_adj>0).astype(int)
         elif 'General' in conv:
             net = GeneralConv
             self.filter = (self.adj>0).astype(int)
-            if self.use_edge:
-                self.edge_filter = (self.edge_adj>0).astype(int)
+            self.edge_filter = (self.edge_adj>0).astype(int)
         else:
             raise AssertionError("Unknown Convolution layer %s"%str(conv))
         return net
@@ -73,12 +68,10 @@ class ConvNet:
         inp = [X_in,Adj_in]
         if self.use_pred:
             B_in = Input(shape=(self.n_node,self.b_in,))
-            inp += [B_in]
-        
-        if self.use_edge:
-            E_in = Input(shape=(self.n_edge,self.e_in,))
-            Eadj_in = Input(shape=(self.n_edge,))
-            inp += [E_in,Eadj_in]
+            inp += [B_in]        
+        E_in = Input(shape=(self.n_edge,self.e_in,))
+        Eadj_in = Input(shape=(self.n_edge,))
+        inp += [E_in,Eadj_in]
         activation = activations.get(self.activation)
 
         # Embedding
@@ -86,25 +79,24 @@ class ConvNet:
         if self.use_pred:
             b = Dense(self.conv_dim//2,activation=activation)(B_in)
             x = Dense(self.conv_dim,activation=activation)(tf.concat([x,b],axis=-1))
-        if self.use_edge:
-            e = Dense(self.conv_dim,activation=activation)(E_in)
+        e = Dense(self.conv_dim,activation=activation)(E_in)
 
         # Spatial block
         for _ in range(self.n_sp_layer):
-            if self.use_edge:
+            if self.graph_base:
+                x = [tf.concat([x,e],axis=-2),Adj_in]
+                x = net(self.conv_dim,activation=self.activation)(x)
+                x,e = tf.split(x,[self.n_node,self.n_edge],axis=-2)
+            else:
                 x_e = Dense(self.conv_dim//2,activation=self.activation)(e)
                 e_x = Dense(self.conv_dim//2,activation=self.activation)(x)
                 x = tf.concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
                 e = tf.concat([e,NodeEdge(tf.transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-            x = [x,Adj_in]
-            x = net(self.conv_dim,activation=self.activation)(x)
-            if self.use_edge:
-                e = [e,Eadj_in]
-                e = net(self.conv_dim,activation=self.activation)(e)
+                x = net(self.conv_dim,activation=self.activation)([x,Adj_in])
+                e = net(self.conv_dim,activation=self.activation)([e,Eadj_in])
 
         # Global Pooling
-        if self.use_edge:
-            x = GlobalAttnSumPool()(tf.concat([x,e],axis=-2))
+        x = GlobalAttnSumPool()(tf.concat([x,e],axis=-2))
         model = Model(inputs=inp, outputs=x)
         return model
 
@@ -165,8 +157,7 @@ class Actor:
             inp = observ[:1] + [self.convnet.filter]
             if self.convnet.use_pred:
                 inp += [observ[1:2]]
-            if self.convnet.use_edge:
-                inp += observ[-1:] + [self.convnet.edge_filter]
+            inp += observ[-1:] + [self.convnet.edge_filter]
         else:
             inp = observ
         return inp
@@ -326,8 +317,7 @@ class QAgent:
             inp = observ[:1] + [self.convnet.filter]
             if self.convnet.use_pred:
                 inp += [observ[1:2]]
-            if self.convnet.use_edge:
-                inp += observ[-1:] + [self.convnet.edge_filter]
+            inp += observ[-1:] + [self.convnet.edge_filter]
         else:
             inp = observ
         if self.conti:
@@ -419,8 +409,7 @@ class VAgent:
             inp = observ[:1] + [self.convnet.filter]
             if self.convnet.use_pred:
                 inp += [observ[1:2]]
-            if self.convnet.use_edge:
-                inp += observ[-1:] + [self.convnet.edge_filter]
+            inp += observ[-1:] + [self.convnet.edge_filter]
         else:
             inp = observ
         return inp
@@ -990,8 +979,7 @@ class MixNet:
             inp = observ[:1] + [self.convnet.filter]
             if self.convnet.use_pred:
                 inp += [observ[1:2]]
-            if self.convnet.use_edge:
-                inp += observ[-1:] + [self.convnet.edge_filter]
+            inp += observ[-1:] + [self.convnet.edge_filter]
         else:
             inp = observ
         inp = inp + [q] if isinstance(inp,list) else [inp,q]

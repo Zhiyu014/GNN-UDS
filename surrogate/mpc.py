@@ -229,7 +229,7 @@ class mpc_problem(Problem):
         if self.args.predict:
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
         else:
-            objs = self.env.objective_pred(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings).sum(axis=-1)
+            objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -459,7 +459,7 @@ class mpc_problem_gr:
                 settings = tf.repeat(settings,self.stochastic,axis=0)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
             env = get_env(self.args.env)(initialize=False)
-            obj = env.objective_pred_tf(preds if self.emul.use_edge else [preds,None],[state,edge_state],settings)
+            obj = env.objective_pred_tf(preds,[state,edge_state],settings)
             if self.stochastic:
                 obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
             loss = tf.reduce_mean(obj,axis=0) if self.cross_entropy else obj
@@ -563,7 +563,6 @@ if __name__ == '__main__':
         env_args = env.get_args(margs.directed,margs.length,margs.order)
         for k,v in env_args.items():
             setattr(margs,k,v)
-        margs.use_edge = margs.use_edge or margs.edge_fusion
         args.prediction['eval_horizon'] = args.prediction['control_horizon'] = margs.seq_out * args.interval
     else:
         args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
@@ -640,9 +639,7 @@ if __name__ == '__main__':
                             r += np.random.uniform(-std,std)
                     # margs.state = state
                     # margs.runoff = r
-                    # if margs.use_edge:
-                        # margs.edge_state = edge_state
-                    prob.load_state(state,r,edge_state if margs.use_edge else None)
+                    prob.load_state(state,r,edge_state)
                     if args.gradient:
                         setting,vals = run_gr(prob,args,setting=setting)
                     elif args.cross_entropy:

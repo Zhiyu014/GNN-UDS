@@ -4,6 +4,7 @@ shunqing:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   rain_dir: ./envs/config/
   rain_suffix: bpswmm
   rain_num: 119
@@ -15,7 +16,6 @@ shunqing:
   act: 'False'
   processes: 5
   repeats: 1
-  use_edge: False
 
   # train args
   train: False
@@ -32,8 +32,6 @@ shunqing:
   balance: 0
   
   # network args
-  norm: False
-  n_out: 3
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
@@ -60,6 +58,7 @@ RedChicoSur:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 1
@@ -71,7 +70,6 @@ RedChicoSur:
   act: 'False'
   processes: 5
   repeats: 1
-  use_edge: False
 
   # train args
   train: False
@@ -88,8 +86,6 @@ RedChicoSur:
   balance: 0
   
   # network args
-  norm: False
-  n_out: 3
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
@@ -116,6 +112,7 @@ astlingen:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
@@ -127,7 +124,6 @@ astlingen:
   act: 'False'
   processes: 5
   repeats: 1
-  use_edge: False
 
   # train args
   train: False
@@ -144,8 +140,6 @@ astlingen:
   balance: 0
   
   # network args
-  norm: False
-  n_out: 3
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
@@ -172,6 +166,7 @@ hague:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
@@ -183,7 +178,6 @@ hague:
   act: 'False'
   processes: 5
   repeats: 1
-  use_edge: False
 
   # train args
   train: False
@@ -201,8 +195,6 @@ hague:
   balance: 0
   
   # network args
-  norm: False
-  n_out: 3
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2
@@ -229,6 +221,7 @@ chaohu:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   rain_dir: ./envs/config/
   rain_suffix: chaohu
   rain_num: 50
@@ -240,7 +233,6 @@ chaohu:
   act: 'False'
   processes: 5
   repeats: 1
-  use_edge: False
 
   # train args
   train: False
@@ -257,8 +249,6 @@ chaohu:
   balance: 0
   
   # network args
-  norm: False
-  n_out: 3
   conv: GCNconv
   embed_size: 128
   n_sp_layer: 2

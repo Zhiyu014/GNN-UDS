@@ -27,8 +27,8 @@ class RedChicoSur(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
 
 
-    def get_args(self,directed=False,length=0,order=1,act=False):
-        args = super().get_args(directed,length,order)
+    def get_args(self,directed=False,length=0,order=1,graph_base=0,act=False):
+        args = super().get_args(directed,length,order,graph_base)
         if self.global_state:
             args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
         return args

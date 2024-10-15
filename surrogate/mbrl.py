@@ -27,6 +27,7 @@ def parser(config=None):
     parser.add_argument('--directed',action='store_true',help='if use directed graph')
     parser.add_argument('--length',type=float,default=0,help='adjacency range')
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
+    parser.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
     # control args
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
@@ -41,7 +42,6 @@ def parser(config=None):
     parser.add_argument('--horizon',type=int,default=60,help='prediction & control horizon')
     parser.add_argument('--conv',type=str,default='GATconv',help='convolution type')
     parser.add_argument('--use_pred',action="store_true",help='if use prediction runoff')
-    parser.add_argument('--use_edge',action="store_true",help='if use edge data')
     parser.add_argument('--net_dim',type=int,default=128,help='number of decision-making channels')
     parser.add_argument('--n_layer',type=int,default=3,help='number of decision-making layers')
     parser.add_argument('--conv_dim',type=int,default=128,help='number of graphconv channels')
@@ -126,7 +126,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
             t = env.env.methods['simulation_time']()
             b = runoff[int(tss.asof(t)['Index'])][:args.setting_duration]
             x_norm,b_norm,e_norm = [ctrl.normalize(dat,item) if dat is not None else None
-                                    for dat,item in zip([state,b,edge_state if args.use_edge else None],'xbe')]
+                                    for dat,item in zip([state,b,edge_state],'xbe')]
             if ctrl.conv:
                 x_norm,e_norm = [tf.stack([tf.reduce_sum(dat[...,i],axis=0) if 'cum' in attr or '_vol' in attr else dat[-1,:,i]
                                         for i,attr in enumerate(args.attrs[items])],axis=-1)
@@ -179,7 +179,6 @@ if __name__ == '__main__':
         # 'horizon':60,
         # 'norm':True,
         # 'conv':False,'use_pred':False,
-        # 'use_edge':True,
         # 'eval_gap':10,'start_gap':100,
         # 'agent_dir': './agent/astlingen/test',
         # 'load_agent':False,
@@ -194,7 +193,7 @@ if __name__ == '__main__':
         config[k] = v
 
     env = get_env(args.env)(initialize=False)
-    env_args = env.get_args(args.directed,args.length,args.order,act=args.act,dec=args.dec)
+    env_args = env.get_args(args.directed,args.length,args.order,args.graph_base,act=args.act,dec=args.dec)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act
@@ -225,10 +224,9 @@ if __name__ == '__main__':
             config['data_dir'] = args.data_dir
             if args.if_flood:
                 args.attrs['nodes'] = args.attrs['nodes'][:-1] + ['if_flood'] + args.attrs['nodes'][-1:]
-            env_args = env.get_args(margs.directed,margs.length,margs.order)
+            env_args = env.get_args(margs.directed,margs.length,margs.order,margs.graph_base)
             for k,v in env_args.items():
                 setattr(margs,k,v)
-            margs.use_edge = margs.use_edge or margs.edge_fusion
             emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             emul.load(margs.model_dir)
         
@@ -276,7 +274,6 @@ if __name__ == '__main__':
         dGv = DataGenerator(env.config,args=args)
         ctrl = get_agent(args.agent)(args.action_shape,args.observ_space,args,act_only=False)
         ctrl.set_norm(*dG.get_norm())
-        args.use_edge = args.use_edge or not ctrl.conv
         n_events = int(max(dG.event_id))+1
         train_ids = np.load(os.path.join(margs.model_dir,'train_id.npy') if args.model_based else os.path.join(args.data_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
@@ -319,11 +316,8 @@ if __name__ == '__main__':
                     x = tf.concat([preds[0][...,:-2],tf.cast(preds[0][...,-2:-1]>0.5,tf.float32),bi],axis=-1)
                 else:
                     x = tf.concat([preds[0][...,:-1],bi],axis=-1)
-                if emul.use_edge:
-                    ae = emul.get_edge_action(setting,True)
-                    ex = tf.concat([preds[1],ae],axis=-1)
-                else:
-                    ex = None
+                ae = emul.get_edge_action(setting,True)
+                ex = tf.concat([preds[1],ae],axis=-1)
                 xs.append(x)
                 exs.append(ex)
                 perfs.append(preds[0][...,-1:])
@@ -401,17 +395,16 @@ if __name__ == '__main__':
                     b0,b1 = b_norm[:,:args.setting_duration,...],b_norm[:,args.setting_duration:,...]
                     x0,x1 = x_norm[:,-args.setting_duration:,...],tf.concat([y_norm[:,:args.setting_duration,:,:-1],b0],axis=-1)
                     settings = tf.repeat(settings[:,0:1,:],args.setting_duration,axis=1)
-                    if args.use_edge:
-                        ex,ey = train_dats[-2:]
-                        ex_norm,ey_norm = [ctrl.normalize(dat,'e') for dat in [ex,ey]]
-                        ex0,ex1 = ex_norm[:,-args.setting_duration:,...],ey_norm[:,:args.setting_duration,...]
-                        # Get edge action and concat into ex1
-                        act_edges = [i for act_edge in args.act_edges for i in np.where((args.edges==act_edge).all(1))[0]]
-                        act_edges = sorted(list(set(act_edges)),key=act_edges.index)
-                        ae = np.zeros(args.edges.shape[0])
-                        ae[act_edges] = range(1,settings.shape[-1]+1)
-                        ae = tf.expand_dims(tf.gather(tf.concat([tf.ones_like(settings[...,:1]),settings],axis=-1),tf.cast(ae,tf.int32),axis=-1),axis=-1) 
-                        ex1 = tf.concat([ex1,ae],axis=-1)
+                    ex,ey = train_dats[-2:]
+                    ex_norm,ey_norm = [ctrl.normalize(dat,'e') for dat in [ex,ey]]
+                    ex0,ex1 = ex_norm[:,-args.setting_duration:,...],ey_norm[:,:args.setting_duration,...]
+                    # Get edge action and concat into ex1
+                    act_edges = [i for act_edge in args.act_edges for i in np.where((args.edges==act_edge).all(1))[0]]
+                    act_edges = sorted(list(set(act_edges)),key=act_edges.index)
+                    ae = np.zeros(args.edges.shape[0])
+                    ae[act_edges] = range(1,settings.shape[-1]+1)
+                    ae = tf.expand_dims(tf.gather(tf.concat([tf.ones_like(settings[...,:1]),settings],axis=-1),tf.cast(ae,tf.int32),axis=-1),axis=-1) 
+                    ex1 = tf.concat([ex1,ae],axis=-1)
                     # Reduce temporal dimension and extract observs 
                     if ctrl.conv:
                         x0,x1 = [tf.stack([tf.reduce_sum(xi[...,i],axis=1) if 'cum' in attr or '_vol' in attr else xi[:,-1,:,i]
@@ -421,10 +414,9 @@ if __name__ == '__main__':
                             b0,b1 = [tf.stack([tf.reduce_sum(bi[...,i],axis=1) if i==0 else bi[:,-1,:,i]
                                                for i in range(bi.shape[-1])],axis=-1) for bi in [b0,b1]]
                             s,s_ = s+[b0],s_+[b1]
-                        if args.use_edge:
-                            ex0,ex1 = [tf.stack([tf.reduce_sum(ei[...,i],axis=1) if 'cum' in attr or '_vol' in attr else ei[:,-1,:,i]
-                                                 for i,attr in enumerate(args.attrs['links'])],axis=-1) for ei in [ex0,ex1]]
-                            s,s_ = s+[ex0],s_+[ex1]
+                        ex0,ex1 = [tf.stack([tf.reduce_sum(ei[...,i],axis=1) if 'cum' in attr or '_vol' in attr else ei[:,-1,:,i]
+                                                for i,attr in enumerate(args.attrs['links'])],axis=-1) for ei in [ex0,ex1]]
+                        s,s_ = s+[ex0],s_+[ex1]
                     else:
                         r0,r1 = ctrl.normalize(train_dats[4],'r')[:,-args.setting_duration:,...],ctrl.normalize(train_dats[5],'r')[:,:args.setting_duration,...]
                         s,s_ = [tf.stack([xi[...,args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr)] if attr in args.attrs['nodes']
@@ -435,8 +427,8 @@ if __name__ == '__main__':
                         s,s_ = [tf.stack([tf.reduce_sum(si[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else si[...,-1,i]
                                           for i,(_,attr) in enumerate(args.states)],axis=-1) for si in [s,s_]]
                     # Get reward from env as -obj_pred
-                    states = (x[:,-args.setting_duration:,...],ex[:,-args.setting_duration:,...] if args.use_edge else None)
-                    preds = (y[:,:args.setting_duration,...],ey[:,:args.setting_duration,...] if args.use_edge else None)
+                    states = (x[:,-args.setting_duration:,...],ex[:,-args.setting_duration:,...])
+                    preds = (y[:,:args.setting_duration,...],ey[:,:args.setting_duration,...])
                     r = - env.objective_pred_tf(preds,states,settings,norm=args.norm)
                     r *= args.scale
                     # r = tf.clip_by_value(r, -10, 10)

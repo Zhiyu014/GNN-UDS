@@ -7,10 +7,10 @@ import tensorflow_probability as tfp
 tfd = tfp.distributions
 from tensorflow.keras import backend as K
 from tensorflow.keras import activations
-from tensorflow.keras.layers import Dense,Input,Flatten,GRU,Conv1D
+from tensorflow.keras.layers import Dense,Input,Flatten,GRU,Conv1D,LSTM
 from tensorflow import expand_dims,convert_to_tensor,float32,squeeze,GradientTape,transpose,reduce_mean
 import numpy as np
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model,Sequential
 from spektral.layers import GCNConv,GlobalAttnSumPool,GATConv,DiffusionConv,GeneralConv
 import os
 from emulator import NodeEdge
@@ -43,12 +43,11 @@ class ConvNet:
         if getattr(args,'if_flood',False):
             self.n_in += 1
         self.b_in = 2 if getattr(args,'tide',False) else 1
-        self.use_edge = getattr(args,"use_edge",False)
+        self.graph_base = getattr(args,"graph_base",0)        
         self.adj = getattr(args,"adj",np.eye(self.n_node))
-        if self.use_edge:
-            self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,3))
-            self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
-            self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
+        self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,3))
+        self.edge_adj = getattr(args,"edge_adj",np.eye(self.n_edge))
+        self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
         self.activation = getattr(args,"activation",False)
         net = self.get_conv(conv)
         self.encoder = self.build_encoder(net)
@@ -61,27 +60,34 @@ class ConvNet:
         if 'GCN' in conv:
             net = GCNConv
             self.filter = GCNConv.preprocess(self.adj)
-            if self.use_edge:
-                self.edge_filter = GCNConv.preprocess(self.edge_adj)
+            self.edge_filter = GCNConv.preprocess(self.edge_adj)
         elif 'Diff' in conv:
             net = DiffusionConv
             self.filter = DiffusionConv.preprocess(self.adj)
-            if self.use_edge:
-                self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
+            self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
         elif 'GAT' in conv:
             net = GATConv
             self.filter = self.adj.astype(int)
-            if self.use_edge:
-                self.edge_filter = self.edge_adj.astype(int)
+            self.edge_filter = self.edge_adj.astype(int)
         elif 'General' in conv:
             net = GeneralConv
             self.filter = self.adj.astype(int)
-            if self.use_edge:
-                self.edge_filter = self.edge_adj.astype(int)
+            self.edge_filter = self.edge_adj.astype(int)
         else:
             raise AssertionError("Unknown Convolution layer %s"%str(conv))
         return net
 
+    def get_tem_nets(self,recurrent):
+        if recurrent == 'Conv1D':
+            return Sequential([Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,
+                            activation=self.activation) for i in range(self.n_tp_layer)])
+        elif recurrent == 'GRU':
+            return Sequential([GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)])
+        elif recurrent == 'LSTM':
+            return Sequential([LSTM(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)])
+        else:
+            return Sequential()
+        
     # input: X,B,Adj,E,Eadj
     # output: X
     def build_encoder(self,net):
@@ -94,63 +100,47 @@ class ConvNet:
         Adj_in = Input(shape=(self.n_node,))
         inp = [X_in,B_in,Adj_in]
         
-        if self.use_edge:
-            edge_state_shape = (self.seq_in,self.n_edge,self.e_in,) if self.recurrent else (self.n_edge,self.e_in,)
-            E_in = Input(shape=edge_state_shape)
-            Eadj_in = Input(shape=(self.n_edge,))
-            inp += [E_in,Eadj_in]
+        edge_state_shape = (self.seq_in,self.n_edge,self.e_in,) if self.recurrent else (self.n_edge,self.e_in,)
+        E_in = Input(shape=edge_state_shape)
+        Eadj_in = Input(shape=(self.n_edge,))
+        inp += [E_in,Eadj_in]
         activation = activations.get(self.activation)
 
         # Embedding
         x = Dense(self.conv_dim,activation=activation)(X_in)
         b = Dense(self.conv_dim//2,activation=activation)(B_in)
-        if self.use_edge:
-            e = Dense(self.conv_dim,activation=activation)(E_in)
+        e = Dense(self.conv_dim,activation=activation)(E_in)
 
         # Spatial block
         x = tf.reshape(x,(-1,) + tuple(x.shape[2:])) if self.recurrent else x
-        if self.use_edge:
-            e = tf.reshape(e,(-1,) + tuple(e.shape[2:])) if self.recurrent else e
+        e = tf.reshape(e,(-1,) + tuple(e.shape[2:])) if self.recurrent else e
         for _ in range(self.n_sp_layer):
-            if self.use_edge:
+            if self.graph_base:
+                x = [tf.concat([x,e],axis=-2),Adj_in]
+                x = net(self.conv_dim,activation=self.activation)(x)
+                x,e = tf.split(x,[self.n_node,self.n_edge],axis=-2)
+            else:
                 x_e = Dense(self.conv_dim//2,activation=self.activation)(e)
                 e_x = Dense(self.conv_dim//2,activation=self.activation)(x)
                 x = tf.concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
                 e = tf.concat([e,NodeEdge(transpose(tf.abs(self.node_edge)))(e_x)],axis=-1)
-            x = [x,Adj_in]
-            x = net(self.conv_dim,activation=self.activation)(x)
-            if self.use_edge:
-                e = [e,Eadj_in]
-                e = net(self.conv_dim,activation=self.activation)(e)
+                x = net(self.conv_dim,activation=self.activation)([x,Adj_in])
+                e = net(self.conv_dim,activation=self.activation)([e,Eadj_in])
 
         # (B*T,N,E) (B,N,E)  --> (B,T,N,E) (B,N,E)
         x = tf.reshape(x,(-1,)+state_shape[:-1]+(x.shape[-1],))
-        if self.use_edge:
-            # (B*T,N,E)(B,N,E)  --> (B,T,N,E) (B,N,E)
-            e = tf.reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],))
+        # (B*T,N,E)(B,N,E)  --> (B,T,N,E) (B,N,E)
+        e = tf.reshape(e,(-1,)+edge_state_shape[:-1]+(e.shape[-1],))
 
         if self.recurrent:
-            if self.recurrent == 'Conv1D':
-                x_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=x.shape[-2:]) for i in range(self.n_tp_layer)]
-                if self.use_edge:
-                    e_tem_nets = [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,activation=self.activation,input_shape=e.shape[-2:]) for i in range(self.n_tp_layer)]
-            elif self.recurrent == 'GRU':
-                x_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-                if self.use_edge:
-                    e_tem_nets = [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
-            else:
-                raise AssertionError("Unknown recurrent layer %s"%str(self.recurrent))
             x = tf.reshape(transpose(x,[0,2,1,3]),(-1,self.seq_in,x.shape[-1]))
-            for i in range(self.n_tp_layer):
-                x = x_tem_nets[i](x)
+            x = self.get_tem_nets(self.recurrent)(x)
             x = x[...,-self.seq_out:,:]
             x = transpose(tf.reshape(x,(-1,self.n_node,self.seq_out,self.hidden_dim)),[0,2,1,3])
-            if self.use_edge:
-                e = tf.reshape(transpose(e,[0,2,1,3]),(-1,self.seq_in,e.shape[-1]))
-                for i in range(self.n_tp_layer):
-                    e = e_tem_nets[i](e)
-                e = e[...,-self.seq_out:,:]
-                e = transpose(tf.reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3])
+            e = tf.reshape(transpose(e,[0,2,1,3]),(-1,self.seq_in,e.shape[-1]))
+            e = self.get_tem_nets(self.recurrent)(e)
+            e = e[...,-self.seq_out:,:]
+            e = transpose(tf.reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3])
         x = Dense(self.conv_dim,activation=activation)(tf.concat([x,b],axis=-1))
         x = tf.reshape(tf.concat([x,e],axis=-2),(-1,self.n_node+self.n_edge,self.conv_dim))
         x = GlobalAttnSumPool()(x)
@@ -181,16 +171,14 @@ class ConvNet:
         x = Dense(self.n_in,activation=self.activation)(x)
         b = Dense(self.b_in,activation=self.activation)(b)
         out = [x,b]
-        if self.use_edge:
-            e = Dense(self.e_in,activation=self.activation)(e)
-            out += [e]
+        e = Dense(self.e_in,activation=self.activation)(e)
+        out += [e]
         model = Model(inputs=h_in, outputs=out)
         return model
     
     def train(self,observ):
         inp = observ[:2] + [self.filter]
-        if self.use_edge:
-            inp += [observ[-1:],self.edge_filter]
+        inp += [observ[-1:],self.edge_filter]
         with GradientTape() as tape:
             tape.watch(self.vars)
             distr = self.encoder(inp)
@@ -233,7 +221,6 @@ if __name__ == '__main__':
     args.conv = 'GAT'
     args.recurrent = 'Conv1D'
     args.if_flood = True
-    args.use_edge = True
     args.episodes = 10000
     args.batch_size = 64
 
@@ -265,10 +252,9 @@ if __name__ == '__main__':
         x,settings,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         x_norm,b_norm = [conv.normalize(dat,item) for dat,item in zip([x,b],'xb')]
         s = [x_norm[:,-args.seq_in:,...],b_norm[:,:args.seq_in,...]]
-        if args.use_edge:
-            ex,ey = train_dats[-2:]
-            ex_norm,ey_norm = [conv.normalize(dat,'e') for dat in [ex,ey]]
-            s += [ex_norm[:,-args.seq_in:,...]]
+        ex,ey = train_dats[-2:]
+        ex_norm,ey_norm = [conv.normalize(dat,'e') for dat in [ex,ey]]
+        s += [ex_norm[:,-args.seq_in:,...]]
         mse,kl = conv.train(s)
         print('episode: %d, mse: %.4f, kl: %.4f'%(episode,mse,kl))
         with tf.summary.create_file_writer(log_dir).as_default():

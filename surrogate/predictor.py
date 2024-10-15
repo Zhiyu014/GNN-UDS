@@ -20,9 +20,7 @@ from envs import get_env
 class Predictor:
     def __init__(self,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
-        self.use_edge = getattr(args,'use_edge',False)
-        if self.use_edge:
-            self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
+        self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
         self.tide = getattr(args,'tide',False)
         self.b_in = 2 if self.tide else 1
         self.act = getattr(args,"act",False)
@@ -54,7 +52,6 @@ class Predictor:
         self.n_tp_layer = getattr(args,"n_tp_layer",3)
         self.dropout = getattr(args,'dropout',0.0)
         self.activation = getattr(args,"activation",'relu')
-        self.norm = getattr(args,"norm",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
         # self.epsilon = getattr(args,"epsilon",-1.0)
 
@@ -77,11 +74,10 @@ class Predictor:
     def build_network(self,recurrent):
         # x_in = Input(shape=(self.seq_in,self.n_node*self.n_in) if recurrent else (self.n_node*self.n_in,))
         # x = Dense(self.embed_size,activation=self.activation)(x_in)
-        # if self.use_edge:
-        #     e_in = Input(shape=(self.seq_in,self.n_edge*self.e_in) if recurrent else (self.n_edge*self.e_in,))
-        #     inp = [x_in,e_in]
-        #     e = Dense(self.embed_size,activation=self.activation)(e_in)
-        #     x = concat([x,e],axis=-1)
+        # e_in = Input(shape=(self.seq_in,self.n_edge*self.e_in) if recurrent else (self.n_edge*self.e_in,))
+        # inp = [x_in,e_in]
+        # e = Dense(self.embed_size,activation=self.activation)(e_in)
+        # x = concat([x,e],axis=-1)
         # else:
         #     inp = [x_in]
         # for _ in range(self.n_sp_layer):
@@ -104,7 +100,7 @@ class Predictor:
             x = self.get_tem_nets(recurrent)(tf.concat([b[:,:self.seq_in],h],axis=-1))
             x = self.get_tem_nets(recurrent)(tf.concat([x,b[:,-self.seq_out:]],axis=-1))
                     
-        out = Dense(self.n_out,activation='hard_sigmoid' if self.norm else 'linear')(x)
+        out = Dense(self.n_out,activation='hard_sigmoid')(x)
         if self.if_flood:
             for _ in range(self.if_flood):
                 fl = Dense(self.embed_size,activation=self.activation)(x)
@@ -145,8 +141,7 @@ class Predictor:
         return loss
     
     def predict(self,state,runoff,settings=None,edge_state=None):
-        if self.norm:
-            x,b = [self.normalize(dat,item) for dat,item in zip([state,runoff],'xb')]
+        x,b = [self.normalize(dat,item) for dat,item in zip([state,runoff],'xb')]
         h = tf.gather(x[...,0],self.flood_nodes,axis=-1)
         b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
         if self.act:
@@ -156,8 +151,7 @@ class Predictor:
             preds,flood = preds
             preds = tf.concat([preds[...,:self.n_flood] * tf.cast(flood>0.5,tf.float32),
                                preds[...,self.n_flood:]],axis=-1)
-        if self.norm:
-            objs = self.normalize(preds,'o',inverse=True)
+        objs = self.normalize(preds,'o',inverse=True)
             # objs = preds.numpy() * state[...,-1].sum(axis=-1).sum(axis=-1)[:,None]
         return objs
 
@@ -187,10 +181,9 @@ class Predictor:
         else:
             self.model.save_weights(os.path.join(model_dir,'model.h5'))
 
-        if self.norm:
-            for item in 'xbyreo':
-                if hasattr(self,'norm_%s'%item):
-                    np.save(os.path.join(model_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
+        for item in 'xbyreo':
+            if hasattr(self,'norm_%s'%item):
+                np.save(os.path.join(model_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
 
     def load(self,model_dir=None):
         model_dir = model_dir if model_dir is not None else self.model_dir
@@ -200,10 +193,9 @@ class Predictor:
         else:
             self.model.load_weights(os.path.join(model_dir,'model.h5'))
 
-        if self.norm:
-            for item in 'xbyreo':
-                if os.path.exists(os.path.join(model_dir,'norm_%s.npy'%item)):
-                    setattr(self,'norm_%s'%item,np.load(os.path.join(model_dir,'norm_%s.npy'%item)))
+        for item in 'xbyreo':
+            if os.path.exists(os.path.join(model_dir,'norm_%s.npy'%item)):
+                setattr(self,'norm_%s'%item,np.load(os.path.join(model_dir,'norm_%s.npy'%item)))
 
 
 if __name__ == '__main__':
@@ -222,7 +214,6 @@ if __name__ == '__main__':
         'n_sp_layer':5,
         'n_tp_layer':5,
         'norm':True,
-        'use_edge':True,
         'seq_in':60,'seq_out':60,
         # 'if_flood':3,
         'recurrent':'LSTM',
@@ -270,9 +261,8 @@ if __name__ == '__main__':
             os.mkdir(args.model_dir)
         if 'model_dir' in config:
             config['model_dir'] += '/retrain'
-    if args.norm:
-        emul.set_norm(*dG.get_norm())
-        emul.norm_o = env.get_obj_norm(emul.norm_y,emul.norm_e,dG.perfs)
+    emul.set_norm(*dG.get_norm())
+    emul.norm_o = env.get_obj_norm(emul.norm_y,emul.norm_e,dG.perfs)
     yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
     t0 = time.time()
@@ -284,8 +274,7 @@ if __name__ == '__main__':
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
-        if args.norm:
-            x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
+        x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
         b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
         a = tf.concat([tf.gather(ex[...,-1],emul.act_edges,axis=-1),a],axis=1)
         h = tf.gather(x[...,0],emul.flood_nodes,axis=-1)
@@ -296,8 +285,7 @@ if __name__ == '__main__':
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
-        if args.norm:
-            x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
+        x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
         b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
         a = tf.concat([tf.gather(ex[...,-1],emul.act_edges,axis=-1),a],axis=1)
         h = tf.gather(x[...,0],emul.flood_nodes,axis=-1)

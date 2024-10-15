@@ -274,7 +274,7 @@ class basescenario(scenario):
         super()._logger()
 
 
-    def get_args(self,directed=False,length=0,order=1,act=False):
+    def get_args(self,directed=False,length=0,order=1,graph_base=0):
         args = self.config.copy()
         
         nodes = self.get_features('nodes')
@@ -318,7 +318,12 @@ class basescenario(scenario):
             args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 if link in inp.XSECTIONS else 0 for link in links])
             args['ewei'] = np.array([self.config['loss_weight'].get(link,1.0) if self.config.get('loss_weight') is not None else 1.0 for link in links])
 
-            args['adj'] = self.get_adj(directed,length,order)
+            if graph_base == 1:
+                args['adj'] = self.get_node_based_adj(directed,length,order)
+            elif graph_base == 2:
+                args['adj'] = self.get_edge_based_adj(directed,length,order)
+            else:
+                args['adj'] = self.get_adj(directed,length,order)
             args['edge_adj'] = self.get_edge_adj(directed,length,order)
             args['node_edge'] = self.get_node_edge()
             args['node_index'] = self.get_node_index(directed)  # n_edge,n_edge
@@ -463,6 +468,68 @@ class basescenario(scenario):
                 edge_idx[v,u] = i
         return edge_idx.astype(int)
     
+    def get_node_based_adj(self,directed=False,length=0,order=1):
+        edges = self.get_edge_list(length=bool(length))
+        if length:
+            edges,lengths = edges
+            l_std = np.std(lengths)
+        n_node,n_edge = edges.max()+1,edges.shape[0]
+        adj = np.zeros((n_node+n_edge,n_node+n_edge))
+        X = nx.DiGraph() if directed else nx.Graph()
+        if length:
+            for i,((u,v),l) in enumerate(zip(edges,lengths)):
+                X.add_edge(u,v,length=l/2)
+                X.add_edge(u,n_node+i,length=l/2)
+                X.add_edge(n_node+i,v,length=l/2)
+            for n in range(n_node+n_edge):
+                path_length = nx.single_source_dijkstra_path_length(X,n,weight='length',cutoff=length)
+                for a,l in path_length.items():
+                    adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
+        else:
+            for i,(u,v) in enumerate(edges):
+                X.add_edge(u,v)
+                X.add_edge(u,n_node+i)
+                X.add_edge(n_node+i,v)
+            for n in range(n_node+n_edge):
+                for a in list(nx.dfs_preorder_nodes(X,n,order)):
+                    adj[n,a] = 1
+                    if not directed:
+                        adj[a,n] = 1
+        return adj
+
+    def get_edge_based_adj(self,directed=False,length=0,order=1):
+        edges = self.get_edge_list(length=bool(length))
+        X = nx.DiGraph() if directed else nx.Graph()
+        if length:
+            edges,lengths = edges
+            l_std = np.std(lengths)
+        n_node,n_edge = edges.max()+1,edges.shape[0]
+        for i,(u,v) in enumerate(edges):
+            X.add_edge(u,v,edge=n_node+i,length=lengths[i] if length else 0)
+        EX = nx.DiGraph() if directed else nx.Graph()
+        for n in X.nodes():
+            for (a,b),(c,d) in product(X.in_edges(n),X.out_edges(n)) if directed else combinations(X.edges(n),2):
+                u,v = X[a][b],X[c][d]
+                EX.add_edge(u['edge'],v['edge'],length = (u['length']+v['length'])/2 if length else 0)
+            if directed:
+                for a,b in X.in_edges(n):
+                    EX.add_edge(X[a][b]['edge'],n,length = X[a][b]['length']/2 if length else 0)
+                for c,d in X.out_edges(n):
+                    EX.add_edge(n,X[c][d]['edge'],length = X[c][d]['length']/2 if length else 0)
+            else:
+                for a,b in X.edges(n):
+                    EX.add_edge(X[a][b]['edge'],n,length = X[a][b]['length']/2 if length else 0)
+
+        adj = np.zeros((n_node+n_edge,n_node+n_edge))
+        for n in range(n_node+n_edge):
+            if length:
+                p_l = nx.single_source_dijkstra_path_length(EX,n,weight='length',cutoff=length)
+                for a,l in p_l.items():
+                    adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
+            else:
+                for a in list(nx.dfs_preorder_nodes(EX,n,order)):
+                    adj[n,a] = 1
+        return adj
             
     # predictive functions
     def save_hotstart(self,hsf_file=None):

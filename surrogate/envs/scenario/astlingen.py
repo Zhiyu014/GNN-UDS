@@ -125,8 +125,8 @@ class astlingen(basescenario):
         actions = {act:[v[a] for a,v in zip(act,asp.values())] for act in actions}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False,dec=False):
-        args = super().get_args(directed,length,order)
+    def get_args(self,directed=False,length=0,order=1,graph_base=0,act=False,dec=False):
+        args = super().get_args(directed,length,order,graph_base)
 
         # Rainfall timeseries & events files
         if not os.path.isfile(args['rainfall']['rainfall_timeseries']):

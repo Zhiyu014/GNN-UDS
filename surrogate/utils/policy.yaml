@@ -3,6 +3,7 @@ astlingen:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   setting_duration: 5
   act: 'False'
   mac: False
@@ -16,7 +17,6 @@ astlingen:
   horizon: 10 # horizon length
   conv: GATconv
   use_pred: False  # if use prediction runoff as states
-  use_edge: False
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
@@ -61,6 +61,7 @@ chaohu:
   directed: False
   length: 0
   order: 1
+  graph_base: 0
   setting_duration: 10
   act: 'False'
   mac: False
@@ -74,7 +75,6 @@ chaohu:
   horizon: 10 # horizon length
   conv: GATconv
   use_pred: False  # if use prediction runoff as states
-  use_edge: False
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers

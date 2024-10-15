@@ -173,8 +173,8 @@ class chaohu(basescenario):
                 actions = {(k[0]*3+k[1],k[2]*3+k[3]):v for k,v in actions.items()}
         return actions
 
-    def get_args(self,directed=False,length=0,order=1,act=False,dec=False):
-        args = super().get_args(directed,length,order)
+    def get_args(self,directed=False,length=0,order=1,graph_base=0,act=False,dec=False):
+        args = super().get_args(directed,length,order,graph_base)
 
         inp = read_inp_file(self.config['swmm_input'])
         args['area'] = np.array([inp['CURVES'][node.Curve].points[0][1] if sec == 'STORAGE' else 0.0

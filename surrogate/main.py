@@ -19,6 +19,7 @@ def parser(config=None):
     parser.add_argument('--directed',action='store_true',help='if use directed graph')
     parser.add_argument('--length',type=float,default=0,help='adjacency range')
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
+    parser.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
@@ -31,7 +32,6 @@ def parser(config=None):
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
-    parser.add_argument('--use_edge',action='store_true',help='if models edge attrs')
 
     # train args
     parser.add_argument('--train',action="store_true",help='if train the emulator')
@@ -48,7 +48,6 @@ def parser(config=None):
     parser.add_argument('--balance',action="store_true",help='if use balance not classification loss')
 
     # network args
-    parser.add_argument('--norm',action="store_true",help='if data is normalized with maximum')
     parser.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
     parser.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
@@ -92,7 +91,6 @@ if __name__ == "__main__":
     #            'act':True,
     #            'processes':1,
     #            'repeats':1,
-    #            'use_edge':True
     #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
@@ -110,8 +108,7 @@ if __name__ == "__main__":
     #             'n_sp_layer':3,
     #             'n_tp_layer':3,
     #             'resnet':True,
-    #             'norm':True,
-    #             'use_edge':True,'edge_fusion':True,
+    #             'edge_fusion':True,
     #             'balance':False,
     #             'seq_in':5,'seq_out':5,
     #             'if_flood':3,
@@ -125,11 +122,9 @@ if __name__ == "__main__":
     #            'act':False,
     #            'model_dir':'./model/hague/12s_20k_res_norm_flood_gcn/',
     #            'resnet':True,
-    #            'norm':True,
     #            'seq_in':12,
     #            'seq_out':12,
     #            'if_flood':True,
-    #            'use_edge':False,
     #            'balance':False,
     #            'conv':'GCN',
     #            'recurrent':'Conv1D',
@@ -139,12 +134,11 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     env = get_env(args.env)(initialize=False)
-    env_args = env.get_args(args.directed,args.length,args.order)
+    env_args = env.get_args(args.directed,args.length,args.order,args.graph_base)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act != 'False' and args.act
         setattr(args,k,v)
-    args.use_edge = args.use_edge or args.edge_fusion
 
     dG = DataGenerator(env.config,args.data_dir,args)
     
@@ -190,8 +184,7 @@ if __name__ == "__main__":
                 os.mkdir(args.model_dir)
             if 'model_dir' in config:
                 config['model_dir'] += '/retrain'
-        if args.norm:
-            emul.set_norm(*dG.get_norm())
+        emul.set_norm(*dG.get_norm())
         yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
         t0 = time.time()
@@ -201,14 +194,8 @@ if __name__ == "__main__":
         for epoch in range(args.epochs):
             train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
-            if args.norm:
-                x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
-            if args.use_edge:
-                ex,ey = [dat for dat in train_dats[-2:]]
-                if args.norm:
-                    ex,ey = [emul.normalize(dat,'e') for dat in [ex,ey]]
-            else:
-                ex,ey = None,None
+            ex,ey = [dat for dat in train_dats[-2:]]
+            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             train_loss = emul.fit_eval(x,a,b,y,ex,ey)
             train_loss = train_loss.numpy()
             if epoch >= 500:
@@ -216,14 +203,8 @@ if __name__ == "__main__":
 
             test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
-            if args.norm:
-                x,b,y = [emul.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
-            if args.use_edge:
-                ex,ey = [dat for dat in test_dats[-2:]]
-                if args.norm:
-                    ex,ey = [emul.normalize(dat,'e') for dat in [ex,ey]]
-            else:
-                ex,ey = None,None
+            ex,ey = [dat for dat in test_dats[-2:]]
+            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
             test_loss = [los.numpy() for los in test_loss]
             if epoch >= 500:
@@ -247,9 +228,7 @@ if __name__ == "__main__":
             if args.if_flood and not args.balance:
                 log += " if_flood: {:.4f}".format(test_loss[i])
                 i += 1
-            if args.use_edge:
-                log += " Edge: {:.4f}".format(test_loss[i])
-            log += ")"
+            log += " Edge: {:.4f})".format(test_loss[i])
             print(log)
             with tf.summary.create_file_writer(log_dir).as_default():
                 tf.summary.scalar('Node loss', test_loss[0], step=epoch)
@@ -257,8 +236,7 @@ if __name__ == "__main__":
                 if args.if_flood and not args.balance:
                     tf.summary.scalar('Flood classification', test_loss[i], step=epoch)
                     i += 1
-                if args.use_edge:
-                    tf.summary.scalar('Edge loss', test_loss[i], step=epoch)
+                tf.summary.scalar('Edge loss', test_loss[i], step=epoch)
 
 
         # save
@@ -281,12 +259,11 @@ if __name__ == "__main__":
             elif k == 'data_dir':
                 v = os.path.join(args.data_dir,v)
             setattr(args,k,v)
-        env_args = env.get_args(args.directed,args.length,args.order)
+        env_args = env.get_args(args.directed,args.length,args.orde,args.graph_base)
         for k,v in env_args.items():
             if k == 'act':
                 v = v and args.act != 'False' and args.act
             setattr(args,k,v)
-        args.use_edge = args.use_edge or args.edge_fusion
         dG = DataGenerator(env.config,args.data_dir,args)
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         emul.load(args.model_dir)
@@ -311,8 +288,7 @@ if __name__ == "__main__":
                 perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
                 if args.act:
                     settings = np.load(os.path.join(args.result_dir,name + '_settings.npy'))
-                if args.use_edge:
-                    edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
+                edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
             else:
                 t0 = time.time()
                 pre_step = rain_arg.get('pre_time',0) // args.interval
@@ -323,13 +299,12 @@ if __name__ == "__main__":
                 np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
                 if settings is not None:
                     np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
-                if args.use_edge:
-                    edge_states = res[-1][pre_step:]
-                    np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
+                edge_states = res[-1][pre_step:]
+                np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
             seq = max(args.seq_in,args.seq_out) if args.recurrent else False
             states,perfs = [dG.expand_seq(dat,seq) for dat in [states,perfs]]
-            edge_states = dG.expand_seq(edge_states,seq) if args.use_edge else None
+            edge_states = dG.expand_seq(edge_states,seq)
 
             states[...,1] = states[...,1] - states[...,-1]
             r,true = states[args.seq_out:,...,-1:],states[args.seq_out:,...,:-1]
@@ -345,14 +320,11 @@ if __name__ == "__main__":
                 true = np.concatenate([true,f[args.seq_out:]],axis=-1)
             states = states[:-args.seq_out]
 
-            if args.use_edge:
-                edge_true = edge_states[args.seq_out:,...,:-1]
-                edge_states = edge_states[:-args.seq_out]
-                if args.recurrent:
-                    edge_states = edge_states[:,-args.seq_in:,...]
-                    edge_true = edge_true[:,:args.seq_out,...]
-            else:
-                edge_states = None
+            edge_true = edge_states[args.seq_out:,...,:-1]
+            edge_states = edge_states[:-args.seq_out]
+            if args.recurrent:
+                edge_states = edge_states[:,-args.seq_in:,...]
+                edge_true = edge_true[:,:args.seq_out,...]
 
             if args.act:
                 if args.recurrent:
@@ -368,9 +340,7 @@ if __name__ == "__main__":
             # lp_wrapper = lp(emul.simulate)
             # pred = lp_wrapper(states,r,a,edge_states)
             # lp.print_stats()
-            pred = emul.simulate(states,r,a,edge_states)
-            if args.use_edge:
-                pred,edge_pred = pred
+            pred,edge_pred = emul.simulate(states,r,a,edge_states)
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
@@ -383,17 +353,15 @@ if __name__ == "__main__":
             if args.if_flood:
                 loss += [emul.bce(pred[...,-2:-1],true[...,-2:-1])]
                 los_str += "if_flood: {:.4f} ".format(loss[-1])
-            if args.use_edge:
-                loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
-                los_str += "Edge: {:.4f}".format(loss[-1])
-            print(los_str+')')
+            loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
+            los_str += "Edge: {:.4f})".format(loss[-1])
+            print(los_str)
 
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r.astype(np.float32))
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true.astype(np.float32))
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred.astype(np.float32))
-            if args.use_edge:
-                edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
-                np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true.astype(np.float32))
-                np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred.astype(np.float32))
+            edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
+            np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true.astype(np.float32))
+            np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred.astype(np.float32))
 
 
