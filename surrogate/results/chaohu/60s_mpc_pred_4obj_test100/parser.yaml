@@ -1,0 +1,11 @@
+act: rand
+model_dir: 60s_50k_rand_pred/test
+pop_size: 64
+predict: true
+rain_num: 100
+rain_suffix: chaohu_testall
+result_dir: 60s_mpc_pred_4obj_test100
+surrogate: true
+termination:
+- n_gen
+- 50

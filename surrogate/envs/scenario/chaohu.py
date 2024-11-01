@@ -107,8 +107,6 @@ class chaohu(basescenario):
         obj = np.stack(flood + penal + outflow + wwtp + energy,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
-        # if norm:
-        #     obj /= state[...,-1].sum(axis=-1)
         return obj.sum(axis=-1) if not keepdim else np.transpose(obj,(0,2,1))
         # return np.array([flood] + penal + outflow + wwtp + energy + rough).T
     
@@ -141,8 +139,20 @@ class chaohu(basescenario):
         #                   settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(sett[...,i],axis=1))*gamma,axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        return tf.reduce_sum(flood,axis=0) + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
+        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
+        return obj
         # return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
+
+    def norm_obj(self,obj,states,g=False,inverse=False):
+        q_in,nodes = states[0][...,1],self.elements['nodes']
+        if g:
+            import tensorflow as tf
+            __norm = tf.reduce_sum(tf.reduce_sum(q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]],axis=-1),axis=-1)
+        else:
+            __norm = q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]].sum(axis=-1).sum(axis=-1)
+            while __norm.ndim < obj.ndim:
+                __norm = np.expand_dims(__norm,-1)
+        return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
 
     def get_obj_norm(self,norm_y,norm_e,perfs):
         nodes,links = self.elements['nodes'],self.elements['links']
@@ -156,7 +166,10 @@ class chaohu(basescenario):
                  for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         wwtp = [norm_y[...,nodes.index(idx),1] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
-        ene = [norm_e[...,links.index(idx),-2]/cfs_cms * np.abs(self.hmin[nodes.index(self.pumps[idx][0])] - self.hmax[nodes.index(self.pumps[idx][1])])/ft_m/8.814 * KWperHP/3600.0 * weight
+        ene = [norm_e[...,links.index(idx),-2]/cfs_cms *\
+                max(np.abs(self.hmin[nodes.index(self.pumps[idx][0])] - self.hmax[nodes.index(self.pumps[idx][1])]),
+                    np.abs(self.hmax[nodes.index(self.pumps[idx][0])] - self.hmin[nodes.index(self.pumps[idx][1])]))\
+                    /ft_m/8.814 * KWperHP/3600.0 * weight
                for idx,attr,weight in targets if attr == 'cumpumpenergy']
         return np.stack(fl + pen + outfl + wwtp + ene,axis=-1)
 

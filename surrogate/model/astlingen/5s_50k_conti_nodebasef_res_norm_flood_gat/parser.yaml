@@ -3,10 +3,10 @@ batch_size: 128
 conv: GAT
 data_dir: 1s_edge_conti128_rain50
 edge_fusion: true
-epochs: 100000
+epochs: 20000
+graph_base: 1
 if_flood: 3
-length: 1.0
-model_dir: 5s_50k_conti_edgef_res_norm_flood_gat
+model_dir: 5s_50k_conti_nodebasef_res_norm_flood_gat
 n_sp_layer: 3
 n_tp_layer: 3
 recurrent: Conv1D

@@ -11,62 +11,66 @@ from tensorflow.keras.utils import plot_model
 # from line_profiler import LineProfiler
 HERE = os.path.dirname(__file__)
 
+class Argument(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super(Argument, self).__init__(*args, **kwargs)
+
+        # env args
+        self.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
+        self.add_argument('--directed',action='store_true',help='if use directed graph')
+        self.add_argument('--length',type=float,default=0,help='adjacency range')
+        self.add_argument('--order',type=int,default=1,help='adjacency order')
+        self.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
+        self.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
+        self.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
+        self.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
+
+        # simulate args
+        self.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
+        self.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
+        self.add_argument('--train_event_id',type=str,default='',help='the training event id file')
+        self.add_argument('--act',type=str,default='False',help='if and what control actions')
+        self.add_argument('--setting_duration',type=int,default=5,help='setting duration')
+        self.add_argument('--processes',type=int,default=1,help='number of simulation processes')
+        self.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
+
+        # train args
+        self.add_argument('--train',action="store_true",help='if train the emulator')
+        self.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
+        self.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
+        self.add_argument('--use_adj',action="store_true",help='if use filter to act control')
+        self.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
+        self.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
+        self.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
+        self.add_argument('--epochs',type=int,default=500,help='training epochs')
+        self.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
+        self.add_argument('--batch_size',type=int,default=256,help='training batch size')
+        self.add_argument('--roll',type=int,default=0,help='if rolls out for curriculum learning')
+        self.add_argument('--balance',action="store_true",help='if use balance not classification loss')
+
+        # network args
+        self.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
+        self.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
+        self.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
+        self.add_argument('--dropout',type=float,default=0.0,help='dropout rate')
+        self.add_argument('--activation',type=str,default='relu',help='activation function')
+        self.add_argument('--recurrent',type=str,default='GRU',help='recurrent type')
+        self.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')
+        self.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
+        self.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
+        self.add_argument('--seq_in',type=int,default=6,help='input sequential length')
+        self.add_argument('--seq_out',type=int,default=1,help='out sequential length. seq_out < seq_in ')
+        self.add_argument('--resnet',action='store_true',help='if use resnet')
+        self.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
+        self.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
+
+        # test args
+        self.add_argument('--test',action="store_true",help='if test the emulator')
+        self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
+        self.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
+
 def parser(config=None):
-    parser = argparse.ArgumentParser(description='surrogate')
-
-    # env args
-    parser.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
-    parser.add_argument('--directed',action='store_true',help='if use directed graph')
-    parser.add_argument('--length',type=float,default=0,help='adjacency range')
-    parser.add_argument('--order',type=int,default=1,help='adjacency order')
-    parser.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
-    parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
-    parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
-    parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
-
-    # simulate args
-    parser.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
-    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
-    parser.add_argument('--train_event_id',type=str,default='',help='the training event id file')
-    parser.add_argument('--act',type=str,default='False',help='if and what control actions')
-    parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
-    parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
-    parser.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
-
-    # train args
-    parser.add_argument('--train',action="store_true",help='if train the emulator')
-    parser.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
-    parser.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
-    parser.add_argument('--use_adj',action="store_true",help='if use filter to act control')
-    parser.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
-    parser.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
-    parser.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
-    parser.add_argument('--epochs',type=int,default=500,help='training epochs')
-    parser.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
-    parser.add_argument('--batch_size',type=int,default=256,help='training batch size')
-    parser.add_argument('--roll',type=int,default=0,help='if rolls out for curriculum learning')
-    parser.add_argument('--balance',action="store_true",help='if use balance not classification loss')
-
-    # network args
-    parser.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
-    parser.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
-    parser.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
-    parser.add_argument('--dropout',type=float,default=0.0,help='dropout rate')
-    parser.add_argument('--activation',type=str,default='relu',help='activation function')
-    parser.add_argument('--recurrent',type=str,default='GRU',help='recurrent type')
-    parser.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')
-    parser.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
-    parser.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
-    parser.add_argument('--seq_in',type=int,default=6,help='input sequential length')
-    parser.add_argument('--seq_out',type=int,default=1,help='out sequential length. seq_out < seq_in ')
-    parser.add_argument('--resnet',action='store_true',help='if use resnet')
-    parser.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
-    parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
-
-    # test args
-    parser.add_argument('--test',action="store_true",help='if test the emulator')
-    parser.add_argument('--result_dir',type=str,default='./results/',help='the test results')
-    parser.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
+    parser = Argument(description='surrogate')
 
     args = parser.parse_args()
     if config is not None:
@@ -162,7 +166,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.model_dir):
             os.mkdir(args.model_dir)
 
-        seq = max(args.seq_in,args.seq_out) if args.recurrent else 0
+        seq = max(args.seq_in,args.seq_out)
         seq *= args.roll if args.roll > 0 else 1
         n_events = int(max(dG.event_id))+1
         if os.path.isfile(os.path.join(args.data_dir,args.train_event_id)):
@@ -302,7 +306,7 @@ if __name__ == "__main__":
                 edge_states = res[-1][pre_step:]
                 np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
-            seq = max(args.seq_in,args.seq_out) if args.recurrent else False
+            seq = max(args.seq_in,args.seq_out)
             states,perfs = [dG.expand_seq(dat,seq) for dat in [states,perfs]]
             edge_states = dG.expand_seq(edge_states,seq)
 
@@ -322,16 +326,12 @@ if __name__ == "__main__":
 
             edge_true = edge_states[args.seq_out:,...,:-1]
             edge_states = edge_states[:-args.seq_out]
-            if args.recurrent:
-                edge_states = edge_states[:,-args.seq_in:,...]
-                edge_true = edge_true[:,:args.seq_out,...]
+            edge_states = edge_states[:,-args.seq_in:,...]
+            edge_true = edge_true[:,:args.seq_out,...]
 
             if args.act:
-                if args.recurrent:
-                    a = dG.expand_seq(settings,args.seq_out,zeros=False)
-                    a = a[args.seq_out:,:args.seq_out,...]
-                else:
-                    a = a[1:]
+                a = dG.expand_seq(settings,args.seq_out,zeros=False)
+                a = a[args.seq_out:,:args.seq_out,...]
             else:
                 a = None
             
@@ -344,8 +344,7 @@ if __name__ == "__main__":
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
-            if args.recurrent:
-                true = true[:,:args.seq_out,...]
+            true = true[:,:args.seq_out,...]
 
             los_str = "{} Testing loss: (".format(name)
             loss = [emul.mse(emul.normalize(pred[...,:3],'y'),emul.normalize(true[...,:3],'y'))]
@@ -360,7 +359,7 @@ if __name__ == "__main__":
             np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r.astype(np.float32))
             np.save(os.path.join(args.result_dir,name + '_true.npy'),true.astype(np.float32))
             np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred.astype(np.float32))
-            edge_true = edge_true[:,:args.seq_out,...] if args.recurrent else edge_true
+            edge_true = edge_true[:,:args.seq_out,...]
             np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true.astype(np.float32))
             np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred.astype(np.float32))
 

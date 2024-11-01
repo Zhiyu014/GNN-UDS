@@ -1,0 +1,10 @@
+act: conti
+model_dir: 60s_50k_conti_pred_norm
+pop_size: 128
+predict: true
+rain_dir: ast_test2007_events4.csv
+result_dir: 60s_50k_conti_pred_norm_ga_2007
+surrogate: true
+termination:
+- n_gen
+- 200

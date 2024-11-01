@@ -1,0 +1,14 @@
+act: conti
+batch_size: 64
+cum: true
+data_dir: 1s_edge_conti128_rain50
+epochs: 50000
+model_dir: 60s_50k_conti_pred_fitcum
+n_sp_layer: 5
+n_tp_layer: 5
+recurrent: LSTM
+save_gap: 10000
+seq_in: 60
+seq_out: 60
+train: true
+train_event_id: train_id.npy

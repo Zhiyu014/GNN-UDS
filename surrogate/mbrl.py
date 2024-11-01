@@ -200,10 +200,6 @@ if __name__ == '__main__':
         setattr(args,k,v)
 
     if args.train:
-        if not os.path.exists(args.agent_dir):
-            os.mkdir(args.agent_dir)
-        yaml.dump(data=config,stream=open(os.path.join(args.agent_dir,'parser.yaml'),'w'))
-
         # Model args
         if args.model_based or args.sample_gap == 0:
             hyps = yaml.load(open(os.path.join(HERE,'utils','config.yaml'),'r'),yaml.FullLoader)
@@ -229,9 +225,12 @@ if __name__ == '__main__':
                 setattr(margs,k,v)
             emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             emul.load(margs.model_dir)
-        
+
+        if not os.path.exists(args.agent_dir):
+            os.mkdir(args.agent_dir)
+        yaml.dump(data=config,stream=open(os.path.join(args.agent_dir,'parser.yaml'),'w'))
+
         # Rainfall args
-        # margs.data_dir = './envs/data/astlingen/1s_edge_rand3128_rain50/act1/'
         print("Get training events runoff")
         hyp = yaml.load(open(os.path.join(args.data_dir,'parser.yaml'),'r'),yaml.FullLoader)
         rain_arg = env.config['rainfall']
@@ -429,8 +428,8 @@ if __name__ == '__main__':
                     # Get reward from env as -obj_pred
                     states = (x[:,-args.setting_duration:,...],ex[:,-args.setting_duration:,...])
                     preds = (y[:,:args.setting_duration,...],ey[:,:args.setting_duration,...])
-                    r = - env.objective_pred_tf(preds,states,settings,norm=args.norm)
-                    r *= args.scale
+                    obj = env.objective_pred_tf(preds,states,settings)
+                    r = - env.norm_obj(obj,states,g=True) * args.scale
                     # r = tf.clip_by_value(r, -10, 10)
                     a = ctrl.convert_setting_to_action(settings[:,0,:])
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
@@ -494,3 +493,62 @@ if __name__ == '__main__':
         plt.savefig(os.path.join(ctrl.agent_dir,'test_objs.png'),dpi=300)
         plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'time.npy'),np.array(secs))
+    
+    if args.test:
+        known_hyps = yaml.load(open(os.path.join(args.agent_dir,'parser.yaml'),'r'),yaml.FullLoader)
+        for k,v in known_hyps.items():
+            if k in ['agent_dir','result_dir']:
+                continue
+            setattr(args,k,v)
+
+        if not os.path.exists(args.result_dir):
+            os.mkdir(args.result_dir)
+        yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
+
+        rain_arg = env.config['rainfall']
+        if 'rain_dir' in config:
+            rain_arg['rainfall_events'] = os.path.join('./envs/config/',config['rain_dir'])
+        if 'rain_suffix' in config:
+            rain_arg['suffix'] = config['rain_suffix']
+        if 'rain_num' in config:
+            rain_arg['rain_num'] = config['rain_num']
+        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        if os.path.exists(os.path.join(args.result_dir,'test_runoff.npy')):
+            res = [np.load(os.path.join(args.result_dir,'test_runoff_ts.npy'),allow_pickle=True),
+                   np.load(os.path.join(args.result_dir,'test_runoff.npy'),allow_pickle=True)]
+            res = [(ts,runoff) for ts,runoff in zip(res[0],res[1])]
+        else:
+            pool = mp.Pool(args.processes)
+            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide,))
+                   for event in events]
+            pool.close()
+            pool.join()
+            res = [r.get() for r in res]
+            np.save(os.path.join(args.result_dir,'test_runoff_ts.npy'),np.array([r[0] for r in res]))
+            np.save(os.path.join(args.result_dir,'test_runoff.npy'),np.array([r[1] for r in res]))
+        runoffs = []
+        for ts,runoff in res:
+            # Use mp to get runoff
+            # ts,runoff = get_runoff(env,event,tide=args.tide)
+            tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
+            tss.index = pd.to_datetime(tss.index)
+            seq = args.setting_duration//args.interval
+            runoff = np.stack([np.concatenate([runoff[idx:idx+seq],np.tile(np.zeros_like(s),(max(idx+seq-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                                for idx,s in enumerate(runoff)])
+            runoffs.append([tss,runoff])
+        print("Finish testing events runoff")
+
+        # Test the agent
+        pool = mp.Pool(args.processes)
+        res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,False,))
+                for idx,event in enumerate(events)]
+        pool.close()
+        pool.join()
+        for event,r in zip(events,res):
+            name = os.path.basename(event).strip('.inp')
+            states,perfs,settings,rains,edge_states,rains,objects = r.get()
+            np.save(os.path.join(args.result_dir,name + '_state.npy'),states)
+            np.save(os.path.join(args.result_dir,name + '_perf.npy'),perfs)
+            np.save(os.path.join(args.result_dir,name + '_object.npy'),objects)
+            np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
+            np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)

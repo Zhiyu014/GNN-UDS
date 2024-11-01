@@ -42,6 +42,12 @@ states:
   - !!python/tuple
     - "JK-2"
     - cuminflow
+  - !!python/tuple
+    - "WS02006252"
+    - cuminflow 
+  - !!python/tuple
+    - "WS02006256"
+    - cuminflow
  
 # global state definitions
 global_state:

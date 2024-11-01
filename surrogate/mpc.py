@@ -1,12 +1,13 @@
+import os,time
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 from emulator import Emulator # Emulator should be imported before env
 from predictor import Predictor
 from utils.utilities import get_inp_files
 import pandas as pd
-import os,time,gc
 import multiprocessing as mp
 import numpy as np
 from scipy.stats import truncnorm
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam,SGD
 from tensorflow_probability import distributions as tfd
@@ -226,10 +227,12 @@ class mpc_problem(Problem):
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0) if self.edge_state is not None else None
         preds = self.emul.predict(state,runoff,settings,edge_state)
         # env = get_env(self.args.env)(initialize=False)
-        if self.args.predict:
+        if not self.args.predict:
+            objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
+        elif getattr(self.emul,'norm',False):
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
         else:
-            objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
+            objs = env.norm_obj(preds.numpy().sum(axis=-1).sum(axis=-1),[state,edge_state],inverse=True)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -516,24 +519,28 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     ctx = mp.get_context("spawn")
-    # de = {'env':'astlingen',
-    #       'act':'rand3',
-    #       'processes':5,
-    #       'pop_size':128,
-    #       'sampling':0.4,
-    #       'learning_rate':0.1,
-    #       'termination':['n_gen',200],
-    #       'surrogate':True,
-    #       'gradient':True,
-    #       'rain_dir':'./envs/config/ast_test5_events.csv',
-    #       'model_dir':'./model/astlingen/30s_20k_3act_1000ledgef_res_norm_flood_gat_2tcn',
-    #       'result_dir':'./results/astlingen/30s_20k_3actgmpc_1000ledgef_res_norm_flood_gat_2tcn'}
+    de = {
+        # 'env':'chaohu',
+        # 'act':'rand',
+        # 'processes':5,
+        # 'pop_size':64,
+        # # 'sampling':0.4,
+        # # 'learning_rate':0.1,
+        # 'termination':['n_gen',50],
+        # 'surrogate':True,
+        # 'predict':True,
+        # 'gradient':True,
+        # # 'rain_dir':'./envs/config/ast_test5_events.csv',
+        # 'rain_suffix':'chaohu_testall',
+        # 'model_dir':'./model/chaohu/60s_50k_rand_pred',
+        # 'result_dir':'./results/chaohu/60s_mpc_pred_4obj_test100',
+        }
     # config['rain_dir'] = de['rain_dir']
-    # for k,v in de.items():
-    #     setattr(args,k,v)
+    for k,v in de.items():
+        setattr(args,k,v)
 
     env = get_env(args.env)()
-    env_args = env.get_args(args.directed,args.length,args.order,args.act)
+    env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act

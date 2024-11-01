@@ -1,11 +1,13 @@
 act: rand
 batch_size: 64
 data_dir: 1s_edge_rand64_rain50
-epochs: 100000
-model_dir: 60s_50k_rand_pred
+epochs: 50000
+model_dir: 60s_50k_rand_pred_norm
 n_sp_layer: 5
 n_tp_layer: 5
+norm: true
 recurrent: Conv1D
+save_gap: 10000
 seq_in: 60
 seq_out: 60
 train: true

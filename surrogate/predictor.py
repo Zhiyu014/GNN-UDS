@@ -1,5 +1,5 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from tensorflow.keras.layers import Dense,Input,GRU,LSTM,Conv1D,Softmax,Add,Subtract,Dropout
+from tensorflow.keras.layers import Dense,Input,GRU,LSTM,Conv1D,Flatten
 from tensorflow.keras import activations
 from tensorflow.keras.models import Model,Sequential
 from tensorflow.keras.regularizers import l1,l2
@@ -13,14 +13,41 @@ import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 
 import yaml,time,datetime,matplotlib.pyplot as plt
-from main import parser,HERE
+from main import Argument,HERE
 from dataloader import DataGenerator
 from envs import get_env
+
+class ArgumentPredictor(Argument):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument('--full',action='store_true',help='if use full-scale input')
+        self.add_argument('--norm',action='store_true',help='if norm targets individually')
+        self.add_argument('--vol',action='store_true',help='if only fit volume-based objectives')
+        self.add_argument('--cum',action='store_true',help='if fit cumulative values of the horizon')
+
+def parser(config=None):
+    parser = ArgumentPredictor(description='prediction')
+    args = parser.parse_args()
+    if config is not None:
+        hyps = yaml.load(open(config,'r'),yaml.FullLoader)
+        parser.set_defaults(**hyps[args.env])
+    args = parser.parse_args()
+    config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k,v)}
+    for k,v in config.items():
+        if '_dir' in k:
+            setattr(args,k,os.path.join(hyps[args.env][k],v))
+    print('Training configs: {}'.format(args))
+    return args,config
 
 class Predictor:
     def __init__(self,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
         self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
+        self.moni_nodes = [(args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr))
+                           for idx,attr in args.states if attr in args.attrs['nodes']]
+        self.moni_links = [(args.elements['links'].index(idx),args.attrs['links'].index(attr))
+                           for idx,attr in args.states if attr in args.attrs['links']]
+        self.n_moni = len(self.moni_nodes) + len(self.moni_links)
         self.tide = getattr(args,'tide',False)
         self.b_in = 2 if self.tide else 1
         self.act = getattr(args,"act",False)
@@ -31,8 +58,16 @@ class Predictor:
             act_edges = [i for e in act_edges for i in e]
             self.act_edges = sorted(list(set(act_edges)),key=act_edges.index)
 
+        self.full = getattr(args,'full',False)
+        self.norm = getattr(args,'norm',False)
+        self.vol = getattr(args,'vol',False)
+        self.cum = getattr(args,'cum',False)
         self.targets = getattr(args,"performance_targets")
-        self.n_out = len(self.targets)
+        if self.vol:
+            self.n_out = len([i for i,attr,weight in self.targets
+                               if attr in ['cumflooding','cuminflow'] and weight>=0.5])
+        else:
+            self.n_out = len(self.targets)
         self.flood_nodes = [args.elements['nodes'].index(i)
                              for i,attr,_ in self.targets 
                              if attr == 'cumflooding' and i in args.elements['nodes']]
@@ -52,55 +87,44 @@ class Predictor:
         self.n_tp_layer = getattr(args,"n_tp_layer",3)
         self.dropout = getattr(args,'dropout',0.0)
         self.activation = getattr(args,"activation",'relu')
-        self.is_outfall = getattr(args,"is_outfall",np.array([0 for _ in range(self.n_node)]))
-        # self.epsilon = getattr(args,"epsilon",-1.0)
 
-        self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
-        self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
-        self.area = getattr(args,"area",np.array([0.0 for _ in range(self.n_node)]))
-        self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
-        self.pump_in = getattr(args,"pump_in",np.array([0.0 for _ in range(self.n_node)]))
-        self.pump_out = getattr(args,"pump_out",np.array([0.0 for _ in range(self.n_node)]))        
-
-        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
+        self.recurrent = recurrent
         self.model = self.build_network(self.recurrent)
         self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
         self.mse = MeanSquaredError()
         self.bce = BinaryCrossentropy()
 
-        self.roll = getattr(args,"roll",0)
         self.model_dir = getattr(args,"model_dir")
 
     def build_network(self,recurrent):
-        # x_in = Input(shape=(self.seq_in,self.n_node*self.n_in) if recurrent else (self.n_node*self.n_in,))
-        # x = Dense(self.embed_size,activation=self.activation)(x_in)
-        # e_in = Input(shape=(self.seq_in,self.n_edge*self.e_in) if recurrent else (self.n_edge*self.e_in,))
-        # inp = [x_in,e_in]
-        # e = Dense(self.embed_size,activation=self.activation)(e_in)
-        # x = concat([x,e],axis=-1)
-        # else:
-        #     inp = [x_in]
-        # for _ in range(self.n_sp_layer):
-        #     x = Dense(self.embed_size,activation=self.activation)(x)
-        h_in = Input(shape=(self.seq_in,self.n_flood,) if recurrent else (self.n_flood,))
-        h = Dense(self.embed_size,activation=self.activation)(h_in)
-        b_in = Input(shape=(self.seq_in+self.seq_out,self.n_node*self.b_in,) if recurrent else (self.n_node*self.b_in,))
-        inp = [h_in,b_in]
+        if self.full:
+            x_in = Input(shape=(self.seq_in,self.n_node*self.n_in))
+            e_in = Input(shape=(self.seq_in,self.n_edge*self.e_in))
+            inp = [x_in,e_in]
+            x = Dense(self.embed_size,activation=self.activation)(x_in)
+            e = Dense(self.embed_size,activation=self.activation)(e_in)
+            x = concat([x,e],axis=-1)
+            b_in = Input(shape=(self.seq_out,self.n_node*self.b_in,))
+            inp += [b_in]
+            b = Dense(self.embed_size,activation=self.activation)(b_in)
+        else:
+            x_in = Input(shape=(self.seq_in,self.n_moni,))
+            b_in = Input(shape=(self.seq_in+self.seq_out,self.n_node*self.b_in,))
+            inp = [x_in,b_in]
+            x = Dense(self.embed_size,activation=self.activation)(x_in)
+            b = Dense(self.embed_size,activation=self.activation)(b_in)
         if self.act:
-            a_in = Input(shape=(self.seq_in+self.seq_out,self.n_act,) if recurrent else (self.n_act,))
+            a_in = Input(shape=(self.seq_out if self.full else self.seq_in+self.seq_out,self.n_act,))
             inp += [a_in]
-        b = Dense(self.embed_size,activation=self.activation)(b_in)
-        # x = concat([x,b],axis=-1)
-        if self.act:
             a = Dense(self.embed_size,activation=self.activation)(a_in)
             b = tf.concat([b,a],axis=-1)
         for _ in range(self.n_sp_layer):
+            x = Dense(self.embed_size,activation=self.activation)(x)
             b = Dense(self.embed_size,activation=self.activation)(b)
-        if recurrent:
-            x = self.get_tem_nets(recurrent)(tf.concat([b[:,:self.seq_in],h],axis=-1))
-            x = self.get_tem_nets(recurrent)(tf.concat([x,b[:,-self.seq_out:]],axis=-1))
+        x = self.get_tem_nets(recurrent)(x if self.full else tf.concat([x,b[:,:self.seq_in,:]],axis=-1))
+        x = self.get_tem_nets(recurrent)(tf.concat([x,b if self.full else b[:,-self.seq_out:,:]],axis=-1))
                     
-        out = Dense(self.n_out,activation='hard_sigmoid')(x)
+        out = Dense(self.n_out,activation='linear')(x)
         if self.if_flood:
             for _ in range(self.if_flood):
                 fl = Dense(self.embed_size,activation=self.activation)(x)
@@ -121,10 +145,20 @@ class Predictor:
             return Sequential()
 
     @tf.function
-    def fit_eval(self,h,b,a,objs,fit=True):
+    def fit_eval(self,x,e,b,a,objs,fit=True):
+        if self.norm:
+            objs = self.normalize(objs,'o')
+        x,b,e = [self.normalize(dat,item) for dat,item in zip([x,b,e],'xbe')]
+        if self.full:
+            inp = [tf.reshape(dat,dat.shape[:2]+(np.prod(dat.shape[2:]),)) for dat in [x,e,b]]
+            inp += [a] if self.act else []
+        else:
+            moni = tf.stack([x[...,i,j] for i,j in self.moni_nodes]+[e[...,i,j] for i,j in self.moni_links],axis=-1)
+            inp = [moni, tf.concat([x[...,-1],tf.squeeze(b)],axis=1)]
+            inp += [tf.concat([tf.gather(e[...,-1],self.act_edges,axis=-1),a],axis=1)] if self.act else []
         with GradientTape() as tape:
             tape.watch(self.model.trainable_variables)
-            pred = self.model([h,b,a] if self.act else [h,b])
+            pred = self.model(inp)
             if self.if_flood:
                 pred,flood = pred
                 loss = self.bce(tf.cast(objs[...,:self.n_flood]>0,tf.float32),flood)
@@ -132,36 +166,43 @@ class Predictor:
                     loss = [loss]
                 pred = tf.concat([pred[...,:self.n_flood] * tf.cast(flood>0.5,tf.float32),
                                   pred[...,self.n_flood:]],axis=-1)
-                loss += self.mse(objs,pred) if fit else [self.mse(objs,pred)]
+                if self.cum:
+                    pred,objs = [tf.reduce_sum(dat,axis=-2) for dat in [pred,objs]]
+                loss += self.mse(objs[...,:self.n_out],pred) if fit else [self.mse(objs[...,:self.n_out],pred)]
             else:
-                loss = self.mse(objs,pred)
+                if self.cum:
+                    pred,objs = [tf.reduce_sum(dat,axis=-2) for dat in [pred,objs]]
+                loss = self.mse(objs[...,:self.n_out],pred)
             if fit:
                 grads = tape.gradient(loss,self.model.trainable_variables)
                 self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss
     
     def predict(self,state,runoff,settings=None,edge_state=None):
-        x,b = [self.normalize(dat,item) for dat,item in zip([state,runoff],'xb')]
-        h = tf.gather(x[...,0],self.flood_nodes,axis=-1)
-        b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
-        if self.act:
-            settings = tf.concat([tf.gather(edge_state[...,-1],self.act_edges,axis=-1),settings],axis=1)
-        preds = self.model([h,b,settings] if self.act else [h,b])
+        x,b,e = [self.normalize(dat,item) for dat,item in zip([state,runoff,edge_state],'xbe')]
+        if self.full:
+            x,b,e = [tf.reshape(dat,dat.shape[:2]+(-1,)) for dat in [x,b,e]]
+            inp = [x,e,b,settings] if self.act else [x,e,b]
+        else:
+            moni = tf.stack([x[...,i,j] for i,j in self.moni_nodes]+[e[...,i,j] for i,j in self.moni_links],axis=-1)
+            inp = [moni, tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)]
+            if self.act:
+                inp += [tf.concat([tf.gather(edge_state[...,-1],self.act_edges,axis=-1),settings],axis=1)]
+        preds = self.model(inp)
         if self.if_flood:
             preds,flood = preds
             preds = tf.concat([preds[...,:self.n_flood] * tf.cast(flood>0.5,tf.float32),
                                preds[...,self.n_flood:]],axis=-1)
-        objs = self.normalize(preds,'o',inverse=True)
-            # objs = preds.numpy() * state[...,-1].sum(axis=-1).sum(axis=-1)[:,None]
-        return objs
+        if self.norm:
+            preds = self.normalize(preds,'o',inverse=True)
+        return preds
 
-    def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e=None):
+    def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e):
         setattr(self,'norm_x',norm_x)
         setattr(self,'norm_b',norm_b)
         setattr(self,'norm_y',norm_y)
         setattr(self,'norm_r',norm_r)
-        if norm_e is not None:
-            setattr(self,'norm_e',norm_e)
+        setattr(self,'norm_e',norm_e)
 
     def normalize(self,dat,item,inverse=False):
         normal = getattr(self,'norm_%s'%item)
@@ -202,21 +243,20 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','config.yaml'))
 
     train_de = {
-        'train':True,
-        'env':'chaohu',
-        'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
-        'act':'conti',
-        'model_dir':'./model/chaohu/60s_50k_rand_pred/',
-        'load_model':False,
-        'setting_duration':10,
-        'batch_size':64,
-        'epochs':10000,
-        'n_sp_layer':5,
-        'n_tp_layer':5,
-        'norm':True,
-        'seq_in':60,'seq_out':60,
-        # 'if_flood':3,
-        'recurrent':'LSTM',
+        # 'train':True,
+        # 'env':'chaohu',
+        # 'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+        # 'act':'conti',
+        # 'model_dir':'./model/chaohu/60s_50k_rand_pred_fitone/',
+        # 'load_model':False,
+        # 'setting_duration':5,
+        # 'batch_size':64,
+        # 'epochs':10000,
+        # 'n_sp_layer':5,
+        # 'n_tp_layer':5,
+        # 'seq_in':60,'seq_out':60,
+        # # 'if_flood':3,
+        # 'recurrent':'LSTM',
         }
     for k,v in train_de.items():
         setattr(args,k,v)
@@ -233,7 +273,7 @@ if __name__ == '__main__':
     if not os.path.exists(args.model_dir):
         os.mkdir(args.model_dir)
 
-    seq = max(args.seq_in,args.seq_out) if args.recurrent else 0
+    seq = max(args.seq_in,args.seq_out)
     n_events = int(max(dG.event_id))+1
     if os.path.isfile(os.path.join(args.data_dir,args.train_event_id)):
         train_ids = np.load(os.path.join(args.data_dir,args.train_event_id))
@@ -274,22 +314,18 @@ if __name__ == '__main__':
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
-        x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
-        b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
-        a = tf.concat([tf.gather(ex[...,-1],emul.act_edges,axis=-1),a],axis=1)
-        h = tf.gather(x[...,0],emul.flood_nodes,axis=-1)
-        train_loss = emul.fit_eval(h,b,a,objs)
+        if not args.norm:
+            objs = env.norm_obj(objs,[x,ex])
+        train_loss = emul.fit_eval(x,ex,b,a,objs)
         train_losses.append(train_loss.numpy())
 
         test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
-        x,b,objs = [emul.normalize(dat,item) for dat,item in zip([x,b,objs],'xbo')]
-        b = tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)
-        a = tf.concat([tf.gather(ex[...,-1],emul.act_edges,axis=-1),a],axis=1)
-        h = tf.gather(x[...,0],emul.flood_nodes,axis=-1)
-        test_loss = emul.fit_eval(h,b,a,objs,fit=False)
+        if not args.norm:
+            objs = env.norm_obj(objs,[x,ex])
+        test_loss = emul.fit_eval(x,ex,b,a,objs,fit=False)
         test_losses.append([loss.numpy() for loss in test_loss] if args.if_flood else test_loss.numpy())
 
         if train_loss < min([1e6]+train_losses[:-1]):

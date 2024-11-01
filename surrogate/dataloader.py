@@ -12,8 +12,6 @@ class DataGenerator:
         self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval']
         self.seq_in = getattr(args,"seq_in",getattr(args,"setting_duration",5))
         self.seq_out = getattr(args,"seq_out",getattr(args,"horizon",1))
-        recurrent = getattr(args,"recurrent",'True')
-        self.recurrent = False if recurrent in ['None','False','NoneType'] else recurrent
         self.if_flood = getattr(args,"if_flood",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
@@ -111,7 +109,7 @@ class DataGenerator:
         if trim:
             rx,ry = rx[:,-self.seq_in:,...],ry[:,:self.seq_out,...]
         if self.settings is not None and trim:
-            settings = settings[:,:self.seq_out,...] if self.recurrent else settings
+            settings = settings[:,:self.seq_out,...]
         dats = [x,settings,b,y,rx,ry,ex,ey]
         if return_idx:
             dats.append(self.event_id[idxs])
@@ -137,7 +135,7 @@ class DataGenerator:
             # f2 = np.eye(2)[f2].squeeze(-2)
             X,Y = np.concatenate([X[...,:-1],f1,X[...,-1:]],axis=-1),np.concatenate([Y,f2],axis=-1)
         Y = np.concatenate([Y,perfs[1]],axis=-1)
-        if self.recurrent and trim:
+        if trim:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
             Y = Y[:,:self.seq_out,...]
@@ -146,7 +144,7 @@ class DataGenerator:
     def edge_state_split_batch(self,edge_states,trim=True):
         ex = edge_states[0]
         ey = edge_states[1][...,:-1]
-        if self.recurrent and trim:
+        if trim:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
 

@@ -47,6 +47,12 @@ shunqing:
   if_flood: 0
   epsilon: -1.0
 
+  # predictor benchmark
+  full: False
+  norm: False
+  vol: False
+  cum: False
+
   # test args
   test: False
   result_dir: ./results/shunqing/
@@ -101,6 +107,12 @@ RedChicoSur:
   if_flood: 0
   epsilon: -1.0
 
+  # predictor benchmark
+  full: False
+  norm: False
+  vol: False
+  cum: False
+
   # test args
   test: False
   result_dir: ./results/RedChicoSur/
@@ -154,6 +166,12 @@ astlingen:
   resnet: False
   if_flood: 0
   epsilon: -1.0
+
+  # predictor benchmark
+  full: False
+  norm: False
+  vol: False
+  cum: False
 
   # test args
   test: False
@@ -210,6 +228,12 @@ hague:
   if_flood: 0
   epsilon: -1.0
 
+  # predictor benchmark
+  full: False
+  norm: False
+  vol: False
+  cum: False
+  
   # test args
   test: False
   result_dir: ./results/hague/
@@ -263,6 +287,12 @@ chaohu:
   resnet: False
   if_flood: 0
   epsilon: -1.0
+
+  # predictor benchmark
+  full: False
+  norm: False
+  vol: False
+  cum: False
 
   # test args
   test: False
