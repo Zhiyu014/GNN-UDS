@@ -9,6 +9,10 @@ import warnings
 warnings.filterwarnings("ignore")
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
+# tf.config.experimental.set_memory_growth(gpu, True)
+# from tensorflow.keras import mixed_precision
+# policy = mixed_precision.Policy('mixed_float16')
+# mixed_precision.set_global_policy(policy)
 from emulator import Emulator
 from dataloader import DataGenerator
 from agent import get_agent
@@ -65,6 +69,7 @@ def parser(config=None):
     parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
     parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
     parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
+    parser.add_argument('--eval_gap',type=int,default=10,help='evaluate the agent per eval_gap')
     parser.add_argument('--save_gap',type=int,default=100,help='save the agent per gap')
     parser.add_argument('--agent_dir',type=str,default='./agent/',help='path of the agent')
     parser.add_argument('--load_agent',action="store_true",help='if load agents')
@@ -75,7 +80,6 @@ def parser(config=None):
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
     parser.add_argument('--processes',type=int,default=1,help='parallel simulation')
-    parser.add_argument('--eval_gap',type=int,default=10,help='evaluate the agent per eval_gap')
     parser.add_argument('--control_interval',type=int,default=5,help='number of the rainfall events')
     parser.add_argument('--result_dir',type=str,default='./results/',help='path of the results')
 
@@ -165,7 +169,7 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
-        # 'agent':'QMIX',
+        # 'agent':'SAC',
         # 'train':True,
         # 'env':'astlingen',
         # 'act':'rand3',
@@ -178,15 +182,12 @@ if __name__ == '__main__':
         # 'limit':20,
         # 'horizon':60,
         # 'norm':True,
-        # 'conv':False,'use_pred':False,
+        # 'conv':'GAT','use_pred':True,
         # 'eval_gap':10,'start_gap':100,
         # 'agent_dir': './agent/astlingen/test',
         # 'load_agent':False,
         # 'processes':1,
-        # 'norm':True,
         # 'test':False,
-        # 'rain_dir':'./envs/config/ast_test1_events.csv',
-        # 'result_dir':'./results/astlingen/60s_10k_conti_policy2007',
         }
     for k,v in train_de.items():
         setattr(args,k,v)
@@ -214,7 +215,7 @@ if __name__ == '__main__':
             setattr(margs,'epsilon',args.epsilon)
             setattr(args,'seq_in',margs.seq_in)
             assert margs.seq_in == args.setting_duration//args.interval
-            setattr(args,'if_flood',margs.if_flood)
+            setattr(args,'if_flood',bool(margs.if_flood))
             setattr(args,'data_dir',margs.data_dir)
             config['if_flood'] = args.if_flood
             config['data_dir'] = args.data_dir
@@ -474,11 +475,15 @@ if __name__ == '__main__':
                     ctrl.save(os.path.join(ctrl.agent_dir,'test'))
             secs.append(sec)
 
-            if episode % args.save_gap == 0:
-                ctrl.save()
+            # Save the agent
+            if episode >0 and episode % args.save_gap == 0:
+                save_dir = os.path.join(args.agent_dir,str(episode))
+                if not os.path.exists(save_dir):
+                    os.mkdir(save_dir)
+                ctrl.save(save_dir)
             ctrl.update_func(episode)
         ctrl.save()
-        dGv.save(args.agent_dir)
+        # dGv.save(args.agent_dir)
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),np.array(train_losses))
         plt.plot(train_losses,label='train_loss')
         plt.savefig(os.path.join(ctrl.agent_dir,'train_loss.png'),dpi=300)

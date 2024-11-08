@@ -64,7 +64,8 @@ class ConvNet:
     # output: X
     def build_network(self,net):
         X_in = Input(shape=(self.n_node,self.n_in,))
-        Adj_in = Input(shape=(self.n_node,))
+        n_ele = self.n_node + self.n_edge if self.graph_base else self.n_node
+        Adj_in = Input(shape=(n_ele,))
         inp = [X_in,Adj_in]
         if self.use_pred:
             B_in = Input(shape=(self.n_node,self.b_in,))
@@ -282,8 +283,9 @@ class QAgent:
         elif self.conv:
             self.convnet = ConvNet(args,self.conv)
         self.model = self.build_q_network(self.convnet.model if self.conv else None)
-        self.target_model = self.build_q_network(self.convnet.model if self.conv else None)
-        self.target_model.set_weights(self.model.get_weights())
+        if self.conti or not self.mac:
+            self.target_model = self.build_q_network(self.convnet.model if self.conv else None)
+            self.target_model.set_weights(self.model.get_weights())
         self.agent_dir = args.agent_dir
         # TODO value normalization
         self.value_tau = getattr(args,"value_tau",0.005)
@@ -359,13 +361,15 @@ class QAgent:
         i = '' if i is None else str(i)
         agent_dir = agent_dir if agent_dir is not None else self.agent_dir
         self.model.save_weights(join(agent_dir,'qnet%s.h5'%i))
-        self.target_model.save_weights(join(agent_dir,'qnet%s_target.h5'%i))
+        if hasattr(self,'target_model'):
+            self.target_model.save_weights(join(agent_dir,'qnet%s_target.h5'%i))
             
     def load(self,agent_dir=None,i=None):
         i = '' if i is None else str(i)
         agent_dir = agent_dir if agent_dir is not None else self.agent_dir
         self.model.load_weights(join(agent_dir,'qnet%s.h5'%i))
-        self.target_model.load_weights(join(agent_dir,'qnet%s_target.h5'%i))
+        if hasattr(self,'target_model'):
+            self.target_model.load_weights(join(agent_dir,'qnet%s_target.h5'%i))
 
 class VAgent:
     def __init__(self,
@@ -624,10 +628,10 @@ class AgentSAC:
                 log_probs = tf.reduce_mean(log_probs,axis=-1)
             v_target = tf.squeeze(q_pg,axis=-1) - tf.exp(self.alpha_log) * log_probs
         elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
-                q_pg = self.qnet_0.forward(s),self.qnet_1.forward(s)
-                q_pg = [tf.minimum(q0,q1) for q0,q1 in zip(q_pg[0],q_pg[1])]
-                v_target = tf.reduce_mean([tf.reduce_sum(pg*(qi - lp * tf.exp(self.alpha_log)),axis=-1)
-                                        for qi,pg,lp in zip(q_pg,a_pg,log_probs)],axis=0)
+            q_pg = self.qnet_0.forward(s),self.qnet_1.forward(s)
+            q_pg = [tf.minimum(q0,q1) for q0,q1 in zip(q_pg[0],q_pg[1])]
+            v_target = tf.reduce_mean([tf.reduce_sum(pg*(qi - lp * tf.exp(self.alpha_log)),axis=-1)
+                                    for qi,pg,lp in zip(q_pg,a_pg,log_probs)],axis=0)
         else:
             q_pg = tf.minimum(self.qnet_0.forward(s),self.qnet_1.forward(s))
             v_target = tf.reduce_sum(a_pg*(q_pg - log_probs * tf.exp(self.alpha_log)),axis=-1)
@@ -656,16 +660,18 @@ class AgentSAC:
 
     def _hard_update_target_model(self,episode):
         if episode%self.update_interval == 0:
-            self.qnet_0._hard_update_target_model()
-            self.qnet_1._hard_update_target_model()
             if getattr(self,"vnet",None) is not None:
                 self.vnet._hard_update_target_model()
+            else:
+                self.qnet_0._hard_update_target_model()
+                self.qnet_1._hard_update_target_model()
 
     def _soft_update_target_model(self,episode):
-        self.qnet_0._soft_update_target_model(self.update_interval)
-        self.qnet_1._soft_update_target_model(self.update_interval)
         if getattr(self,"vnet",None) is not None:
             self.vnet._soft_update_target_model(self.update_interval)
+        else:
+            self.qnet_0._soft_update_target_model(self.update_interval)
+            self.qnet_1._soft_update_target_model(self.update_interval)
 
     def save(self,agent_dir=None,agents=True):
         # Save the normalization paras

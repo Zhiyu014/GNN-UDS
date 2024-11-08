@@ -522,16 +522,17 @@ if __name__ == '__main__':
     de = {
         # 'env':'chaohu',
         # 'act':'rand',
-        # 'processes':5,
+        # # 'processes':5,
         # 'pop_size':64,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
         # 'termination':['n_gen',50],
         # 'surrogate':True,
         # 'predict':True,
-        # 'gradient':True,
+        # 'gradient':False,
         # # 'rain_dir':'./envs/config/ast_test5_events.csv',
         # 'rain_suffix':'chaohu_testall',
+        # 'rain_num':100,
         # 'model_dir':'./model/chaohu/60s_50k_rand_pred',
         # 'result_dir':'./results/chaohu/60s_mpc_pred_4obj_test100',
         }
@@ -539,7 +540,7 @@ if __name__ == '__main__':
     for k,v in de.items():
         setattr(args,k,v)
 
-    env = get_env(args.env)()
+    env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
     for k,v in env_args.items():
         if k == 'act':
@@ -667,13 +668,11 @@ if __name__ == '__main__':
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
-                # Only used to keep the same condition to test internal model efficiency
-                # setting = [env.controller(mode='bc')
-                #             for _ in range(args.prediction['control_horizon']//args.setting_duration)]
                 j = 0
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
-            sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             done = env.step(sett)
             state = env.state_full(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:

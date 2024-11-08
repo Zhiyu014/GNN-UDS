@@ -1,14 +1,15 @@
 act: rand3
-agent: QMIX
+agent: SAC
 agent_dir: ./agent/astlingen/test
 batch_size: 64
-conv: false
-data_dir: ./envs/data/astlingen/1s_edge_conti128_rain50/
+conv: GAT
+data_dir: ./envs/data/astlingen/1s_edge_conti128_rain50
 dec: false
 env: astlingen
 episodes: 10000
 eval_gap: 10
 horizon: 60
+if_flood: 3
 limit: 20
 load_agent: false
 mac: true
@@ -20,6 +21,6 @@ rain_num: 1
 result_dir: ./results/
 sample_gap: 0
 start_gap: 100
+test: false
 train: true
-use_edge: true
-use_pred: false
+use_pred: true

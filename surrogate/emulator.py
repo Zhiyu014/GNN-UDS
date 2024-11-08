@@ -558,18 +558,18 @@ class Emulator:
             ae = self.get_edge_action(a,True)
             if self.use_adj:
                 adj = self.get_adj_action(a,True)
-        inp = [self.normalize(x,'x'),self.normalize(b,'b')] if self.norm else [x,b]
+        inp = [self.normalize(x,'x'),self.normalize(b,'b')]
         if self.conv:
             inp += [self.filter]
             inp += [adj] if self.act and self.use_adj else []
-        inp += [self.normalize(ex,'e') if self.norm else ex]
+        inp += [self.normalize(ex,'e')]
         inp += [self.edge_filter] if self.conv and not self.graph_base else []
         inp += [ae] if self.act else []
         y,ey = self.model(inp,training=False) if self.dropout else self.model(inp)
 
         y,ey = self.post_proc_tf((y,ey),a)
         ey = self.normalize(ey,'e',True)
-        ey = tf.concat([tf.clip_by_value(ey[...,:1],0,self.ehmax),ey[...,1:]],axis=-1)
+        ey = tf.concat([tf.expand_dims(tf.clip_by_value(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
         y = self.normalize(y,'y',True)
 
         # Pumped storage depth calculation: boundary condition differs from orifice
