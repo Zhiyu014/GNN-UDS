@@ -12,7 +12,7 @@ import os
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 
-import yaml,time,datetime,matplotlib.pyplot as plt
+import yaml,time,matplotlib.pyplot as plt
 from main import Argument,HERE
 from dataloader import DataGenerator
 from envs import get_env
@@ -307,7 +307,7 @@ if __name__ == '__main__':
 
     t0 = time.time()
     train_losses,test_losses,secs = [],[],[0]
-    log_dir = "logs/model/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = "logs/model/"
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for epoch in range(args.epochs):
         train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)

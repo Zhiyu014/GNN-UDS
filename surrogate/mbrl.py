@@ -1,4 +1,4 @@
-import os,yaml
+import os,yaml,shutil
 import multiprocessing as mp
 import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -20,7 +20,7 @@ from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
 import pandas as pd,matplotlib.pyplot as plt
-import argparse,time,datetime
+import argparse,time
 
 HERE = os.path.dirname(__file__)
 
@@ -32,18 +32,35 @@ def parser(config=None):
     parser.add_argument('--length',type=float,default=0,help='adjacency range')
     parser.add_argument('--order',type=int,default=1,help='adjacency order')
     parser.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
+
     # control args
+    parser.add_argument('--control_interval',type=int,default=5,help='number of the rainfall events')
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
     parser.add_argument('--mac',action="store_true",help='if use multi-agent action space')
     parser.add_argument('--dec',action="store_true",help='if use dec-pomdp observation space')
-    # surrogate args
+
+    # rl args
+    parser.add_argument('--train',action="store_true",help='if train')
+    parser.add_argument('--episodes',type=int,default=1000,help='training episodes')
+    parser.add_argument('--batch_size',type=int,default=128,help='training batch size')
+    parser.add_argument('--limit',type=int,default=23,help='maximum capacity 2^n of the buffer')
+    parser.add_argument('--tune_gap',type=int,default=0,help='finetune the model per sample gap')
+    parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
+    parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
+    parser.add_argument('--eval_gap',type=int,default=10,help='evaluate the agent per eval_gap')
+    parser.add_argument('--save_gap',type=int,default=100,help='save the agent per gap')
+
+    # rollout args
+    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the training data')
+    parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
+    parser.add_argument('--horizon',type=int,default=60,help='prediction & control horizon')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
-    # agent network args
-    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the training data')
-    parser.add_argument('--if_flood',action="store_true",help='if use flood probability')
-    parser.add_argument('--horizon',type=int,default=60,help='prediction & control horizon')
+    parser.add_argument('--epochs',type=int,default=100,help='model update times per episode')
+
+    # agent args
+    parser.add_argument('--agent',type=str,default='SAC',help='agent name')
     parser.add_argument('--conv',type=str,default='GATconv',help='convolution type')
     parser.add_argument('--use_pred',action="store_true",help='if use prediction runoff')
     parser.add_argument('--net_dim',type=int,default=128,help='number of decision-making channels')
@@ -51,36 +68,28 @@ def parser(config=None):
     parser.add_argument('--conv_dim',type=int,default=128,help='number of graphconv channels')
     parser.add_argument('--n_sp_layer',type=int,default=3,help='number of graphconv layers')
     parser.add_argument('--activation',type=str,default='relu',help='activation function')
-    # agent training args
-    parser.add_argument('--agent',type=str,default='SAC',help='agent name')
-    parser.add_argument('--train',action="store_true",help='if train')
-    parser.add_argument('--episodes',type=int,default=1000,help='training episode')
-    parser.add_argument('--repeats',type=int,default=5,help='training repeats per episode')
-    parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
+    parser.add_argument('--agent_dir',type=str,default='./agent/',help='path of the agent')
+    parser.add_argument('--load_agent',action="store_true",help='if load agents')
+   
+    # agent update args
+    parser.add_argument('--repeats',type=int,default=5,help='agent update times per episode')
     parser.add_argument('--norm',action="store_true",help='if use reward normalization')
     parser.add_argument('--scale',type=float,default=1.0,help='reward scaling factor')
-    parser.add_argument('--batch_size',type=int,default=128,help='training batch size')
-    parser.add_argument('--limit',type=int,default=23,help='maximum capacity 2^n of the buffer')
+    parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
     parser.add_argument('--epsilon_decay',type=float,default=0.9996,help='epsilon decay rate in QMIX')
+    parser.add_argument('--noise_std',type=float,default=0.05,help='std of the exploration noise')
     parser.add_argument('--value_tau',type=float,default=0.0,help='value running average tau')
-    parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
-    parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
-    parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
-    parser.add_argument('--eval_gap',type=int,default=10,help='evaluate the agent per eval_gap')
-    parser.add_argument('--save_gap',type=int,default=100,help='save the agent per gap')
-    parser.add_argument('--agent_dir',type=str,default='./agent/',help='path of the agent')
-    parser.add_argument('--load_agent',action="store_true",help='if load agents')
 
     # testing scenario args: rain and result dir not useful here
     parser.add_argument('--test',action="store_true",help='if test')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
+    parser.add_argument('--swmm_step',type=int,default=1,help='routing step for swmm inp files')
     parser.add_argument('--processes',type=int,default=1,help='parallel simulation')
-    parser.add_argument('--control_interval',type=int,default=5,help='number of the rainfall events')
     parser.add_argument('--result_dir',type=str,default='./results/',help='path of the results')
 
     args = parser.parse_args()
@@ -98,7 +107,6 @@ def parser(config=None):
     print('MBRL configs: {}'.format(args))
     return args,config
 
-# TODO: if use_pred for not conv
 def interact_steps(args,event,runoff,ctrl=None,train=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
@@ -172,21 +180,23 @@ if __name__ == '__main__':
         # 'agent':'SAC',
         # 'train':True,
         # 'env':'astlingen',
-        # 'act':'rand3',
-        # 'mac':True,
+        # 'act':'conti',
+        # 'mac':False,
         # 'dec':False,
         # 'model_based':True,'sample_gap':0,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
         # 'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
         # 'batch_size':64,
         # 'episodes':10000,
         # 'limit':20,
+        # 'tune_gap':10,
         # 'horizon':60,
-        # 'norm':True,
-        # 'conv':'GAT','use_pred':True,
-        # 'eval_gap':10,'start_gap':100,
+        # 'norm':True,'scale':1.0,
+        # 'conv':'False','use_pred':True,
+        # 'eval_gap':10,'start_gap':0,
         # 'agent_dir': './agent/astlingen/test',
         # 'load_agent':False,
-        # 'processes':1,
+        # 'processes':4,
+        # 'rain_dir':'ast_train50_events.csv','swmm_step':10,
         # 'test':False,
         }
     for k,v in train_de.items():
@@ -217,7 +227,6 @@ if __name__ == '__main__':
             assert margs.seq_in == args.setting_duration//args.interval
             setattr(args,'if_flood',bool(margs.if_flood))
             setattr(args,'data_dir',margs.data_dir)
-            config['if_flood'] = args.if_flood
             config['data_dir'] = args.data_dir
             if args.if_flood:
                 args.attrs['nodes'] = args.attrs['nodes'][:-1] + ['if_flood'] + args.attrs['nodes'][-1:]
@@ -241,7 +250,7 @@ if __name__ == '__main__':
             rain_arg['suffix'] = hyp['rain_suffix']
         if 'rain_num' in hyp:
             rain_arg['rain_num'] = hyp['rain_num']
-        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step = args.swmm_step)
         if os.path.exists(os.path.join(args.agent_dir,'train_runoff.npy')):
             res = [np.load(os.path.join(args.agent_dir,'train_runoff_ts.npy'),allow_pickle=True),
                    np.load(os.path.join(args.agent_dir,'train_runoff.npy'),allow_pickle=True)]
@@ -277,16 +286,18 @@ if __name__ == '__main__':
         n_events = int(max(dG.event_id))+1
         train_ids = np.load(os.path.join(margs.model_dir,'train_id.npy') if args.model_based else os.path.join(args.data_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
+        # train_ids = np.arange(n_events)
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
 
         @tf.function
-        def rollout(dat):
+        def rollout(data,episode):
             # args = argparse.Namespace(**args)
+            if hasattr(ctrl,"epsilon"):
+                ctrl._epsilon_decay(episode)
             n_step,r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
-            x,a,b,y = dat[:4]
-            r = tf.concat(dat[4:6],axis=1)
-            ex = dat[-2]
-            # Initial perf is not included in the rollout
+            x,a,b,y = data[:4]
+            r = tf.concat(data[4:6],axis=1)
+            ex = data[-2]
             xs,exs,settings,perfs = [x],[ex],[a[:,:args.seq_in,:]],[y[:,:args.seq_in,:,-1:]]
             for i in range(n_step):
                 bi = b[:,i*r_step:(i+1)*r_step,:]
@@ -323,12 +334,62 @@ if __name__ == '__main__':
                 perfs.append(preds[0][...,-1:])
             return [tf.concat(tf.concat(dat,axis=1),axis=0) for dat in [xs,exs,settings,perfs]]+[tf.concat(r,axis=0)]
 
-        train_losses,train_objss,test_objss,secs = [],[],[],[]
-        log_dir = "logs/agent/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        model_losses,test_losses,train_losses,train_objss,test_objss,secs = [],[],[],[],[],[]
+        log_dir = "logs/agent/"
+        shutil.rmtree(log_dir, ignore_errors=True)
+        os.makedirs(log_dir,exist_ok=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for episode in range(args.episodes):
             setattr(args,"episode",episode)
             sec,t = [],time.time()
+
+            # TODO: Model fine-tuning, need real model and current policy to collect data
+            if args.model_based and args.tune_gap > 0 and episode > args.start_gap and episode % args.tune_gap == 0:
+                print(f"{episode}/{args.episodes} Start model finetuning")
+                if args.sample_gap == 0:
+                    print(f"    Model finetuning: model-free sampling first")
+                    args.load_agent = True
+                    ctrl.save()
+                    pool = mp.Pool(args.processes)
+                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,False,))
+                        for idx,event in zip(train_ids,train_events)]
+                    pool.close()
+                    pool.join()
+                    res = [r.get() for r in res]
+                    trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
+                    trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
+                    dG.update(trajs)
+                seq = max(margs.seq_in,margs.seq_out)
+                train_idxs = dG.get_data_idxs(train_ids,seq)
+                test_idxs = dG.get_data_idxs(test_ids,seq)
+                emul.set_norm(*dG.get_norm())
+                k = (1 + min(dG.cur_capa / dG.limit,1))
+                epochs,batch_size = int(k * args.epochs), int(k * args.batch_size)
+                for epoch in range(epochs):
+                    t1 = time.time()
+                    train_dats = dG.prepare_batch(train_idxs,seq,batch_size,interval=args.setting_duration,trim=False)
+                    x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
+                    ex,ey = [dat for dat in train_dats[-2:]]
+                    x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
+                    model_loss = emul.fit_eval(x,a,b,y,ex,ey)
+                    model_losses.append(model_loss.numpy())
+
+                    test_dats = dG.prepare_batch(test_idxs,seq,batch_size,interval=args.setting_duration,trim=False)
+                    x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
+                    ex,ey = [dat for dat in test_dats[-2:]]
+                    x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
+                    test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
+                    test_losses.append(np.sum([los.numpy() for los in test_loss]))
+                    print("    Episode {} fine-tuning epoch {}/{}: {:.2f}s Train loss: {:.4f} Test loss: {:.4f}"\
+                          .format(episode,epoch,epochs,time.time()-t1,model_losses[-1],test_losses[-1]))
+                sec.append(time.time()-t)
+                t = time.time()
+                print("{}/{} Finish model fine-tuning: {:.2f}s Mean loss: Train {:.4f} Test {:.4f}"\
+                      .format(episode,args.episodes,sec[-1],np.mean(model_losses[-epochs:]),np.mean(test_losses[-epochs:])))
+                with tf.summary.create_file_writer(log_dir).as_default():
+                    tf.summary.scalar('Model fine-tuning train loss', np.mean(model_losses[-epochs:]), step=episode)
+                    tf.summary.scalar('Model fine-tuning test loss', np.mean(test_losses[-epochs:]), step=episode)
+
             # Model-free sampling
             if args.sample_gap > 0 and episode % args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free sampling")
@@ -371,15 +432,28 @@ if __name__ == '__main__':
                     if i > 100:
                         break
                 train_dats = [tf.convert_to_tensor(dat) for dat in train_dats]
-                trajs_v = rollout(train_dats[:-1])
+                trajs_v = rollout(train_dats[:-1],tf.constant(episode))
+                # TODO: replace dataloader with memory
                 xs,exs,settings,perfs,rains = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
                 xs[...,1] += xs[...,-1]
                 if emul.if_flood:
                     xs = np.concatenate([xs[...,:-2],xs[...,-1:]],axis=-1)
                 idxs = np.repeat(train_dats[-1],args.horizon+args.seq_in)
                 trajs_v = [xs,perfs,settings,rains,exs,idxs]
-                dGv.update(trajs_v)
-                # data num: batch * (horizon + seq_in)
+                dGv.update(trajs_v) # data num: batch * (horizon + seq_in)
+                # Debugging reward scale
+                # xs,exs,perfs = [dat.reshape((-1,65,)+dat.shape[-2:]) for dat in [xs,exs,perfs]]
+                # dats = [dG.state_split_batch((xs[:,i*args.setting_duration:(i+1)*args.setting_duration,...],xs[:,(i+1)*args.setting_duration:(i+2)*args.setting_duration,...]),
+                #                              (perfs[:,i*args.setting_duration:(i+1)*args.setting_duration,...],perfs[:,(i+1)*args.setting_duration:(i+2)*args.setting_duration,...]),
+                #                              trim=False) for i in range(args.horizon//args.setting_duration)]
+                # edge_dats = [dG.edge_state_split_batch((exs[:,i*args.setting_duration:(i+1)*args.setting_duration,...],exs[:,(i+1)*args.setting_duration:(i+2)*args.setting_duration,...]),
+                #                              trim=False) for i in range(args.horizon//args.setting_duration)]
+                # predss = [(d[-1].astype(np.float32),ed[-1].astype(np.float32)) for d,ed in zip(dats,edge_dats)]
+                # statess = [(d[0].astype(np.float32),ed[0].astype(np.float32)) for d,ed in zip(dats,edge_dats)]
+                # objs = [env.objective_pred_tf(preds,states,[]) for preds,states,in zip(predss,statess)]
+                # rs = np.sum([- env.norm_obj(obj,states,g=True) * args.scale if args.norm else - obj * args.scale 
+                #              for obj,states in zip(objs,statess)],axis=0)
+                # print('Episode reward:  Max {:.2f} Min {:.2f} Avg {:.2f} Sum {:.2f}'.format(rs.max(),rs.min(),rs.mean(),rs.sum()))
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
@@ -387,9 +461,13 @@ if __name__ == '__main__':
             # Model-free update
             if episode > args.start_gap:
                 print(f"{episode}/{args.episodes} Start model-free update")
-                for _ in range(args.repeats):
+                # TODO: normalization running mean and mean std
+                ctrl.set_norm(*dGv.get_norm())
+                k = (1 + dGv.cur_capa / dGv.limit)
+                repeats,batch_size = int(k * args.repeats), int(k * args.batch_size)
+                for _ in range(repeats):
                     train_idxs = dGv.get_data_idxs(train_ids,args.setting_duration,args.setting_duration*2)
-                    train_dats = dGv.prepare_batch(train_idxs,args.setting_duration*2,args.batch_size,args.setting_duration,trim=False)
+                    train_dats = dGv.prepare_batch(train_idxs,args.setting_duration*2,batch_size,args.setting_duration,trim=False)
                     x,settings,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
                     x_norm,b_norm,y_norm = [ctrl.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
                     b0,b1 = b_norm[:,:args.setting_duration,...],b_norm[:,args.setting_duration:,...]
@@ -430,27 +508,30 @@ if __name__ == '__main__':
                     states = (x[:,-args.setting_duration:,...],ex[:,-args.setting_duration:,...])
                     preds = (y[:,:args.setting_duration,...],ey[:,:args.setting_duration,...])
                     obj = env.objective_pred_tf(preds,states,settings)
-                    r = - env.norm_obj(obj,states,g=True) * args.scale
+                    r = - env.norm_obj(obj,states,g=True) * args.scale if args.norm else - obj * args.scale
                     # r = tf.clip_by_value(r, -10, 10)
                     a = ctrl.convert_setting_to_action(settings[:,0,:])
                     train_loss = ctrl.update_eval(s,a,r,s_,train=True)
                     train_losses.append([los.numpy() for los in train_loss] if isinstance(train_loss,tuple) else train_loss.numpy())
                 sec.append(time.time()-t)
                 t = time.time()
-                loss = np.mean(train_losses[-args.repeats:],axis=0)
+                loss = np.mean(train_losses[-repeats:],axis=0)
                 if isinstance(loss,np.ndarray):
                     print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(loss)*" {:.2f}").format(*loss))
                     with tf.summary.create_file_writer(log_dir).as_default():
                         tf.summary.scalar('Value loss', loss[0], step=episode)
-                        tf.summary.scalar('Alpha', loss[1], step=episode)
-                        tf.summary.scalar('Policy loss', loss[2], step=episode)
-                        if hasattr(ctrl,'vnet'):
-                            tf.summary.scalar('VNet loss', loss[3], step=episode)
+                        if args.agent.upper() == 'SAC':
+                            tf.summary.scalar('Alpha', loss[1], step=episode)
+                            tf.summary.scalar('Policy loss', loss[2], step=episode)
+                            if hasattr(ctrl,'vnet'):
+                                tf.summary.scalar('VNet loss', loss[3], step=episode)
+                        else:
+                            tf.summary.scalar('Policy loss', loss[1], step=episode)
                 else:
                     print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(episode,args.episodes,sec[-1],loss))
                     with tf.summary.create_file_writer(log_dir).as_default():
                         tf.summary.scalar('Value loss', loss, step=episode)
-                        tf.summary.scalar('Epsilon', ctrl.epsilon, step=episode)
+                        tf.summary.scalar('Epsilon', max(0.1,getattr(args,"epsilon_decay",0.9996)**episode), step=episode)
 
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
@@ -461,9 +542,12 @@ if __name__ == '__main__':
                         for idx,event in zip(test_ids,test_events)]
                 pool.close()
                 pool.join()
-                res = [np.sum(r.get()[-1]) for r in res]
+                res = [r.get() for r in res]
+                trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
+                trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
+                dG.update(trajs)
                 # data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
-                test_objss.append(np.array(res))
+                test_objss.append(np.array([np.sum(r[-1]) for r in res]))
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(test_objss[-1])))
@@ -481,9 +565,14 @@ if __name__ == '__main__':
                 if not os.path.exists(save_dir):
                     os.mkdir(save_dir)
                 ctrl.save(save_dir)
-            ctrl.update_func(episode)
+            ctrl.update_func()
         ctrl.save()
         # dGv.save(args.agent_dir)
+        if args.model_based and args.tune_gap > 0:
+            np.save(os.path.join(ctrl.agent_dir,'model_loss.npy'),np.array(model_losses))
+            plt.plot(model_losses,label='model_loss')
+            plt.savefig(os.path.join(ctrl.agent_dir,'model_loss.png'),dpi=300)
+            plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),np.array(train_losses))
         plt.plot(train_losses,label='train_loss')
         plt.savefig(os.path.join(ctrl.agent_dir,'train_loss.png'),dpi=300)
@@ -498,7 +587,7 @@ if __name__ == '__main__':
         plt.savefig(os.path.join(ctrl.agent_dir,'test_objs.png'),dpi=300)
         plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'time.npy'),np.array(secs))
-    
+
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.agent_dir,'parser.yaml'),'r'),yaml.FullLoader)
         for k,v in known_hyps.items():
@@ -510,6 +599,8 @@ if __name__ == '__main__':
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
 
+        # Rainfall args
+        print("Get training events runoff")
         rain_arg = env.config['rainfall']
         if 'rain_dir' in config:
             rain_arg['rainfall_events'] = os.path.join('./envs/config/',config['rain_dir'])
@@ -517,7 +608,7 @@ if __name__ == '__main__':
             rain_arg['suffix'] = config['rain_suffix']
         if 'rain_num' in config:
             rain_arg['rain_num'] = config['rain_num']
-        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
         if os.path.exists(os.path.join(args.result_dir,'test_runoff.npy')):
             res = [np.load(os.path.join(args.result_dir,'test_runoff_ts.npy'),allow_pickle=True),
                    np.load(os.path.join(args.result_dir,'test_runoff.npy'),allow_pickle=True)]

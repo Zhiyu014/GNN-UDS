@@ -44,6 +44,7 @@ def parser(config=None):
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
+    parser.add_argument('--swmm_step',type=int,default=30,help='routing step for swmm inp files')
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
@@ -232,7 +233,7 @@ class mpc_problem(Problem):
         elif getattr(self.emul,'norm',False):
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
         else:
-            objs = env.norm_obj(preds.numpy().sum(axis=-1).sum(axis=-1),[state,edge_state],inverse=True)
+            objs = self.env.norm_obj(preds.numpy().sum(axis=-1).sum(axis=-1),[state,edge_state],inverse=True)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -517,8 +518,8 @@ def run_gr(prob,args,setting=None):
 
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
-    # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
-    ctx = mp.get_context("spawn")
+    mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
+    # ctx = mp.get_context("spawn")
     de = {
         # 'env':'chaohu',
         # 'act':'rand',
@@ -556,7 +557,7 @@ if __name__ == '__main__':
         rain_arg['suffix'] = args.rain_suffix
     if 'rain_num' in config:
         rain_arg['rain_num'] = args.rain_num
-    events = get_inp_files(env.config['swmm_input'],rain_arg)
+    events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
 
     if args.surrogate:
         hyps = yaml.load(open(os.path.join(HERE,'utils','config.yaml'),'r'),yaml.FullLoader)

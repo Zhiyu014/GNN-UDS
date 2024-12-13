@@ -1,5 +1,5 @@
 act: rand3
-agent_dir: 5s_10k_rand3_mbrl_observ_sac_norough2
+agent_dir: 5s_10k_rand3_mbrl_observ_sac_norough_noupdatedg
 batch_size: 64
 conv: 'False'
 data_dir: ./envs/data/astlingen/1s_edge_conti128_rain50

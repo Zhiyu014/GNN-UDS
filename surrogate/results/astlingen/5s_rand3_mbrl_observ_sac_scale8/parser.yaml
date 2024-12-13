@@ -1,0 +1,12 @@
+act: rand3
+agent_dir: 5s_10k_rand3_mbrl_observ_sac_norough_scale8/test
+data_dir: ./envs/data/
+episodes: 1000
+horizon: 60
+limit: 23
+model_dir: ./model/
+processes: 8
+rain_dir: ast_test2007_events.csv
+rain_num: 1
+result_dir: 5s_rand3_mbrl_observ_sac_scale8
+test: true

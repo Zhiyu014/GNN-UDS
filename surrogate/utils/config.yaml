@@ -8,6 +8,7 @@ shunqing:
   rain_dir: ./envs/config/
   rain_suffix: bpswmm
   rain_num: 119
+  swmm_step: 1
 
   # simulate args
   simulate: False
@@ -68,6 +69,7 @@ RedChicoSur:
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 1
+  swmm_step: 1
 
   # simulate args
   simulate: False
@@ -128,6 +130,7 @@ astlingen:
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
+  swmm_step: 1
 
   # simulate args
   simulate: False
@@ -188,6 +191,7 @@ hague:
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
+  swmm_step: 1
 
   # simulate args
   simulate: False
@@ -249,6 +253,7 @@ chaohu:
   rain_dir: ./envs/config/
   rain_suffix: chaohu
   rain_num: 50
+  swmm_step: 1
 
   # simulate args
   simulate: False

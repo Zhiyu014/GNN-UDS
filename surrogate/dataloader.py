@@ -72,6 +72,7 @@ class DataGenerator:
         self.edge_states = np.concatenate([r[-1][self.pre_step:] for r in res],axis=0)
         self.event_id = np.concatenate([np.repeat(i,res[idx][0][self.pre_step:].shape[0])
                                          for idx,i in enumerate([i for _ in range(repeats) for i,_ in enumerate(events)])],axis=0)
+        self.cur_capa = self.states.shape[0]
 
     def expand_seq(self,dats,seq,zeros=True):
         dats = np.stack([np.concatenate([np.tile(np.zeros_like(s) if zeros else np.ones_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
@@ -160,6 +161,7 @@ class DataGenerator:
                 setattr(self,item,np.concatenate([np.take(getattr(self,item),train_idxs,axis=0),np.take(getattr(self,item),test_idxs,axis=0),traj],axis=0)[-self.limit:])
             else:
                 setattr(self,item,np.concatenate([getattr(self,item),traj],axis=0)[-self.limit:])
+        self.cur_capa = min(self.cur_capa + traj.shape[0],self.limit)
 
     def save(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
@@ -173,17 +175,15 @@ class DataGenerator:
         np.save(os.path.join(data_dir,'rains.npy'),self.rains)
         np.save(os.path.join(data_dir,'event_id.npy'),self.event_id)
 
-
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
-        for name in ['states','perfs','settings','rains','event_id']:
+        for name in ['states','edge_states','perfs','settings','rains','event_id']:
             if os.path.isfile(os.path.join(data_dir,name+'.npy')):
                 dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r').astype(np.float32)
             else:
                 dat = None
             setattr(self,name,dat)
-        self.edge_states = np.load(os.path.join(data_dir,'edge_states.npy'),mmap_mode='r').astype(np.float32)
-        self.get_norm()
+        self.cur_capa = self.states.shape[0] if self.states is not None else 0
 
     def get_norm(self):
         norm = np.concatenate([self.states,self.perfs],axis=-1)

@@ -4,7 +4,7 @@ from utils.utilities import get_inp_files
 import argparse,yaml
 from envs import get_env
 import numpy as np
-import os,time,datetime
+import os,time
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
@@ -24,6 +24,7 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
         self.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
         self.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
+        self.add_argument('--swmm_step',type=int,default=1,help='routing step for swmm inp files')
 
         # simulate args
         self.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
@@ -157,7 +158,7 @@ if __name__ == "__main__":
             rain_arg['suffix'] = args.rain_suffix
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
-        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
         dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act)
         dG.save(args.data_dir)
 
@@ -193,7 +194,7 @@ if __name__ == "__main__":
 
         t0 = time.time()
         train_losses,test_losses,secs = [],[],[0]
-        log_dir = "logs/model/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        log_dir = "logs/model/"
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for epoch in range(args.epochs):
             train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
@@ -281,7 +282,7 @@ if __name__ == "__main__":
             rain_arg['suffix'] = args.rain_suffix
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
-        events = get_inp_files(env.config['swmm_input'],rain_arg)
+        events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
         if 'train_event_id' in config and os.path.isfile(os.path.join(args.data_dir,config['train_event_id'])):
             train_ids = np.load(os.path.join(args.data_dir,config['train_event_id']))
             events = [eve for i,eve in enumerate(events) if i not in train_ids]

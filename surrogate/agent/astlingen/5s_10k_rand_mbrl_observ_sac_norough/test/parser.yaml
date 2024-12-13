@@ -1,5 +1,5 @@
-act: rand3
-agent_dir: 5s_10k_rand3_mbrl_observ_sac_norough2
+act: rand
+agent_dir: 5s_10k_rand_mbrl_observ_sac_norough
 batch_size: 64
 conv: 'False'
 data_dir: ./envs/data/astlingen/1s_edge_conti128_rain50
@@ -11,7 +11,7 @@ model_based: true
 model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat
 n_layer: 5
 norm: true
-processes: 8
+processes: 4
 rain_dir: ast_train50_events.csv
 rain_num: 1
 result_dir: ./results/

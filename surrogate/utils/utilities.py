@@ -1,7 +1,6 @@
 from swmm_api import read_inp_file
-from datetime import timedelta,datetime
+import datetime as dt
 from os.path import exists,splitext,dirname,join
-from datetime import datetime,timedelta
 from swmm_api import read_inp_file
 from swmm_api.input_file.sections.others import TimeseriesData,Timeseries
 import pandas as pd
@@ -9,8 +8,8 @@ import numpy as np
 from math import log10
 import random
 
-def get_inp_files(inp,arg,**kwargs):
-    files = eval(arg['func'])(inp,arg=arg,**kwargs)
+def get_inp_files(inp,arg,swmm_step=1,**kwargs):
+    files = eval(arg['func'])(inp,arg=arg,swmm_step=swmm_step,**kwargs)
     return files
 
 def split_file(file,arg,**kwargs):
@@ -19,9 +18,9 @@ def split_file(file,arg,**kwargs):
         if arg['suffix'] is None or k.startswith(arg['suffix']):
             dura = v.data[-1][0] - v.data[0][0]
             st = (inp.OPTIONS['START_DATE'],inp.OPTIONS['START_TIME'])
-            st = datetime(st[0].year,st[0].month,st[0].day,st[1].hour,st[1].minute,st[1].second)
-            dura = dura if type(dura) is timedelta else timedelta(hours=dura)
-            et = st + dura + timedelta(hours=arg['MIET'])
+            st = dt.datetime(st[0].year,st[0].month,st[0].day,st[1].hour,st[1].minute,st[1].second)
+            dura = dura if type(dura) is dt.timedelta else dt.timedelta(hours=dura)
+            et = st + dura + dt.timedelta(hours=arg['MIET'])
             inp.OPTIONS['END_DATE'],inp.OPTIONS['END_TIME'] = et.date(),et.time()
             inp.RAINGAGES[arg['gage']].Timeseries = k
             if not exists(arg['filedir']+k+'.inp'):
@@ -30,7 +29,7 @@ def split_file(file,arg,**kwargs):
     return events
 
 
-def generate_file(file, arg, pattern = 'Chicago_icm', filedir = None, rain_num = 1, replace = False):
+def generate_file(file, arg, swmm_step=1, pattern = 'Chicago_icm', filedir = None, rain_num = 1, replace = False):
     """
     Generate multiple inp files containing rainfall events
     designed by rainfall pattern.
@@ -62,8 +61,10 @@ def generate_file(file, arg, pattern = 'Chicago_icm', filedir = None, rain_num =
     for i in range(rain_num):
         file = filedir%i
         files.append(file)
-        if exists(file) == True and replace == False:
-            continue        
+        if exists(file):
+            step = read_inp_file(file)['OPTIONS']['ROUTING_STEP']
+            if not replace and step.second == swmm_step:
+                continue        
 
         if type(arg['P']) is tuple:
             p = random.randint(*arg['P'])
@@ -81,18 +82,19 @@ def generate_file(file, arg, pattern = 'Chicago_icm', filedir = None, rain_num =
         para += [p,arg['delta'],arg['dura']]
 
         # define simulation time on 01/01/2000
-        start_time = datetime(2000,1,1,0,0)
-        end_time = start_time + timedelta(minutes = arg['simu_dura'])
+        start_time = dt.datetime(2000,1,1,0,0)
+        end_time = start_time + dt.timedelta(minutes = arg['simu_dura'])
         inp.OPTIONS['START_DATE'] = start_time.date()
         inp.OPTIONS['END_DATE'] = end_time.date()
         inp.OPTIONS['START_TIME'] = start_time.time()
         inp.OPTIONS['END_TIME'] = end_time.time()
         inp.OPTIONS['REPORT_START_DATE'] = start_time.date()
         inp.OPTIONS['REPORT_START_TIME'] = start_time.time()
+        inp.OPTIONS['ROUTING_STEP'] = dt.time(second=swmm_step)
 
         # calculate rainfall timeseries
         ts = eval(pattern)(para)
-        ts = [[(start_time+timedelta(hours=1)+timedelta(minutes=t)).strftime('%m/%d/%Y %H:%M:%S'),va] for t,va in ts]
+        ts = [[(start_time+dt.timedelta(hours=1)+dt.timedelta(minutes=t)).strftime('%m/%d/%Y %H:%M:%S'),va] for t,va in ts]
         inp['TIMESERIES'] = Timeseries.create_section()
         inp['TIMESERIES'].add_obj(TimeseriesData(Name = str(p)+'y',data = ts))
         inp.RAINGAGES['RG']['Timeseries'] = str(p)+'y'
@@ -128,6 +130,7 @@ def generate_split_file(base_inp_file,
                         filedir = None,
                         rain_num = None,
                         arg = None,
+                        swmm_step = 1,
                         **kwargs):
     """
     Generate multiple inp files containing rainfall events
@@ -169,7 +172,7 @@ def generate_split_file(base_inp_file,
         timeseries_file = arg['rainfall_timeseries']
     tsf = pd.read_csv(timeseries_file,index_col=0)
     tsf['datetime'] = tsf['date']+' '+tsf['time']
-    # tsf['datetime'] = tsf['datetime'].apply(lambda dt:datetime.strptime(dt, '%m/%d/%Y %H:%M:%S'))
+    # tsf['datetime'] = tsf['datetime'].apply(lambda dti:datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
     tsf.index = pd.to_datetime(tsf['datetime'])
     if arg.get('tide',False):
         tidets = pd.read_csv(arg['tide'],index_col=0)
@@ -188,9 +191,9 @@ def generate_split_file(base_inp_file,
     if precip_range is not None:
         events = events[events['Precipitation'].apply(lambda x:precip_range[0]<=x<=precip_range[1])]
     if date_range is not None:
-        date_range = [datetime.strptime(date,'%m/%d/%Y') for date in date_range]
+        date_range = [dt.datetime.strptime(date,'%m/%d/%Y') for date in date_range]
         events['Date'] = pd.to_datetime(events['Date'])
-        # events['Date'] = events['Date'].apply(lambda date:datetime.strptime(date,'%m/%d/%Y'))
+        # events['Date'] = events['Date'].apply(lambda date:dt.datetime.strptime(date,'%m/%d/%Y'))
         events = events[events['Date'].apply(lambda x:date_range[0]<=x<=date_range[1])]
 
     filedir = arg.get('filedir') if filedir is None else filedir
@@ -215,15 +218,17 @@ def generate_split_file(base_inp_file,
     events['End'] = pd.to_datetime(events['End'])
     for start_time,end_time in zip(events['Start'],events['End']):
         # Formulate the simulation periods
-        # start_time = datetime.strptime(start,'%m/%d/%Y %H:%M:%S')
-        # end_time = datetime.strptime(end,'%m/%d/%Y %H:%M:%S') + timedelta(minutes = MIET)   
-        end_time += timedelta(minutes=MIET)
+        # start_time = dt.datetime.strptime(start,'%m/%d/%Y %H:%M:%S')
+        # end_time = dt.datetime.strptime(end,'%m/%d/%Y %H:%M:%S') + dt.timedelta(minutes = MIET)   
+        end_time += dt.timedelta(minutes=MIET)
 
         file = filedir%start_time.strftime('%m_%d_%Y_%H')
         files.append(file)
-        if exists(file) == True and replace_rain == False:
-            continue
-
+        if exists(file):
+            step = read_inp_file(file)['OPTIONS']['ROUTING_STEP']
+            if not replace_rain and step.second == swmm_step:
+                continue
+        
         # rain = tsf[start_time < tsf['datetime']]
         # rain = rain[rain['datetime'] < end_time]
         rain = tsf[start_time:end_time]
@@ -243,13 +248,13 @@ def generate_split_file(base_inp_file,
             for td in set(inp.OUTFALLS.frame['Data']):
                 inp.TIMESERIES[td] = TimeseriesData(td,tidedata[td])
 
-
         inp.OPTIONS['START_DATE'] = start_time.date()
         inp.OPTIONS['END_DATE'] = end_time.date()
         inp.OPTIONS['START_TIME'] = start_time.time()
         inp.OPTIONS['END_TIME'] = end_time.time()
         inp.OPTIONS['REPORT_START_DATE'] = start_time.date()
         inp.OPTIONS['REPORT_START_TIME'] = start_time.time()
+        inp.OPTIONS['ROUTING_STEP'] = dt.time(second=swmm_step)
         inp.write_file(file)
     return files
 
@@ -283,10 +288,10 @@ def serapate_events(timeseries_file,miet=120,event_file=None,replace=False):
     tsf = pd.read_csv(timeseries_file,index_col=0)
     tsf = tsf.drop(tsf[tsf.sum(axis=1,numeric_only=True)==0].index)
     tsf['datetime'] = tsf['date']+' '+tsf['time']
-    tsf['datetime'] = tsf['datetime'].apply(lambda dt:datetime.strptime(dt, '%m/%d/%Y %H:%M:%S'))
+    tsf['datetime'] = tsf['datetime'].apply(lambda dti:dt.datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
     
     rain = tsf.reset_index(drop=True,level=None)
-    start = [0] + rain[rain['datetime'].diff() > timedelta(minutes = miet)].index.tolist()
+    start = [0] + rain[rain['datetime'].diff() > dt.timedelta(minutes = miet)].index.tolist()
     end = [ti-1 for ti in start[1:]] + [len(rain)-1]
     
     # Get start & end pairs of each rainfall event using month/day/year by SWMM

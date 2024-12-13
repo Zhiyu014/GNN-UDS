@@ -7,6 +7,7 @@ astlingen:
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
+  swmm_step: 30
 
   # MPC args
   control_interval: 5
@@ -48,6 +49,7 @@ hague:
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
+  swmm_step: 30
   
   # MPC args
   control_interval: 30
@@ -88,6 +90,7 @@ chaohu:
   rain_dir: ./envs/config/
   rain_suffix: chaohu
   rain_num: 50
+  swmm_step: 30
 
   # MPC args
   control_interval: 10

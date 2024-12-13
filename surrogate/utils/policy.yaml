@@ -4,17 +4,33 @@ astlingen:
   length: 0
   order: 1
   graph_base: 0
+  control_interval: 5
   setting_duration: 5
   act: 'False'
   mac: False
   dec: False
 
+  # Arguments for RL process
+  train: False
+  episodes: 5000
+  batch_size: 128 # batch size of the training data
+  limit: 22 # maximum capacity of the replay buffer
+  tune_gap: 0 # finetune the model per tune_gap
+  sample_gap: 0 # sample data with swmm per sample gap
+  start_gap: 100 # start updating agent after start gap
+  eval_gap: 10 # evaluate the agent per eval_gap
+  save_gap: 100 # save the agent & state_norm per save_gap
+
+  # Arguments for the model rollout
+  data_dir: ./envs/data/astlingen/
+  model_based: False # if use model-based sampling
+  horizon: 60 # horizon length
   model_dir: ./model/astlingen/
   epsilon: -1.0
+  epochs: 100 # model update times per episode
 
-  data_dir: ./envs/data/astlingen/
-  if_flood: False
-  horizon: 10 # horizon length
+  # Arguments for the agent
+  agent: SAC  # agent name
   conv: GATconv
   use_pred: False  # if use prediction runoff as states
   net_dim: 128 # dimension of hidden layers
@@ -22,38 +38,28 @@ astlingen:
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
-  vnet: False # if use state value network
+  agent_dir: ./agent/astlingen/ # the working directory
+  load_agent: False # if load the current model
 
-  # Arguments for the training
-  agent: SAC  # agent name
-  train: False
-  episodes: 5000
+  # Arguments for the agent update
   repeats: 5
-  gamma: 0.98 # discouted rate
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
-  batch_size: 128 # batch size of the training data
-  limit: 22 # maximum capacity of the replay buffer
+  gamma: 0.98 # discouted rate
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
   epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
+  noise_std: 0.05 # std of the exploration noise
   value_tau: 0.0 # value running average tau
-  model_based: False # if use model-based sampling
-  sample_gap: 0 # sample data with swmm per sample gap
-  start_gap: 100 # start updating agent after start gap
-  save_gap: 100 # save the agent & state_norm per save_gap
-  agent_dir: ./agent/astlingen/ # the working directory
-  load_agent: False # if load the current model
 
   # Arguments for the testing
   test: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
+  swmm_step: 1
   processes: 1
-  eval_gap: 10 # evaluate the agent per eval_gap
-  control_interval: 5
   result_dir: ./results/astlingen/ # the result directory
 
 chaohu:
@@ -62,17 +68,33 @@ chaohu:
   length: 0
   order: 1
   graph_base: 0
+  control_interval: 10
   setting_duration: 10
   act: 'False'
   mac: False
   dec: False
 
+  # Arguments for RL process
+  train: False
+  episodes: 5000
+  batch_size: 64 # batch size of the training data
+  limit: 22 # maximum capacity of the replay buffer
+  tune_gap: 0 # finetune the model per tune_gap
+  sample_gap: 0 # sample data with swmm per sample gap
+  start_gap: 100 # start updating agent after start gap
+  eval_gap: 10 # evaluate the agent per eval_gap
+  save_gap: 100 # save the agent & state_norm per save_gap
+
+  # Arguments for the model rollout
+  data_dir: ./envs/data/chaohu/
+  model_based: False # if use model-based sampling
+  horizon: 60 # horizon length
   model_dir: ./model/chaohu/
   epsilon: -1.0
+  epochs: 100 # model update times per episode
 
-  data_dir: ./envs/data/chaohu/
-  if_flood: False
-  horizon: 10 # horizon length
+  # Arguments for the agent
+  agent: SAC  # agent name
   conv: GATconv
   use_pred: False  # if use prediction runoff as states
   net_dim: 128 # dimension of hidden layers
@@ -80,36 +102,26 @@ chaohu:
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
   activation: relu # if use dueling layer
-  vnet: False # if use state value network
+  agent_dir: ./agent/chaohu/ # the working directory
+  load_agent: False # if load the current model
 
-  # Arguments for the training
-  agent: SAC  # agent name
-  train: False
-  episodes: 5000
-  repeats: 10
-  gamma: 0.95 # discouted rate
+  # Arguments for the agent update
+  repeats: 5
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
-  limit: 22 # maximum capacity of the replay buffer
-  batch_size: 128 # batch size of the training data
+  gamma: 0.95 # discouted rate
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
   epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
+  noise_std: 0.05 # std of the exploration noise
   value_tau: 0.0 # value running average tau
-  model_based: False # if use model-based sampling
-  sample_gap: 0 # sample data with swmm per sample gap
-  start_gap: 100 # start updating agent after start gap
-  save_gap: 100 # save the agent & state_norm per save_gap
-  agent_dir: ./agent/chaohu/ # the working directory
-  load_agent: False # if load the current model
 
   # Arguments for the testing
   test: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
+  swmm_step: 1
   processes: 1
-  eval_gap: 10 # evaluate the agent per eval_gap
-  control_interval: 10
   result_dir: ./results/chaohu/ # the result directory

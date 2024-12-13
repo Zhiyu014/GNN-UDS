@@ -28,6 +28,7 @@ def parser(config=None):
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
+    parser.add_argument('--swmm_step',type=int,default=30,help='routing step for swmm inp files')
 
     parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
@@ -157,7 +158,7 @@ if __name__ == '__main__':
         rain_arg['suffix'] = args.rain_suffix
     if 'rain_num' in config:
         rain_arg['rain_num'] = args.rain_num
-    events = get_inp_files(env.config['swmm_input'],rain_arg)
+    events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
 
 
     if not os.path.exists(args.result_dir):

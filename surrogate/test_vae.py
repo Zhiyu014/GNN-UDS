@@ -17,7 +17,6 @@ from emulator import NodeEdge
 from dataloader import DataGenerator
 from mbrl import parser
 from envs import get_env
-import datetime
 tf.config.list_physical_devices(device_type='GPU')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress infos and warnings
 
@@ -244,7 +243,7 @@ if __name__ == '__main__':
 
     train_losses,eval_losses,train_objss,test_objss,secs = [],[],[],[],[]
 
-    log_dir = "logs/vae/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = "logs/vae/"
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for episode in range(args.episodes):
         train_idxs = dG.get_data_idxs(train_ids,args.seq_in)
