@@ -7,7 +7,7 @@ import numpy as np
 import os,time
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.keras.utils import plot_model
+from keras.utils import plot_model
 # from line_profiler import LineProfiler
 HERE = os.path.dirname(__file__)
 
@@ -105,9 +105,9 @@ if __name__ == "__main__":
     #             'length':501,
     #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
     #             'act':'conti',
-    #             'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
-    #             'load_model':True,
-    #             'roll':12,
+    #             'model_dir':'./model/astlingen/test/',
+    #             'load_model':False,
+    #             'roll':1,
     #             'batch_size':128,
     #             'epochs':5000,
     #             'n_sp_layer':3,

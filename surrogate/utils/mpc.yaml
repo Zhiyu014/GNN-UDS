@@ -33,6 +33,7 @@ astlingen:
   model_dir: ./model/astlingen/
   epsilon: -1.0
   gradient: False
+  lbfgsb: False
   cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
@@ -75,6 +76,7 @@ hague:
   model_dir: ./model/hague/
   epsilon: -1.0
   gradient: False
+  lbfgsb: False
   cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
@@ -117,6 +119,7 @@ chaohu:
   model_dir: ./model/chaohu/
   epsilon: -1.0
   gradient: False
+  lbfgsb: False
   cross_entropy: 0.0
   stochastic: 0
   error: 0.0

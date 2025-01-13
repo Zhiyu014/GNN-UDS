@@ -49,7 +49,7 @@ def parser(config=None):
     parser.add_argument('--sample_gap',type=int,default=0,help='sample data with swmm per sample gap')
     parser.add_argument('--start_gap',type=int,default=100,help='start updating agent after start gap')
     parser.add_argument('--eval_gap',type=int,default=10,help='evaluate the agent per eval_gap')
-    parser.add_argument('--save_gap',type=int,default=100,help='save the agent per gap')
+    parser.add_argument('--save_gap',type=int,default=1000,help='save the agent per gap')
 
     # rollout args
     parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the training data')
@@ -76,6 +76,7 @@ def parser(config=None):
     parser.add_argument('--norm',action="store_true",help='if use reward normalization')
     parser.add_argument('--scale',type=float,default=1.0,help='reward scaling factor')
     parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
+    parser.add_argument('--en_disc',type=float,default=0.5,help='target entropy discount factor')
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
@@ -118,7 +119,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
     tss,runoff = runoff
     env = get_env(args.env)(swmm_file=event)
     state = env.state_full(seq=args.setting_duration)
-    if args.if_flood:
+    if getattr(args,"if_flood",False):
         flood = env.flood(seq=args.setting_duration)
     states = [state[-1]]
     perfs,objects = [env.flood()],[env.objective()]
@@ -131,9 +132,8 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
     while not done:
         if i*args.interval % args.control_interval == 0:
             state[...,1] = state[...,1] - state[...,-1]
-            if args.if_flood:
+            if getattr(args,"if_flood",False):
                 f = (flood>0).astype(float)
-                # f = np.eye(2)[f].squeeze(-2)
                 state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
             t = env.env.methods['simulation_time']()
             b = runoff[int(tss.asof(t)['Index'])][:args.setting_duration]
@@ -159,7 +159,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
             setting = env.controller('safe',state[-1],setting)
         done = env.step([float(sett) for sett in setting.tolist()])
         state = env.state_full(seq=args.setting_duration)
-        if args.if_flood:
+        if getattr(args,"if_flood",False):
             flood = env.flood(seq=args.setting_duration)
         edge_state = env.state_full(args.setting_duration,'links')
         states.append(state[-1])
@@ -188,7 +188,7 @@ if __name__ == '__main__':
         # 'batch_size':64,
         # 'episodes':10000,
         # 'limit':20,
-        # 'tune_gap':10,
+        # 'tune_gap':0,
         # 'horizon':60,
         # 'norm':True,'scale':1.0,
         # 'conv':'False','use_pred':True,
@@ -522,9 +522,10 @@ if __name__ == '__main__':
                         tf.summary.scalar('Value loss', loss[0], step=episode)
                         if args.agent.upper() == 'SAC':
                             tf.summary.scalar('Alpha', loss[1], step=episode)
-                            tf.summary.scalar('Policy loss', loss[2], step=episode)
+                            tf.summary.scalar('Entropy', loss[2], step=episode)
+                            tf.summary.scalar('Policy loss', loss[3], step=episode)
                             if hasattr(ctrl,'vnet'):
-                                tf.summary.scalar('VNet loss', loss[3], step=episode)
+                                tf.summary.scalar('VNet loss', loss[4], step=episode)
                         else:
                             tf.summary.scalar('Policy loss', loss[1], step=episode)
                 else:

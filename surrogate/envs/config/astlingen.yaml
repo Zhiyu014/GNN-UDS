@@ -210,30 +210,30 @@ performance_targets:
     - cuminflow
     - -0.1
   # control roughness
-  # - !!python/tuple # flow out of Tank1
-  #   - "J19"
-  #   - cuminflow
-  #   - 0.01
-  # - !!python/tuple # flow out of Tank2
-  #   - "J17"
-  #   - cuminflow
-  #   - 0.01
-  # - !!python/tuple # flow out of Tank3
-  #   - "J14"
-  #   - cuminflow
-  #   - 0.01
-  # - !!python/tuple # flow out of Tank4
-  #   - "J6"
-  #   - cuminflow
-  #   - 0.01
-  # - !!python/tuple # flow out of Tank5
-  #   - "J2"
-  #   - cuminflow
-  #   - 0.01
-  # - !!python/tuple # flow out of Tank6
-  #   - "J9"
-  #   - cuminflow
-  #   - 0.01
+  - !!python/tuple # flow out of Tank1
+    - "J19"
+    - cuminflow
+    - 0.01
+  - !!python/tuple # flow out of Tank2
+    - "J17"
+    - cuminflow
+    - 0.01
+  - !!python/tuple # flow out of Tank3
+    - "J14"
+    - cuminflow
+    - 0.01
+  - !!python/tuple # flow out of Tank4
+    - "J6"
+    - cuminflow
+    - 0.01
+  - !!python/tuple # flow out of Tank5
+    - "J2"
+    - cuminflow
+    - 0.01
+  - !!python/tuple # flow out of Tank6
+    - "J9"
+    - cuminflow
+    - 0.01
 
 # Flooding volume in each node
 flood:

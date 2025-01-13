@@ -1,11 +1,11 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from tensorflow.keras.layers import Dense,Input,GRU,Conv1D,LSTM,Softmax,Add,Subtract,Dropout
-from tensorflow.keras import activations
-from tensorflow.keras.models import Model,Sequential
-from tensorflow.keras.regularizers import l1,l2
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
-from tensorflow.keras import mixed_precision
+from keras.layers import Dense,Input,GRU,Conv1D,LSTM,Softmax,Add,Subtract,Dropout
+from keras import activations
+from keras.models import Model,Sequential
+from keras.regularizers import l1,l2
+from keras.optimizers import Adam
+from keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
+from keras import mixed_precision
 import numpy as np
 import os
 # from line_profiler import LineProfiler

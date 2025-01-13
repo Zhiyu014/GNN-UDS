@@ -9,11 +9,13 @@ import multiprocessing as mp
 import numpy as np
 from scipy.stats import truncnorm
 import tensorflow as tf
-from tensorflow.keras.optimizers import Adam,SGD
+from keras.optimizers import Adam
 from tensorflow_probability import distributions as tfd
+import tensorflow_probability as tfp
+from scipy.optimize import minimize as scioptminimize
 import argparse,yaml
 from envs import get_env
-from pymoo.optimize import minimize
+from pymoo.optimize import minimize as pymoominimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling,random_by_bounds
 from pymoo.operators.sampling.lhs import LatinHypercubeSampling,sampling_lhs
@@ -63,6 +65,7 @@ def parser(config=None):
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--predict',action='store_true',help='if use predictor for emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
+    parser.add_argument('--lbfgsb',action='store_true',help='if use Limited-memory Broyden-Fletcher-Goldfarb-Shanno Bounded optimization')
     parser.add_argument('--cross_entropy',type=float,default=0,help=' if use cross-entropy method and the kept percentage')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
@@ -87,7 +90,7 @@ def parser(config=None):
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
     for i in range(len(args.termination)//2):
-        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] != 'time' else args.termination[2*i+1]
+        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
 
     print('MPC configs: {}'.format(args))
     return args,config
@@ -147,10 +150,9 @@ class mpc_problem(Problem):
             tf.keras.backend.clear_session()    # to clear backend occupied models
             if args.predict:
                 self.emul = Predictor(margs.recurrent,margs)
-                self.emul.load(margs.model_dir)
             else:
                 self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
-                self.emul.load(margs.model_dir)
+            self.emul.load(margs.model_dir)
             self.stochastic = getattr(args,"stochastic",False)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
@@ -182,7 +184,7 @@ class mpc_problem(Problem):
                             vtype=bool if args.act.endswith('bin') else int)
             # print(self.n_var,self.xu)
     
-    def load_state(self,state,runoff,edge_state=None):
+    def load_state(self,state,runoff,edge_state):
         self.state,self.runoff,self.edge_state = state,runoff,edge_state
     
     def load_file(self,eval_file,log=None,runoff_rate=None):
@@ -225,15 +227,14 @@ class mpc_problem(Problem):
         else:
             runoff = np.repeat(np.expand_dims(self.runoff,0),pop_size,axis=0)
         state = np.repeat(np.expand_dims(self.state,0),settings.shape[0],axis=0)
-        edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0) if self.edge_state is not None else None
+        edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0)
         preds = self.emul.predict(state,runoff,settings,edge_state)
-        # env = get_env(self.args.env)(initialize=False)
-        if not self.args.predict:
-            objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
-        elif getattr(self.emul,'norm',False):
+        if self.args.predict:
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
+            if not getattr(self.emul,'norm',False):
+                objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
         else:
-            objs = self.env.norm_obj(preds.numpy().sum(axis=-1).sum(axis=-1),[state,edge_state],inverse=True)
+            objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
     def _evaluate(self,x,out,*args,**kwargs):        
@@ -259,13 +260,15 @@ class mpc_problem(Problem):
             return np.array(F)+1e-6
 
 class BestCallback(Callback):
-
     def __init__(self) -> None:
         super().__init__()
         self.data["best"] = []
+        self.data["time"] = []
+        self.t0 = time.time()
 
     def notify(self, algorithm):
         self.data["best"].append(algorithm.pop.get("F").min())
+        self.data["time"].append(time.time()-self.t0)
 
 def initialize(x0,xl,xu,pop_size,prob,conti=False):
     x0 = np.reshape(x0,-1)
@@ -286,7 +289,6 @@ def run_ea(prob,args,setting=None):
     #     raise AssertionError('No margs or file claimed')
 
     if args.use_current and setting is not None:
-        setting *= prob.n_step
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.act.startswith('conti'))
     else:
         sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
@@ -297,7 +299,20 @@ def run_ea(prob,args,setting=None):
         crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
     if len(args.termination) > 2:
-        termination = TerminationCollection(*[get_termination(*args.termination[i*2:(i+1)*2]) for i in range(len(args.termination)//2)])
+        terms = {}
+        for val in args.termination:
+            if val in ['n_eval','n_gen','fmin','time','soo']:
+                term = val
+                terms[term] = {} if val =='soo' else None
+            else:
+                if isinstance(terms[term],dict):
+                    terms[term][val.split('-')[0]] = eval(val.split('-')[1])
+                else:
+                    terms[term] = val
+        termination = []
+        for k,v in terms.items():
+            termination.append(get_termination(k,**v) if isinstance(v,dict) else get_termination(k,v))
+        termination = TerminationCollection(*termination)
     else:
         termination = get_termination(*args.termination)
 
@@ -307,11 +322,11 @@ def run_ea(prob,args,setting=None):
                 mutation = mutation,
                 eliminate_duplicates=True)
     print('Minimizing')
-    res = minimize(prob,
-                   method,
-                   termination = termination,
-                   callback=BestCallback(),
-                   verbose = True)
+    res = pymoominimize(prob,
+                        method,
+                        termination = termination,
+                        callback=BestCallback(),
+                        verbose = True)
     # Multiple solutions with the same performance
     # Choose the minimum changing
     # if res.X.ndim == 2:
@@ -328,11 +343,13 @@ def run_ea(prob,args,setting=None):
     print("Function value: %s" % res.F)
 
     vals = res.algorithm.callback.data["best"]
+    nfuns = args.pop_size*np.arange(1,len(vals)+1)
+    times = res.algorithm.callback.data["time"]
     # if margs is not None:
     #     del prob.emul
     # del prob
     # gc.collect()
-    return ctrls.tolist(),vals
+    return ctrls.tolist(),vals,nfuns,times
 
 # TODO: cross-entropy method
 def run_ce(prob,args,setting=None):
@@ -353,20 +370,24 @@ def run_ce(prob,args,setting=None):
         if item == 'n_gen':
             return rec[0] >= vm
         elif item == 'obj':
-            return rec[1] <= vm  # TODO
+            return rec[-2] <= vm  # TODO
         elif item == 'time':
-            return rec[2] >= vm
+            return rec[1] >= vm
         
-    t0,rec,vals = time.time(),[0,1e6,time.time()],[]
-    print('=======================================================')
-    print(' n_gen |     f_lam     |     f_min     |     g_min     ')
-    print('=======================================================')
+    t0 = time.time()
+    recs = [[0,0,1e6,1e6,1e6]]
+    print('=======================================================================')
+    print(' n_gen |      time     |     f_lam     |     f_min     |     g_min     ')
+    print('=======================================================================')
     obj = np.random.uniform(size=(args.pop_size,))
-    while not if_terminate(*args.termination,rec):
+    while not if_terminate(*args.termination,recs[-1]):
         x = sample_conti(mu,sig,args.pop_size) if args.act.startswith('conti') else sample_disc(pr,args.pop_size)
         obj = prob.pred(x)
-        rec[0] += 1
-        if obj.min() < rec[1]:
+        rec = [recs[-1][0]+1, time.time()-t0-recs[-1][1], 
+               obj.mean(), 
+               obj.min(), 
+               min(obj.argsort()[int(args.pop_size*args.cross_entropy)],recs[-1][1])]
+        if obj.min() < recs[-1][2]:
             ctrls = np.clip(x[obj.argmin()],prob.xl,prob.xu)
             ctrls = ctrls.reshape((prob.n_step,prob.n_act))
             if not args.act.startswith('conti'):
@@ -374,29 +395,37 @@ def run_ce(prob,args,setting=None):
                 ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
             ctrls = ctrls.tolist()
         # formulate a new distribution with elites
-        rec[1] = min(obj.argsort()[int(args.pop_size*args.cross_entropy)],rec[1])
-        x_new = x[obj<=rec[1]]
+        x_new = x[obj<=rec[-1]]
         if args.act.startswith('conti'):
             mu,sig = x_new.mean(axis=0),x_new.std(axis=0)
         else:
             pr = [np.bincount(x_ni) for x_ni in x_new.T]
         
-        rec[2] = time.time() - t0
-        vals.append(obj.min())
-        log = str(rec[0]).center(7)+'|'
-        log += str(round(obj.mean(),4)).center(15)+'|'
-        log += str(round(obj.min(),4)).center(15)+'|'
-        log += str(round(rec[1],4)).center(15)
-        print(log)
+        log = ''.join([str(round(r,4)).center(7 if i == 0 else 15) + '|' for i,r in enumerate(rec)])
+        print(log[:-1])
+        rec[1] = time.time() - t0
+        recs.append(rec)
     # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
     print('Best solution: ',ctrls)
-    return ctrls,vals
+    vals,nfuns,times = np.array(recs)[1:,-2],np.arange(1,len(vals)+1)*args.pop_size,np.array(recs)[1:,1]
+    return ctrls,vals,nfuns,times
 
+def call_counter(func):
+    def helper(*args, **kwargs):
+        helper.calls += 1
+        return func(*args, **kwargs)
+    helper.calls = 0
+    helper.__name__= func.__name__
+    return helper
+    
 class mpc_problem_gr:
     def __init__(self,args,margs):
         self.args = args
         tf.keras.backend.clear_session()    # to clear backend occupied models
-        self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+        if args.predict:
+            self.emul = Predictor(margs.recurrent,margs)
+        else:
+            self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
         self.emul.load(margs.model_dir)
         # self.load_state(margs)
         self.cross_entropy = bool(getattr(args,"cross_entropy",False))
@@ -407,6 +436,7 @@ class mpc_problem_gr:
         self.eval_hrz = args.prediction['eval_horizon']
         self.n_step = args.prediction['control_horizon']//args.setting_duration
         self.r_step = args.setting_duration//args.interval
+        self.env = get_env(args.env)(initialize=False)
         self.optimizer = Adam(getattr(args,"learning_rate",1e-3))
         self.pop_size = getattr(args,'pop_size',64)
         self.n_var = self.n_act*self.n_step
@@ -414,9 +444,9 @@ class mpc_problem_gr:
                             for v in self.asp])
         self.xu = np.array([max(v) for _ in range(self.n_step)
                             for v in self.asp])
-        
-    def load_state(self,state,runoff,edge_state=None):
-        self.state,self.runoff,self.edge_state = state,runoff,edge_state
+
+    def load_state(self,state,runoff,edge_state):
+        self.state,self.runoff,self.edge_state = [tf.convert_to_tensor(x) for x in [state,runoff,edge_state]]
 
     def initialize(self,sampling):
         if not hasattr(self,'y'):
@@ -436,6 +466,7 @@ class mpc_problem_gr:
 
     # TODO: distr.sample does not work in autograph
     # @tf.function
+    @call_counter
     def pred_fit(self):
         # assert getattr(self,'y',None) is not None
         if self.stochastic:
@@ -443,7 +474,7 @@ class mpc_problem_gr:
         else:
             runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
         state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32) if self.edge_state is not None else None
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
         with tf.GradientTape() as tape:
             tape.watch(self.train_vars)
             if self.cross_entropy:
@@ -462,20 +493,84 @@ class mpc_problem_gr:
             if self.stochastic:
                 settings = tf.repeat(settings,self.stochastic,axis=0)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            env = get_env(self.args.env)(initialize=False)
-            obj = env.objective_pred_tf(preds,[state,edge_state],settings)
+            if not self.args.predict:
+                obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
+                if not getattr(self.emul,'norm',False):
+                    obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+            else:
+                obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
             if self.stochastic:
                 obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
             loss = tf.reduce_mean(obj,axis=0) if self.cross_entropy else obj
         grads = tape.gradient(loss,self.train_vars)
-        self.optimizer.apply_gradients(zip(grads,self.train_vars)) # How to regulate y in (xl,xu)
+        self.optimizer.apply_gradients(zip(grads,self.train_vars))
         return obj,grads
 
+    @tf.function
+    def objective_fn(self,y,runoff,state,edge_state):
+        runoff = tf.cast(runoff if self.stochastic else tf.expand_dims(runoff,0),tf.float32)
+        state = tf.cast(tf.repeat(tf.expand_dims(state,0),max(self.stochastic,1),axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(edge_state,0),max(self.stochastic,1),axis=0),tf.float32)
+        settings = tf.reshape(y,(-1,self.n_step,self.n_act))
+        settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
+        if settings.shape[1] < self.eval_hrz // self.step:
+            # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
+            settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
+        if self.stochastic:
+            settings = tf.repeat(settings,self.stochastic,axis=0)
+        preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+        if self.args.predict:
+            obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
+            if not getattr(self.emul,'norm',False):
+                obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+        else:
+            obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
+        return tf.reduce_mean(obj)
+
+    @call_counter
+    @tf.function
+    def gradient_fn(self,y,runoff,state,edge_state):
+        y = tf.convert_to_tensor(y)
+        with tf.GradientTape() as tape:
+            tape.watch(y)
+            obj = self.objective_fn(y,runoff,state,edge_state)
+        grads = tape.gradient(obj,y)
+        return obj,grads
+
+    def gradient_fn_parallel(self,y):
+        y = tf.convert_to_tensor(y)
+        if self.stochastic:
+            runoff = tf.cast(tf.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)])),tf.float32)
+        else:
+            runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
+        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
+        with tf.GradientTape() as tape:
+            tape.watch(y)
+            settings = tf.tanh(y) * (self.xu - self.xl) / 2 + (self.xu + self.xl) / 2
+            settings = tf.reshape(settings,(-1,self.n_step,self.n_act))
+            settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
+            if settings.shape[1] < self.eval_hrz // self.step:
+                # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
+                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
+            if self.stochastic:
+                settings = tf.repeat(settings,self.stochastic,axis=0)
+            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+            if self.args.predict:
+                obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
+                if not getattr(self.emul,'norm',False):
+                    obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+            else:
+                obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
+            if self.stochastic:
+                obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
+        grads = tape.gradient(obj,y)
+        return obj,grads
+    
 def run_gr(prob,args,setting=None):
     print('Running gradient inversion')
     # prob = mpc_problem_gr(args,margs)
     if args.use_current and setting is not None:
-        setting *= prob.n_step
         sampling = initialize(setting,prob.xl,prob.xu,2 if args.cross_entropy else args.pop_size,args.sampling,conti=True)
     else:
         sampling = sampling_lhs(2 if args.cross_entropy else args.pop_size,prob.n_var,prob.xl,prob.xu)
@@ -483,59 +578,121 @@ def run_gr(prob,args,setting=None):
         if item == 'n_gen':
             return rec[0] >= vm
         elif item == 'obj':
-            return rec[1] <= vm # TODO
+            return rec[-2] <= vm # TODO
         elif item == 'grad':
             return rec[2] <= vm
         elif item == 'time':
-            return rec[3] >= vm
+            return rec[1] >= vm
 
-    t0,rec,vals = time.time(),[0,1e6,1e6,time.time()],[]
-    print('=======================================================================')
-    print(' n_gen |     grads     |     f_avg     |     f_min     |     g_min     ')
-    print('=======================================================================')
+    t0 = time.time()
+    recs = [[0,prob.pred_fit.calls*args.pop_size,0,1e6,1e6,1e6,1e6]]
+    print('=======================================================================================')
+    print(' n_gen |      time     |     grads     |     f_avg     |     f_min     |     g_min     ')
+    print('=======================================================================================')
     prob.initialize_distr(sampling) if args.cross_entropy else prob.initialize(sampling)
     obj = tf.random.uniform((args.pop_size,))
-    while not if_terminate(*args.termination,rec):
+    while not if_terminate(*args.termination,recs[-1]):
         obj,grads = prob.pred_fit()
-        rec[0] += 1
-        if obj.numpy().min() < rec[1]:
+        rec = [recs[-1][0]+1, 
+               prob.pred_fit.calls*args.pop_size-recs[-1][1], 
+               time.time()-t0-recs[-1][2], 
+               np.mean([grad.numpy().mean() for grad in grads]), 
+               obj.numpy().mean(), 
+               obj.numpy().min(), 
+               min(recs[-1][-1],obj.numpy().min())]
+        if obj.numpy().min() < recs[-1][-1]:
             ctrls = prob.y[obj.numpy().argmin()].numpy()
             ctrls = np.clip(ctrls,prob.xl,prob.xu)
             ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
-        rec[1],rec[2] = min(rec[1],obj.numpy().min()),np.mean([grad.numpy().mean() for grad in grads])
-        rec[3] = time.time() - t0
-        vals.append(obj.numpy().min())
-        log = str(rec[0]).center(7)+'|'
-        log += str(round(rec[2],4)).center(15)+'|'
-        log += str(round(obj.numpy().mean(),4)).center(15)+'|'
-        log += str(round(obj.numpy().min(),4)).center(15)+'|'
-        log += str(round(rec[1],4)).center(15)
-        print(log)
+        log = ''.join([str(round(r,4)).center(7 if i == 0 else 15) + '|' for i,r in enumerate(rec)])
+        print(log[:-1])
+        rec[1],rec[2] = prob.pred_fit.calls*args.pop_size,time.time()-t0
+        recs.append(rec)
     # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
     print('Best solution: ',ctrls)
-    return ctrls,vals
+    vals,nfuns,times = np.array(recs)[1:,-1],np.array(recs)[1:,1]-prob.pred_fit.calls*args.pop_size,np.array(recs)[1:,2]
+    return ctrls,vals,nfuns,times
 
+# TODO: normalization in GR and LBFGS
+def run_lbfgs(prob,args,setting=None):
+    '''
+    TODO: GR/BFGS are still local optimization methods, and a global optimization method is needed to combine them. Try SHGO/basinhopping/etc.
+    tfp has no callbacks, while scipy.optimize.minimize has
+    scipy has L-BFGS-B for bounded optimization, but tfp only has L-BFGS and a tanh transformation is used
+    it seems tfp can do batch parallelization with multiple initial values
+    needs manual implementation for l-bfbs-b if wanna use GPU parallel of multiple initial values
+    '''
+    print('Running BFGS inversion')
+    if args.use_current and setting is not None:
+        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
+    else:
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
+    if args.pop_size > 1:
+        t0 = time.time()
+        sampling = tf.atanh((tf.constant(sampling,dtype=tf.float32) - (prob.xu + prob.xl) / 2) * 2 / (prob.xu - prob.xl))
+        results = tfp.optimizer.lbfgs_minimize(prob.gradient_fn_parallel,
+                                               initial_position=sampling,)
+        print("Optimization converged: " + str(results.converged.numpy()))
+        print("Optimization failed: " + str(results.failed.numpy()))
+        vals = results.objective_value.numpy()
+        ctrls = results.position.numpy()[vals.argmin()]
+        ctrls = np.tanh(ctrls) * (prob.xu - prob.xl) / 2 + (prob.xu + prob.xl) / 2
+        vals = np.array([vals.min()]*max(results.num_iterations.numpy(),1))
+        times = np.linspace(0,time.time()-t0,max(results.num_iterations.numpy(),1))
+    else:
+        recs = [[0,prob.gradient_fn.calls,time.time(),1e6]]
+        print('===============================================')
+        print(' n_gen | n_fun |     time      |       f       ')
+        print('===============================================')
+        def mycallback(intermediate_result):
+            obj = getattr(intermediate_result,'fun',np.nan)
+            # TODO: find a way to count calls of gradient_fn & gradient_fn_parallel
+            nfev = prob.gradient_fn.calls
+            rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
+        # def mycallback(x,obj=None,*args,**kwargs):
+        #     obj = prob.objective_fn(x,prob.runoff,prob.state,prob.edge_state).numpy() if obj is None else obj
+        #     rec = [recs[-1][0]+1, time.time()-recs[-1][1], min(obj,recs[-1][-2]), obj]
+            log = ''.join([str(round(r,4)).center(7 if i < 1 else 15) + '|' for i,r in enumerate(rec)])
+            print(log[:-1])
+            rec[1],rec[2] = nfev,time.time()
+            recs.append(rec)
+        results = scioptminimize(lambda x,r,s,e: tuple([re.numpy() for re in prob.gradient_fn(x,r,s,e)]),
+                                 args=(prob.runoff,prob.state,prob.edge_state),
+                                 x0=sampling[0],
+                                 method='L-BFGS-B',
+                                 jac=True,
+                                 bounds=list(zip(prob.xl,prob.xu)),
+                                 callback=mycallback,
+                                 options={"ftol":1e-25,"gtol":1e-10})
+        print("Optimization {}".format("successful" if results.success else "failed"))
+        ctrls = results.x
+        vals = np.array(recs)[1:,-1]
+        nfuns = np.array(recs)[1:,1]-recs[0][1]
+        times = np.array(recs)[1:,2]-recs[0][2]
+    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    print('Best solution: ',ctrls)
+    return ctrls,vals,nfuns,times
 
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     # ctx = mp.get_context("spawn")
     de = {
-        # 'env':'chaohu',
-        # 'act':'rand',
-        # # 'processes':5,
-        # 'pop_size':64,
+        # 'env':'astlingen',
+        # 'act':'conti',
+        # 'processes':4,
+        # 'pop_size':1,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
-        # 'termination':['n_gen',50],
+        # 'termination':['n_gen',200],
         # 'surrogate':True,
-        # 'predict':True,
-        # 'gradient':False,
-        # # 'rain_dir':'./envs/config/ast_test5_events.csv',
+        # 'predict':False,
+        # 'lbfgsb':True,
+        # 'rain_dir':'./envs/config/ast_test5_events.csv',
         # 'rain_suffix':'chaohu_testall',
         # 'rain_num':100,
-        # 'model_dir':'./model/chaohu/60s_50k_rand_pred',
-        # 'result_dir':'./results/chaohu/60s_mpc_pred_4obj_test100',
+        # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs',
+        # 'result_dir':'./results/astlingen/test',
         }
     # config['rain_dir'] = de['rain_dir']
     for k,v in de.items():
@@ -617,20 +774,19 @@ if __name__ == '__main__':
         edge_states = [edge_state[-1] if args.surrogate else edge_state]
         
         # setting = [1 for _ in args.action_space]
-        setting = env.controller('default')
-        if args.keep != 'False':
-            setting = env.controller(args.keep,states[0],setting)
-        settings = [setting]
+        setting = [env.controller('default') for _ in range(args.prediction['control_horizon']//args.setting_duration)]
+        settings = [env.controller(args.keep,states[0],setting[0]) if args.keep != 'False' else setting[0]]
 
-        if args.surrogate and args.gradient:
+        if args.surrogate and (args.lbfgsb or args.gradient):
             prob = mpc_problem_gr(args,margs)
         else:
             prob = mpc_problem(args,margs=margs if args.surrogate else None)
 
-        done,i,valss = False,0,[]
+        done,i,j,valss,nfunss,timess = False,0,0,[],[],[]
         while not done:
             if i*args.interval % args.control_interval == 0:
                 t2 = time.time()
+                setting = setting[j+1:] + setting[-1:] * (j+1)
                 if args.surrogate:
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
@@ -650,11 +806,13 @@ if __name__ == '__main__':
                     # margs.runoff = r
                     prob.load_state(state,r,edge_state)
                     if args.gradient:
-                        setting,vals = run_gr(prob,args,setting=setting)
+                        setting,vals,nfuns,times = run_gr(prob,args,setting=setting)
+                    elif args.lbfgsb:
+                        setting,vals,nfuns,times = run_lbfgs(prob,args,setting=setting)
                     elif args.cross_entropy:
-                        setting,vals = run_ce(prob,args,setting=setting)
+                        setting,vals,nfuns,times = run_ce(prob,args,setting=setting)
                     else:
-                        setting,vals = run_ea(prob,args,setting=setting)
+                        setting,vals,nfuns,times = run_ea(prob,args,setting=setting)
                 else:
                     eval_file = env.get_eval_file(args.prediction['no_runoff'])
                     if args.prediction['no_runoff']:
@@ -666,6 +824,8 @@ if __name__ == '__main__':
                     else:
                         setting,vals = run_ea(prob,args,setting=setting)
                 valss.append(vals)
+                nfunss.append(nfuns)
+                timess.append(times)
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
@@ -693,6 +853,8 @@ if __name__ == '__main__':
         np.save(os.path.join(args.result_dir,name + '_%s_settings.npy'%item),np.array(settings))
         np.save(os.path.join(args.result_dir,name + '_%s_edge_states.npy'%item),np.stack(edge_states))
         np.save(os.path.join(args.result_dir,name + '_%s_vals.npy'%item),np.array(valss))
+        np.save(os.path.join(args.result_dir,name + '_%s_nfuns.npy'%item),np.array(nfunss))
+        np.save(os.path.join(args.result_dir,name + '_%s_times.npy'%item),np.array(timess))
 
         results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum(),np.stack(objects).sum()]
     results.to_csv(os.path.join(args.result_dir,'results_%s.csv'%item))

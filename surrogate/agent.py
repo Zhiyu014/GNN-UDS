@@ -497,7 +497,10 @@ class AgentSAC:
                 self.val_optimizer = Adam(learning_rate=getattr(args,"cri_lr",1e-3),clipnorm=1.0)
             self.mse = MeanSquaredError()
 
-            self.target_entropy = -action_shape if self.conti else np.log(action_shape)*0.98 if self.mac else np.log(np.prod(action_shape))*0.98
+            # TODO: for continuous action space, the maximum entropy is action_shape * log(2) for tanh normal
+            # TODO: for discrete action space, tune the fraction constant 0.98, 0.5, 0.01 
+            self.en_disc = getattr(args,"en_disc",0.5)
+            self.target_entropy = action_shape*np.log(2)*self.en_disc if self.conti else np.log(action_shape)*self.en_disc if self.mac else np.log(np.prod(action_shape))*self.en_disc
             if self.mac and not self.conti:
                 self.alpha_log = [tf.Variable(0,dtype=tf.float32,trainable=True) for _ in range(self.n_agents)] 
                 self.alpha_optimizer = [Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0) for _ in range(self.n_agents)]
@@ -518,13 +521,13 @@ class AgentSAC:
         #     o = self._split_observ(s)
         # r = tf.no_gradient(self.reward_norm(r,update=True))
         value_loss = self.critic_update(s,a,r,s_,train)
-        alpha = self.alpha_update(s,train)
+        alpha,entropy = self.alpha_update(s,train)
         policy_loss = self.actor_update(s,train)
         if getattr(self,"vnet",None) is not None:
             vf_loss = self.vnet_update(s,train)
-            return value_loss,alpha,policy_loss,vf_loss
+            return value_loss,alpha,entropy,policy_loss,vf_loss
         else:
-            return value_loss,alpha,policy_loss
+            return value_loss,alpha,entropy,policy_loss
 
     @tf.function
     def critic_update(self,s,a,r,s_,train=True):
@@ -562,7 +565,6 @@ class AgentSAC:
                 self.cri_optimizer.apply_gradients(zip(grads, train_vars))
         return value_loss
     
-    # TODO: visualize the policy entropy, if use log(A) as target, if use 0 as initial
     @tf.function
     def alpha_update(self,s,train=True):
         if train:
@@ -572,17 +574,19 @@ class AgentSAC:
                 with tf.GradientTape() as tape:
                     tape.watch(alp)
                     if self.conti:
-                        alpha_loss = - alp * tf.stop_gradient(self.target_entropy + log_probs)
+                        entropy = tf.stop_gradient(- tf.reduce_mean(log_probs))
                     elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
-                        alpha_loss = - alp * tf.stop_gradient(self.target_entropy[i] + tf.reduce_sum(log_probs[i]*probs[i],axis=-1))
+                        entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs[i]*probs[i],axis=-1)))
                     else:
-                        alpha_loss = - alp * tf.stop_gradient(self.target_entropy + tf.reduce_sum(log_probs*probs,axis=-1))
-                    grads = tape.gradient(tf.reduce_mean(alpha_loss), [alp])
+                        entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs*probs,axis=-1)))
+                    alpha_loss = alp * (entropy - self.target_entropy[i] if isinstance(self.target_entropy, np.ndarray) else entropy - self.target_entropy)
+                    grads = tape.gradient(alpha_loss, [alp])
                     grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
                             for grad in grads]
                     # grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
                     opt.apply_gradients(zip(grads, [alp]))
-        return tf.reduce_mean([tf.exp(alp) for alp in self.alpha_log]) if isinstance(self.alpha_log,list) else tf.exp(self.alpha_log)
+        alp = tf.reduce_mean([tf.exp(alp) for alp in self.alpha_log]) if isinstance(self.alpha_log,list) else tf.exp(self.alpha_log)
+        return alp,entropy
 
     @tf.function
     def actor_update(self,s,train=True):

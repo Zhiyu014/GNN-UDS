@@ -1,11 +1,11 @@
 from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from tensorflow.keras.layers import Dense,Input,GRU,LSTM,Conv1D,Flatten
-from tensorflow.keras import activations
-from tensorflow.keras.models import Model,Sequential
-from tensorflow.keras.regularizers import l1,l2
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import MeanSquaredError,BinaryCrossentropy
-from tensorflow.keras import mixed_precision
+from keras.layers import Dense,Input,GRU,LSTM,Conv1D,Flatten
+from keras import activations
+from keras.models import Model,Sequential
+from keras.regularizers import l1,l2
+from keras.optimizers import Adam
+from keras.losses import MeanSquaredError,BinaryCrossentropy
+from keras import mixed_precision
 import numpy as np
 import os
 # from line_profiler import LineProfiler
@@ -178,7 +178,7 @@ class Predictor:
                 self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss
     
-    def predict(self,state,runoff,settings=None,edge_state=None):
+    def predict(self,state,runoff,settings,edge_state):
         x,b,e = [self.normalize(dat,item) for dat,item in zip([state,runoff,edge_state],'xbe')]
         if self.full:
             x,b,e = [tf.reshape(dat,dat.shape[:2]+(-1,)) for dat in [x,b,e]]
@@ -196,6 +196,9 @@ class Predictor:
         if self.norm:
             preds = self.normalize(preds,'o',inverse=True)
         return preds
+    
+    def predict_tf(self,state,runoff,settings,edge_state):
+        return self.predict(state,runoff,settings,edge_state)
 
     def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e):
         setattr(self,'norm_x',norm_x)

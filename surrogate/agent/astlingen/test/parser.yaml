@@ -20,10 +20,11 @@ rain_dir: ast_train50_events.csv
 rain_num: 1
 result_dir: ./results/
 sample_gap: 0
+save_gap: 100
 scale: 1.0
 start_gap: 0
 swmm_step: 10
 test: false
 train: true
-tune_gap: 10
+tune_gap: 0
 use_pred: true

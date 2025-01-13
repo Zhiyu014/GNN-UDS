@@ -1,8 +1,9 @@
-act: conti
-agent_dir: 5s_10k_conti_mfrl_observ_sac_norough_swmmstep10
+act: rand3
+agent_dir: 5s_10k_rand3_mfrl_observ_sac_norough_swmmstep10_disc05
 conv: 'False'
 data_dir: 1s_edge_conti128_rain50
 episodes: 10000
+mac: true
 model_dir: ./model/
 n_layer: 5
 norm: true
@@ -11,6 +12,5 @@ rain_dir: ast_train50_events.csv
 rain_num: 1
 result_dir: ./results/
 sample_gap: 5
-save_gap: 100
 swmm_step: 10
 train: true
