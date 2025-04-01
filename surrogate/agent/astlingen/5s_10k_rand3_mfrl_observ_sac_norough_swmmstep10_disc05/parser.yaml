@@ -3,6 +3,7 @@ agent_dir: 5s_10k_rand3_mfrl_observ_sac_norough_swmmstep10_disc05
 conv: 'False'
 data_dir: 1s_edge_conti128_rain50
 episodes: 10000
+limit: 21
 mac: true
 model_dir: ./model/
 n_layer: 5

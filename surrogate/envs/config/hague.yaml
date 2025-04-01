@@ -8,6 +8,47 @@ interval: 1
 # control time step (min)
 # control_interval: 15
 # state definitions
+states:
+  - !!python/tuple
+    - "RG"
+    - rainfall
+  - !!python/tuple
+    - "E143250" # outfall tide level
+    - head
+  - !!python/tuple
+    - "E143274" # lowest surface elevation near weir1
+    - head
+  - !!python/tuple
+    - "E144050" # X-cross node
+    - head
+  - !!python/tuple
+    - "F133438" # upstream of st1 and r1
+    - head
+  - !!python/tuple
+    - "F133459" # upstream of st1 and r1
+    - head
+  - !!python/tuple
+    - "F13250" # upstream of st3 and r3
+    - head
+  - !!python/tuple
+    - "F143656" # upstream of st3 and r3
+    - head
+  - !!python/tuple
+    - "st1"
+    - head
+  - !!python/tuple
+    - "st3"
+    - head
+  - !!python/tuple
+    - "R1"
+    - setting
+  - !!python/tuple
+    - "R3"
+    - setting
+  - !!python/tuple
+    - "weir1"
+    - setting
+
 # global state definitions
 global_state:
   - !!python/tuple
@@ -39,6 +80,8 @@ global_state:
 
 # Key elements in loss function
 loss_weight:
+  st1: 5.0
+  st3: 5.0
 
 # Action space
 action_space:
@@ -52,26 +95,39 @@ action_space:
     - 0
     - 0.5
     - 1.0
+  weir1:
+    !!python/tuple
+    - 0
+    - 0.5
+    - 1.0
 
 # Performance Targets
 performance_targets:
-  # CSOs to river
   - !!python/tuple
-    - "st1"
+    - "nodes"
     - cumflooding
-    - 1000
-  - !!python/tuple
-    - "st1"
-    - depthN
-    - 1.8
-  - !!python/tuple
-    - "F134101"
-    - depthN
-    - 1.1
-  - !!python/tuple
-    - "F134101"
-    - depthN
-    - '1.75,1000'
+    - 0
+    - 1
+  # - !!python/tuple
+  #   - "st1"
+  #   - cumflooding
+  #   - 0
+  #   - 1000
+  # - !!python/tuple
+  #   - "st1"
+  #   - head
+  #   - 0.276   #1.8-1.524
+  #   - 1
+  # - !!python/tuple
+  #   - "st3"
+  #   - head
+  #   - 0.9144   #1.1-0.18288
+  #   - 1
+  # - !!python/tuple
+  #   - "st3"
+  #   - head
+  #   - 1.56712   #1.75-0.18288
+  #   - 1000
 
 # Flooding volume in each node
 flood:
@@ -104,8 +160,8 @@ tide: True
 
 # Model predictive control parameters
 prediction:
-  control_horizon: 120  # Control horizon (min)
-  eval_horizon: 120 # Evaluation horizon (min)
+  control_horizon: 30  # Control horizon (min)
+  eval_horizon: 30 # Evaluation horizon (min)
   no_runoff: True # if excludes runoff module and use external data
   hsf_dir: hsf # file path to save the hotstart file
   eval_dir: eval # file path to save the evaluation file

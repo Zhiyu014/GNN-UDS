@@ -5,22 +5,24 @@ from keras.models import Model,Sequential
 from keras.regularizers import l1,l2
 from keras.optimizers import Adam
 from keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
-from keras import mixed_precision
 import numpy as np
 import os
 # from line_profiler import LineProfiler
 from spektral.layers import GCNConv,GATConv,ECCConv,GeneralConv,DiffusionConv
 import tensorflow as tf
-tf.config.list_physical_devices(device_type='GPU')
+from keras import mixed_precision
+# tf.config.list_physical_devices(device_type='GPU')
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-# tf=2.3.0
-# policy = mixed_precision.experimental.Policy('mixed_float16')
-# mixed_precision.experimental.set_policy(policy)
-# tf=2.6.0
-# policy = mixed_precision.Policy('mixed_float16')
-# mixed_precision.set_global_policy(policy)
 
+class MixedGAT(GATConv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def build(self, *args, **kwargs):
+        super().build(*args, **kwargs)
+        self.dropout = Dropout(self.dropout_rate, 
+                               dtype=mixed_precision.global_policy())
+        self.built = True
 
 class NodeEdge(tf.keras.layers.Layer):
     def __init__(self, inci, **kwargs):
@@ -38,11 +40,10 @@ class NodeEdge(tf.keras.layers.Layer):
         super(NodeEdge,self).build(input_shape)
 
     def call(self,inputs):
-        # mat = self.w * tf.cast(self.inci,policy.compute_dtype) + self.b
-        mat = self.w * self.inci + self.b
+        mat = self.w * tf.cast(self.inci,mixed_precision.global_policy().compute_dtype) + self.b
+        # mat = self.w * self.inci + self.b
         return tf.matmul(mat, inputs)
     
-# TODO: Convert use_edge to graph_base GNN
 class Emulator:
     def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
@@ -95,11 +96,14 @@ class Emulator:
         self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
         self.pump_in = getattr(args,"pump_in",np.array([0.0 for _ in range(self.n_node)]))
         self.pump_out = getattr(args,"pump_out",np.array([0.0 for _ in range(self.n_node)]))        
+        self.offset = getattr(args,"offset",np.array([0.0 for _ in range(self.n_edge)]))
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = recurrent
         self.model = self.build_network(self.conv,resnet,self.recurrent)
         self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
+        if mixed_precision.global_policy().compute_dtype != 'float32':
+            self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
         self.mse = MeanSquaredError()
         if self.if_flood:
             self.bce = BinaryCrossentropy()
@@ -119,7 +123,7 @@ class Emulator:
             self.filter = DiffusionConv.preprocess(self.adj)
             self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
         elif 'GAT' in conv:
-            net = GATConv
+            net = MixedGAT
             # filter needs changed <1 -->0 for models (2024.8.9)
             # self.filter = self.adj.astype(int)
             self.filter = (self.adj>0).astype(int)
@@ -144,6 +148,7 @@ class Emulator:
         else:
             return []
         
+    # TODO: GCNConv cause NodeEdge bug
     def build_network(self,conv=None,resnet=False,recurrent=None):
         # (T,N,in) (N,in)
         state_shape,bound_shape = (self.seq_in,self.n_node,self.n_in),(self.seq_out,self.n_node,self.b_in)
@@ -407,7 +412,8 @@ class Emulator:
                     inp += [self.edge_filter] if self.conv and not self.graph_base else []
                     inp += [ae[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act else []
                     preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
-                    preds,edge_preds = self.post_proc_tf(preds,a[:,i*self.seq_out:(i+1)*self.seq_out,...])
+                    preds = [tf.cast(pred,tf.float32) for pred in preds]
+                    preds,edge_preds = self.post_proc_tf(preds,a[:,i*self.seq_out:(i+1)*self.seq_out,...],b[:,i*self.seq_out:(i+1)*self.seq_out,...])
                     predss.append(preds)
                     edge_predss.append(edge_preds)
                     if self.if_flood:
@@ -429,7 +435,8 @@ class Emulator:
                 inp += [self.edge_filter] if self.conv and not self.graph_base else []
                 inp += [ae] if self.act else []
                 preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
-                preds,edge_preds = self.post_proc_tf(preds,a)
+                preds = [tf.cast(pred,tf.float32) for pred in preds]
+                preds,edge_preds = self.post_proc_tf(preds,a,b)
 
             # Loss funtion
             # Flood calculation
@@ -441,12 +448,13 @@ class Emulator:
                 q_w = q_w/self.norm_y[0,:,-1]
                 preds = self.normalize(preds_re_norm,'y')
                 q_w = expand_dims(q_w,axis=-1)
+            preds = tf.clip_by_value(preds,0,1) # avoid large loss value
             # narrow down norm range of water head
             if self.hmin.max() > 0:
-                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/(self.hmax-self.hmin).mean()
-                preds = concat([preds[...,:1] * wei,preds[...,1:]],axis=-1)
-                y = concat([y[...,:1] * wei,y[...,1:]],axis=-1)
-            preds = tf.clip_by_value(preds,0,1) # avoid large loss value
+                wei = (self.hmax-self.hmin)*(1-self.is_outfall) + (self.hmax-self.hmin).mean()*self.is_outfall
+                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/wei
+                preds = tf.concat([preds[...,:1] * wei,preds[...,1:]],axis=-1)
+                y = tf.concat([y[...,:1] * wei,y[...,1:]],axis=-1)
             if self.balance:
                 loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1),sample_weight=self.nwei)
             else:
@@ -458,12 +466,18 @@ class Emulator:
                 # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
                 # edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
             loss += self.mse(edge_preds,ey,sample_weight=self.ewei) if fit else [self.mse(edge_preds,ey,sample_weight=self.ewei)]
+            if fit and mixed_precision.global_policy().name != 'float32':
+                scaled_loss = self.optimizer.get_scaled_loss(loss)
         if fit:
-            grads = tape.gradient(loss, self.model.trainable_variables)
+            tf.debugging.assert_all_finite(loss, 'Loss contains NaN or Inf values.')
+            if mixed_precision.global_policy().name != 'float32':
+                scaled_gradients = tape.gradient(scaled_loss, self.model.trainable_variables)
+                grads = self.optimizer.get_unscaled_gradients(scaled_gradients)
+            else:
+                grads = tape.gradient(loss, self.model.trainable_variables)
+            for grad in grads:
+                tf.debugging.assert_all_finite(grad, "grads contain NaN/Inf!")
             self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
-        #     return loss.numpy()
-        # else:
-        #     return [los.numpy() for los in loss]
         return loss
 
 
@@ -489,11 +503,12 @@ class Emulator:
             inp += [self.edge_filter] if self.conv and not self.graph_base else []
             inp += [ae[idx:idx+1]] if self.act else []
             y = self.model(inp,training=False) if self.dropout else self.model(inp)
+            y,ey = [tf.cast(pred,tf.float32) for pred in y]
 
-            y,ey = self.post_proc(y.numpy(),ey.numpy(),a)
-            ey = self.normalize(squeeze(ey,0),'e',True)
+            y,ey = self.post_proc(y.numpy(),ey.numpy(),a[idx:idx+1],self.normalize(bi,'b'))
+            ey = self.normalize(np.squeeze(ey,0),'e',True)
             ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
-            y = self.normalize(squeeze(y,0),'y',True)
+            y = self.normalize(np.squeeze(y,0),'y',True)
 
             # Pumped storage depth calculation: boundary condition differs from orifice
             if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
@@ -528,8 +543,9 @@ class Emulator:
         inp += [self.edge_filter] if self.conv and not self.graph_base else []
         inp += [ae] if self.act else []
         y,ey = self.model(inp,training=False) if self.dropout else self.model(inp)
+        y,ey = [tf.cast(pred,tf.float32) for pred in (y,ey)]
 
-        y,ey = self.post_proc(y.numpy(),ey.numpy(),a)
+        y,ey = self.post_proc(y.numpy(),ey.numpy(),a,self.normalize(b,'b'))
         y = self.normalize(y,'y',True)
         ey = self.normalize(ey,'e',True)
         ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
@@ -566,8 +582,9 @@ class Emulator:
         inp += [self.edge_filter] if self.conv and not self.graph_base else []
         inp += [ae] if self.act else []
         y,ey = self.model(inp,training=False) if self.dropout else self.model(inp)
+        y,ey = [tf.cast(pred,tf.float32) for pred in (y,ey)]
 
-        y,ey = self.post_proc_tf((y,ey),a)
+        y,ey = self.post_proc_tf((y,ey),a,self.normalize(b,'b'))
         ey = self.normalize(ey,'e',True)
         ey = tf.concat([tf.expand_dims(tf.clip_by_value(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
         y = self.normalize(y,'y',True)
@@ -586,19 +603,28 @@ class Emulator:
         y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey
 
-    def post_proc(self,y,ey,a):
+    def post_proc(self,y,ey,a,b):
+        # tide boundary
+        if self.tide:
+            h = y[...,0] * (1 - self.is_outfall) + b[...,-1]
+            y = np.concatenate([np.expand_dims(h,axis=-1),y[...,1:]],axis=-1)
+        # TODO: if need to regulate pipe inflow offset
+        inoff = np.matmul(self.normalize(y,'y',True)[...,0] - self.hmin,np.clip(self.node_edge,0,1))
+        flow = np.expand_dims(ey[...,-1]*(inoff > self.offset)*(self.offset)+\
+                               ey[...,-1]*(self.offset==0),axis=-1)
+        ey = np.concatenate([ey[...,:-1],flow],axis=-1)
         if self.act:
             ae = self.get_edge_action(a)
             # regulate pumping flow (rated value if there is volume in inlet tank)
-            fl = self.pump*np.matmul((y[...,0]>0.01)*(self.area>0),np.clip(self.node_edge,0,1))
+            fl = self.pump*np.matmul(y[...,0]>0.01,np.clip(self.node_edge,0,1))
             fl *= (self.norm_e[0,:,2]>1e-3)/self.norm_e[0,:,2]
             ey[...,-1] = ey[...,-1] * (fl==0) + fl
             ey[...,-1:] *= ae
             if not self.edge_fusion:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...])
                 # regulate pumping flow (rated value if there is volume in inlet tank)
-                fli = self.pump_in * (y[...,0]>0.01)*(self.area>0)/self.norm_y[0,:,1]
-                flo = self.pump_out * (y[...,0]>0.01)*(self.area>0)/self.norm_y[0,:,2]
+                fli = self.pump_in * (y[...,0]>0.01)/self.norm_y[0,:,1]
+                flo = self.pump_out * (y[...,0]>0.01)/self.norm_y[0,:,2]
                 y[...,1] = y[...,1]*(fli==0) + fli
                 y[...,2] = y[...,2]*(flo==0) + flo
                 # regulate flow with setting
@@ -614,13 +640,23 @@ class Emulator:
         return y,ey
 
     @tf.function
-    def post_proc_tf(self,preds,a):
+    def post_proc_tf(self,preds,a,b):
         preds,edge_preds = preds
+        # tide boundary
+        if self.tide:
+            h = preds[...,0] * (1 - self.is_outfall) + b[...,-1]
+            preds = tf.concat([tf.expand_dims(h,axis=-1),preds[...,1:]],axis=-1)
+        # TODO: if need to regulate pipe inflow offset
+        inoff = tf.matmul(self.normalize(preds,'y',True)[...,0]-self.hmin,tf.clip_by_value(self.node_edge,0,1))
+        flow = edge_preds[...,-1]
+        flow = tf.expand_dims(flow * tf.cast(inoff > self.offset,tf.float32) * tf.cast(self.offset>0,tf.float32) * tf.cast(flow>0,tf.float32) +\
+                               flow * (1 - tf.cast(self.offset>0,tf.float32)*tf.cast(flow>0,tf.float32)),axis=-1)
+        edge_preds = concat([edge_preds[...,:-1],flow],axis=-1)
         # Control action regulation
         if self.act:
             ae = self.get_edge_action(a,True)
             # regulate pumping flow (rated value if there is volume in inlet tank)
-            fl = self.pump*tf.matmul(tf.cast(preds[...,0]>0.01,tf.float32) * tf.cast(self.area>0,tf.float32),tf.clip_by_value(self.node_edge,0,1))
+            fl = self.pump*tf.matmul(tf.cast(preds[...,0]>0.01,tf.float32),tf.clip_by_value(self.node_edge,0,1))
             fl *= tf.cast(self.norm_e[0,:,2]>1e-3,tf.float32)/self.norm_e[0,:,2]
             flow = tf.expand_dims(edge_preds[...,-1] * tf.cast(fl==0,tf.float32) + fl,axis=-1)
             # regulate flow with setting
@@ -628,8 +664,8 @@ class Emulator:
             if not self.edge_fusion:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...],True)
                 # regulate pumping flow (rated value if there is volume in inlet tank)
-                fli = self.pump_in * tf.cast((preds[...,0]*self.area)>0,tf.float32)/self.norm_y[0,:,1]
-                flo = self.pump_out * tf.cast((preds[...,0]*self.area)>0,tf.float32)/self.norm_y[0,:,2]
+                fli = self.pump_in * tf.cast(preds[...,0]>0,tf.float32)/self.norm_y[0,:,1]
+                flo = self.pump_out * tf.cast(preds[...,0]>0,tf.float32)/self.norm_y[0,:,2]
                 inflow = preds[...,1] * tf.cast(fli==0,tf.float32) + fli
                 outflow = preds[...,2] * tf.cast(flo==0,tf.float32) + flo
                 # regulate flow with setting

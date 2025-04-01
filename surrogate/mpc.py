@@ -1,17 +1,20 @@
-import os,time
+import os,time,math
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+import tensorflow as tf
+# gpus = tf.config.list_physical_devices(device_type='GPU')
+# tf.config.experimental.set_memory_growth(gpus[0], True)
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 from emulator import Emulator # Emulator should be imported before env
 from predictor import Predictor
 from utils.utilities import get_inp_files
 import pandas as pd
 import multiprocessing as mp
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from scipy.stats import truncnorm
-import tensorflow as tf
 from keras.optimizers import Adam
 from tensorflow_probability import distributions as tfd
-import tensorflow_probability as tfp
 from scipy.optimize import minimize as scioptminimize
 import argparse,yaml
 from envs import get_env
@@ -52,7 +55,9 @@ def parser(config=None):
     parser.add_argument('--control_interval',type=int,default=5,help='control interval')
     parser.add_argument('--horizon',type=int,default=60,help='control horizon')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
+    parser.add_argument('--lag',action='store_true',help='if consider optimization time lag, only work when swmm_step==1')
 
+    parser.add_argument('--seed',type=int,default=42,help='random seed')
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
     parser.add_argument('--use_current',action="store_true",help='if use current setting as initial')
@@ -65,7 +70,7 @@ def parser(config=None):
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--predict',action='store_true',help='if use predictor for emulation')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
-    parser.add_argument('--lbfgsb',action='store_true',help='if use Limited-memory Broyden-Fletcher-Goldfarb-Shanno Bounded optimization')
+    parser.add_argument('--method',type=str,default='descent',help='optimizer: descent lbfgs trust-constr')
     parser.add_argument('--cross_entropy',type=float,default=0,help=' if use cross-entropy method and the kept percentage')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
@@ -108,25 +113,15 @@ def get_runoff(env,event,rate=False,tide=False):
                        for node in env.elements['nodes']])
         else:
             runoff = env.state_full()[...,-1:]
-        if tide:
-            ti = env.state_full()[...,:1]
-            runoff = np.concatenate([runoff,ti],axis=-1)
+        if tide is not False:
+            ti = env.state_full()[...,0] * tide
+            runoff = np.concatenate([runoff,np.expand_dims(ti,axis=-1)],axis=-1)
         runoffs.append(runoff)
     ts = [t0]+env.data_log['simulation_time'][:-1]
     runoff = np.array(runoffs)
     return ts,runoff
 
 def pred_simu(y,file,args,r=None,act=True):
-    # n_step = args.prediction['control_horizon']//args.setting_duration
-    # r_step = args.setting_duration//args.interval
-    # e_hrz = args.prediction['eval_horizon'] // args.interval
-    # actions = list(args.action_space.values())
-
-    # y = y.reshape(n_step,len(args.action_space))
-    # y = np.concatenate([np.repeat(y[i:i+1,:],r_step,axis=0) for i in range(n_step)])
-    # if y.shape[0] < e_hrz:
-    #     y = np.concatenate([y,np.repeat(y[-1:,:], e_hrz - y.shape[0],axis=0)],axis=0)
-    
     env = get_env(args.env_name)(swmm_file = file)
     done,idx = False,0
     if getattr(args,'log') is not None:
@@ -237,9 +232,36 @@ class mpc_problem(Problem):
             objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
         return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
         
+    @tf.function
+    def pred_emu_tf(self,y,runoff,state,edge_state):
+        runoff = tf.cast(tf.tile(runoff,(self.args.pop_size,)+tuple([1 for _ in range(runoff.ndim-1)])) if self.stochastic else\
+                          tf.repeat(tf.expand_dims(runoff,0),self.args.pop_size,axis=0),tf.float32)
+        state = tf.cast(tf.repeat(tf.expand_dims(state,0),max(self.stochastic*self.args.pop_size,self.args.pop_size),axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.expand_dims(edge_state,0),max(self.stochastic*self.args.pop_size,self.args.pop_size),axis=0),tf.float32)
+        settings = tf.reshape(y,(-1,self.n_step,self.n_act))
+        if not self.args.act.startswith('conti'):
+            settings = tf.stack([tf.gather(self.actions[i],settings[...,i]) for i in range(self.n_act)],axis=-1)
+        settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
+        if settings.shape[1] < self.eval_hrz // self.step:
+            # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
+            settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
+        if self.stochastic:
+            settings = tf.repeat(settings,self.stochastic,axis=0)
+        preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+        if self.args.predict:
+            objs = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
+            if not getattr(self.emul,'norm',False):
+                objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
+        else:
+            objs = self.env.objective_pred_tf(preds,[state,edge_state],settings)
+        if self.stochastic:
+            objs = tf.stack([tf.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic]) for i in range(self.args.pop_size)])
+        return objs
+
     def _evaluate(self,x,out,*args,**kwargs):        
         if hasattr(self,'emul'):
-            out['F'] = self.pred_emu(x)+1e-6
+            # out['F'] = self.pred_emu(x)+1e-6
+            out['F'] = self.pred_emu_tf(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
         else:
             pool = mp.Pool(self.args.processes)
             res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
@@ -250,7 +272,8 @@ class mpc_problem(Problem):
 
     def pred(self,x):
         if hasattr(self,'emul'):
-            return self.pred_emu(x)+1e-6
+            # return self.pred_emu(x)+1e-6
+            return self.pred_emu_tf(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
         else:
             pool = mp.Pool(self.args.processes)
             res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
@@ -265,10 +288,13 @@ class BestCallback(Callback):
         self.data["best"] = []
         self.data["time"] = []
         self.t0 = time.time()
+        self.data["sol"] = []
 
     def notify(self, algorithm):
-        self.data["best"].append(algorithm.pop.get("F").min())
+        vals = algorithm.pop.get("F")
+        self.data["best"].append(vals.min())
         self.data["time"].append(time.time()-self.t0)
+        self.data["sol"].append(algorithm.pop.get("X")[vals.argmin()])    
 
 def initialize(x0,xl,xu,pop_size,prob,conti=False):
     x0 = np.reshape(x0,-1)
@@ -345,13 +371,16 @@ def run_ea(prob,args,setting=None):
     vals = res.algorithm.callback.data["best"]
     nfuns = args.pop_size*np.arange(1,len(vals)+1)
     times = res.algorithm.callback.data["time"]
+    sols = res.algorithm.callback.data["sol"]
+    sols = np.array(sols).reshape((-1,prob.n_step,prob.n_act))
+    if not args.act.startswith('conti'):
+        sols = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,sols.astype(int))
     # if margs is not None:
     #     del prob.emul
     # del prob
     # gc.collect()
-    return ctrls.tolist(),vals,nfuns,times
+    return ctrls.tolist(),vals,nfuns,times,sols
 
-# TODO: cross-entropy method
 def run_ce(prob,args,setting=None):
     print('Running cross entropy')
     def sample_conti(mu,sig,n=1):
@@ -375,7 +404,7 @@ def run_ce(prob,args,setting=None):
             return rec[1] >= vm
         
     t0 = time.time()
-    recs = [[0,0,1e6,1e6,1e6]]
+    recs,sols = [[0,0,1e6,1e6,1e6]],[]
     print('=======================================================================')
     print(' n_gen |      time     |     f_lam     |     f_min     |     g_min     ')
     print('=======================================================================')
@@ -394,6 +423,7 @@ def run_ce(prob,args,setting=None):
                 # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
                 ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
             ctrls = ctrls.tolist()
+        sols.append(ctrls)
         # formulate a new distribution with elites
         x_new = x[obj<=rec[-1]]
         if args.act.startswith('conti'):
@@ -407,8 +437,8 @@ def run_ce(prob,args,setting=None):
         recs.append(rec)
     # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
     print('Best solution: ',ctrls)
-    vals,nfuns,times = np.array(recs)[1:,-2],np.arange(1,len(vals)+1)*args.pop_size,np.array(recs)[1:,1]
-    return ctrls,vals,nfuns,times
+    vals,nfuns,times,sols = np.array(recs)[1:,-2],np.arange(1,len(vals)+1)*args.pop_size,np.array(recs)[1:,1],np.array(sols)
+    return ctrls,vals,nfuns,times,sols
 
 def call_counter(func):
     def helper(*args, **kwargs):
@@ -419,15 +449,18 @@ def call_counter(func):
     return helper
     
 class mpc_problem_gr:
-    def __init__(self,args,margs):
+    def __init__(self,args,margs,load_model=False):
         self.args = args
-        tf.keras.backend.clear_session()    # to clear backend occupied models
-        if args.predict:
-            self.emul = Predictor(margs.recurrent,margs)
-        else:
-            self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
-        self.emul.load(margs.model_dir)
-        # self.load_state(margs)
+        self.margs = margs
+        if load_model:
+            tf.keras.backend.clear_session()    # to clear backend occupied models
+            gpus = tf.config.list_physical_devices('GPU')
+            if args.processes > 1:
+                tf.config.experimental.set_virtual_device_configuration(
+                    gpus[0],
+                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)
+                    for _ in range(args.processes)])
+            self.load_model(margs,args.predict)
         self.cross_entropy = bool(getattr(args,"cross_entropy",False))
         self.stochastic = getattr(args,"stochastic",False)
         self.asp = list(args.action_space.values())
@@ -440,13 +473,31 @@ class mpc_problem_gr:
         self.optimizer = Adam(getattr(args,"learning_rate",1e-3))
         self.pop_size = getattr(args,'pop_size',64)
         self.n_var = self.n_act*self.n_step
+        self.bounded = args.method in ['l-bfgs-b','trust-constr']
         self.xl = np.array([min(v) for _ in range(self.n_step)
                             for v in self.asp])
         self.xu = np.array([max(v) for _ in range(self.n_step)
                             for v in self.asp])
 
+    def load_model(self,margs,predict=False):
+        if self.args.processes > 1:
+            self.emul = []
+            for i in range(self.args.processes):
+                with tf.device(f'/device:GPU:{i}'):
+                    emul = Predictor(margs.recurrent,margs) if predict \
+                        else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+                    emul.load(margs.model_dir)
+                    self.emul.append(emul)
+        else:
+            self.emul = Predictor(margs.recurrent,margs) if predict \
+                else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+            self.emul.load(margs.model_dir)
+
     def load_state(self,state,runoff,edge_state):
-        self.state,self.runoff,self.edge_state = [tf.convert_to_tensor(x) for x in [state,runoff,edge_state]]
+        self.state,self.runoff,self.edge_state = [tf.cast(tf.convert_to_tensor(x),tf.float32) for x in [state,runoff,edge_state]]
+
+    def get_state(self):
+        return tuple([getattr(self,item,None) for item in ['state','runoff','edge_state']])
 
     def initialize(self,sampling):
         if not hasattr(self,'y'):
@@ -475,7 +526,7 @@ class mpc_problem_gr:
             runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
         state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
         edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
             tape.watch(self.train_vars)
             if self.cross_entropy:
                 # distr = tfd.TruncatedNormal(loc=tf.clip_by_value(self.train_vars[0],self.xl,self.xu),
@@ -493,7 +544,7 @@ class mpc_problem_gr:
             if self.stochastic:
                 settings = tf.repeat(settings,self.stochastic,axis=0)
             preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            if not self.args.predict:
+            if self.args.predict:
                 obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
                 if not getattr(self.emul,'norm',False):
                     obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
@@ -506,70 +557,94 @@ class mpc_problem_gr:
         self.optimizer.apply_gradients(zip(grads,self.train_vars))
         return obj,grads
 
+    @call_counter
     @tf.function
-    def objective_fn(self,y,runoff,state,edge_state):
-        runoff = tf.cast(runoff if self.stochastic else tf.expand_dims(runoff,0),tf.float32)
-        state = tf.cast(tf.repeat(tf.expand_dims(state,0),max(self.stochastic,1),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(edge_state,0),max(self.stochastic,1),axis=0),tf.float32)
+    def objective_fn(self,y,state,runoff,edge_state,n_emul=0):
+        emul = self.emul[n_emul] if isinstance(self.emul,list) else self.emul
         settings = tf.reshape(y,(-1,self.n_step,self.n_act))
+        n_pop = settings.shape[0]
         settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
         if settings.shape[1] < self.eval_hrz // self.step:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
             settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
         if self.stochastic:
             settings = tf.repeat(settings,self.stochastic,axis=0)
-        preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-        if self.args.predict:
-            obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-            if not getattr(self.emul,'norm',False):
-                obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+        runoff = tf.repeat(tf.cast(runoff if self.stochastic else tf.expand_dims(runoff,0),tf.float32),n_pop,axis=0)
+        state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
+        edge_state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(edge_state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
+        if self.eval_hrz > self.margs.seq_out * self.args.interval:
+            state,edge_state = state[:,-self.margs.seq_in:,...],edge_state[:,-self.margs.seq_in:,...]
+            predss,s0 = [],[state,edge_state]
+            for idx in range(self.eval_hrz//self.margs.seq_out):
+                ri = runoff[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,...]
+                sett = settings[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,:]
+                if self.margs.if_flood and idx > 0:
+                    f = tf.cast(perf>0,tf.float32)
+                    state = tf.concat([state[...,:-1],f,state[...,-1:]],axis=-1)
+                preds = emul.predict_tf(state,ri,sett,edge_state)
+                state,perf = tf.concat([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
+                ae = emul.get_edge_action(sett,True)
+                edge_state = tf.concat([preds[1],ae],axis=-1)
+                predss.append(preds)
+            predss = [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
+            obj = self.env.objective_pred_tf(predss,s0,sett)
         else:
-            obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
-        return tf.reduce_mean(obj)
-
-    @call_counter
-    @tf.function
-    def gradient_fn(self,y,runoff,state,edge_state):
-        y = tf.convert_to_tensor(y)
-        with tf.GradientTape() as tape:
-            tape.watch(y)
-            obj = self.objective_fn(y,runoff,state,edge_state)
-        grads = tape.gradient(obj,y)
-        return obj,grads
-
-    def gradient_fn_parallel(self,y):
-        y = tf.convert_to_tensor(y)
-        if self.stochastic:
-            runoff = tf.cast(tf.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)])),tf.float32)
-        else:
-            runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
-        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        with tf.GradientTape() as tape:
-            tape.watch(y)
-            settings = tf.tanh(y) * (self.xu - self.xl) / 2 + (self.xu + self.xl) / 2
-            settings = tf.reshape(settings,(-1,self.n_step,self.n_act))
-            settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
-            if settings.shape[1] < self.eval_hrz // self.step:
-                # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
-            if self.stochastic:
-                settings = tf.repeat(settings,self.stochastic,axis=0)
-            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+            preds = emul.predict_tf(state,runoff,settings,edge_state)
             if self.args.predict:
                 obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-                if not getattr(self.emul,'norm',False):
+                if not getattr(emul,'norm',False):
                     obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
             else:
                 obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
-            if self.stochastic:
-                obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
+        if self.stochastic:
+            objs = tf.stack([tf.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic])
+                              for i in range(n_pop)])
+        return tf.squeeze(obj)
+
+    @call_counter
+    @tf.function
+    def gradient_fn(self,y,state,runoff,edge_state,n_emul=0):
+        y = tf.cast(tf.convert_to_tensor(y),tf.float32)
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
+            tape.watch(y)
+            if not self.bounded:
+                y = self.project(y)
+            obj = self.objective_fn(y,state,runoff,edge_state,n_emul)
         grads = tape.gradient(obj,y)
         return obj,grads
+
+    def gradient(self,*args):
+        objs,grads = self.gradient_fn(*args)
+        return objs.numpy(),grads.numpy()
     
+    @call_counter
+    @tf.function
+    def hessp_fn(self,y,p,state,runoff,edge_state,n_emul=0):
+        y,p = tf.cast(tf.convert_to_tensor(y),tf.float32),tf.cast(tf.convert_to_tensor(p),tf.float32)
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
+            tape.watch(y)
+            _,grads = self.gradient_fn(y,state,runoff,edge_state,n_emul)
+        hvp = tape.gradient(grads,y,output_gradients=tf.stop_gradient(p))
+        return hvp
+
+    def hessp(self,*args):
+        return self.hessp_fn(*args).numpy()
+
+    def project(self,y,inverse=False):
+        # return tf.clip_by_value(y,self.xl,self.xu)
+        if inverse:
+            y = (y-self.xl)/(self.xu-self.xl)
+            return tf.math.log(y/(1-y+1e-6))
+        else:
+            return tf.sigmoid(y)*(self.xu-self.xl)+self.xl
+
+    @property
+    def calls(self):
+        return self.pred_fit.calls + self.objective_fn.calls + self.gradient_fn.calls + self.hessp_fn.calls
+
 def run_gr(prob,args,setting=None):
     print('Running gradient inversion')
-    # prob = mpc_problem_gr(args,margs)
+    prob.load_model()
     if args.use_current and setting is not None:
         sampling = initialize(setting,prob.xl,prob.xu,2 if args.cross_entropy else args.pop_size,args.sampling,conti=True)
     else:
@@ -585,7 +660,7 @@ def run_gr(prob,args,setting=None):
             return rec[1] >= vm
 
     t0 = time.time()
-    recs = [[0,prob.pred_fit.calls*args.pop_size,0,1e6,1e6,1e6,1e6]]
+    recs,sols = [[0,prob.calls*args.pop_size,0,1e6,1e6,1e6,1e6]],[]
     print('=======================================================================================')
     print(' n_gen |      time     |     grads     |     f_avg     |     f_min     |     g_min     ')
     print('=======================================================================================')
@@ -594,7 +669,7 @@ def run_gr(prob,args,setting=None):
     while not if_terminate(*args.termination,recs[-1]):
         obj,grads = prob.pred_fit()
         rec = [recs[-1][0]+1, 
-               prob.pred_fit.calls*args.pop_size-recs[-1][1], 
+               prob.calls*args.pop_size-recs[-1][1], 
                time.time()-t0-recs[-1][2], 
                np.mean([grad.numpy().mean() for grad in grads]), 
                obj.numpy().mean(), 
@@ -604,99 +679,151 @@ def run_gr(prob,args,setting=None):
             ctrls = prob.y[obj.numpy().argmin()].numpy()
             ctrls = np.clip(ctrls,prob.xl,prob.xu)
             ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
+        sols.append(ctrls)
         log = ''.join([str(round(r,4)).center(7 if i == 0 else 15) + '|' for i,r in enumerate(rec)])
         print(log[:-1])
-        rec[1],rec[2] = prob.pred_fit.calls*args.pop_size,time.time()-t0
+        rec[1],rec[2] = prob.calls*args.pop_size,time.time()-t0
         recs.append(rec)
     # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
     print('Best solution: ',ctrls)
-    vals,nfuns,times = np.array(recs)[1:,-1],np.array(recs)[1:,1]-prob.pred_fit.calls*args.pop_size,np.array(recs)[1:,2]
-    return ctrls,vals,nfuns,times
+    vals,nfuns,times,sols = np.array(recs)[1:,-1],np.array(recs)[1:,1]-prob.calls*args.pop_size,np.array(recs)[1:,2],np.array(sols)
+    return ctrls,vals,nfuns,times,sols
 
-# TODO: normalization in GR and LBFGS
-def run_lbfgs(prob,args,setting=None):
+def minimize_mt(args,prob,x0,state,callback):
+    return scioptminimize(prob.gradient,
+                        x0=x0 if prob.bounded else prob.project(x0,True),
+                        args=state+(int(threading.current_thread().name.split('_')[-1]),),
+                        method=args.method,
+                        jac=True,
+                        hessp=prob.hessp,
+                        bounds=list(zip(prob.xl,prob.xu)),
+                        callback=callback,
+                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                        )
+
+def minimize_mp(args,prob,x0,state):
+    # tf.config.list_logical_devices(device_type='GPU')
+    # tf.config.experimental.set_memory_growth(gpus[0], True)
+    # with tf.device('/device:GPU:%s'%n_gpu):
+    recs,sols = [[0,prob.calls,time.time(),1e6]],[]
+    print('===============================================')
+    print(' n_gen | n_fun |     time      |       f       ')
+    print('===============================================')
+    def mycallback(intermediate_result):
+        sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
+        obj = getattr(intermediate_result,'fun',np.nan)
+        nfev = prob.calls
+        rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
+        log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
+        print(log[:-1])
+        rec[1],rec[2] = nfev,time.time()
+        recs.append(rec)
+    return scioptminimize(prob.gradient,
+                        x0=x0 if prob.bounded else prob.project(x0,True),
+                        args=state,
+                        method=args.method,
+                        jac=True,
+                        hessp=prob.hessp,
+                        bounds=list(zip(prob.xl,prob.xu)),
+                        callback=mycallback,
+                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                        )
+
+# TODO: multiple runs in LBFGS. multi-process/thread not working, try tensorflow serving
+def run_ntopt(prob,args,setting=None):
     '''
-    TODO: GR/BFGS are still local optimization methods, and a global optimization method is needed to combine them. Try SHGO/basinhopping/etc.
-    tfp has no callbacks, while scipy.optimize.minimize has
-    scipy has L-BFGS-B for bounded optimization, but tfp only has L-BFGS and a tanh transformation is used
-    it seems tfp can do batch parallelization with multiple initial values
-    needs manual implementation for l-bfbs-b if wanna use GPU parallel of multiple initial values
+    l-bfgs-b or trust-constr
     '''
-    print('Running BFGS inversion')
+    print(f'Running {args.method} optimization')
+    sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
     if args.use_current and setting is not None:
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,conti=True)
+        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-1])
+
+    recs,sols = [[0,prob.calls,time.time(),1e6]],[]
+    print('===============================================')
+    print(' n_gen | n_fun |     time      |       f       ')
+    print('===============================================')
+    def mycallback(intermediate_result):
+        sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
+        obj = getattr(intermediate_result,'fun',np.nan)
+        nfev = prob.calls
+        rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
+        log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
+        print(log[:-1])
+        rec[1],rec[2] = nfev,time.time()
+        recs.append(rec)
+    if args.processes <= 1:
+        res = []
+        for x0 in sampling:
+            results = scioptminimize(lambda *arg: tuple([re.numpy() for re in prob.gradient_fn(*arg)]),
+                                        x0=x0 if prob.bounded else prob.project(x0,True),
+                                        args=prob.get_state(),
+                                        method=args.method,
+                                        jac=True,
+                                        hessp=lambda *arg: prob.hessp_fn(*arg).numpy(),
+                                        bounds=list(zip(prob.xl,prob.xu)),
+                                        callback=mycallback,
+                                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                                        )
+            res.append(results)
+        idx = np.argmin([r.fun for r in res])
+        results = res[idx]
     else:
-        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
-    if args.pop_size > 1:
-        t0 = time.time()
-        sampling = tf.atanh((tf.constant(sampling,dtype=tf.float32) - (prob.xu + prob.xl) / 2) * 2 / (prob.xu - prob.xl))
-        results = tfp.optimizer.lbfgs_minimize(prob.gradient_fn_parallel,
-                                               initial_position=sampling,)
-        print("Optimization converged: " + str(results.converged.numpy()))
-        print("Optimization failed: " + str(results.failed.numpy()))
-        vals = results.objective_value.numpy()
-        ctrls = results.position.numpy()[vals.argmin()]
-        ctrls = np.tanh(ctrls) * (prob.xu - prob.xl) / 2 + (prob.xu + prob.xl) / 2
-        vals = np.array([vals.min()]*max(results.num_iterations.numpy(),1))
-        times = np.linspace(0,time.time()-t0,max(results.num_iterations.numpy(),1))
-    else:
-        recs = [[0,prob.gradient_fn.calls,time.time(),1e6]]
-        print('===============================================')
-        print(' n_gen | n_fun |     time      |       f       ')
-        print('===============================================')
-        def mycallback(intermediate_result):
-            obj = getattr(intermediate_result,'fun',np.nan)
-            # TODO: find a way to count calls of gradient_fn & gradient_fn_parallel
-            nfev = prob.gradient_fn.calls
-            rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
-        # def mycallback(x,obj=None,*args,**kwargs):
-        #     obj = prob.objective_fn(x,prob.runoff,prob.state,prob.edge_state).numpy() if obj is None else obj
-        #     rec = [recs[-1][0]+1, time.time()-recs[-1][1], min(obj,recs[-1][-2]), obj]
-            log = ''.join([str(round(r,4)).center(7 if i < 1 else 15) + '|' for i,r in enumerate(rec)])
-            print(log[:-1])
-            rec[1],rec[2] = nfev,time.time()
-            recs.append(rec)
-        results = scioptminimize(lambda x,r,s,e: tuple([re.numpy() for re in prob.gradient_fn(x,r,s,e)]),
-                                 args=(prob.runoff,prob.state,prob.edge_state),
-                                 x0=sampling[0],
-                                 method='L-BFGS-B',
-                                 jac=True,
-                                 bounds=list(zip(prob.xl,prob.xu)),
-                                 callback=mycallback,
-                                 options={"ftol":1e-25,"gtol":1e-10})
-        print("Optimization {}".format("successful" if results.success else "failed"))
-        ctrls = results.x
-        vals = np.array(recs)[1:,-1]
-        nfuns = np.array(recs)[1:,1]-recs[0][1]
-        times = np.array(recs)[1:,2]-recs[0][2]
+        # GPU seems to work well in multi-threads, but not faster than single-thread
+        pool = ThreadPoolExecutor(max_workers=args.processes)
+        res = [pool.submit(minimize_mt,args,prob,x0,prob.get_state(),mycallback) for x0 in sampling]
+        res = [r.result() for r in res]
+        pool.shutdown()
+        # GPU cannot work in multiprocessing
+        # pool = mp.Pool(processes=args.processes)
+        # res = [pool.apply_async(minimize_mp,args=(args,prob,x0,prob.get_state(),)) for x0 in sampling]
+        # pool.close()
+        # pool.join()
+        # res = [r.get() for r in res]
+        idx = np.argmin([r.fun for r in res])
+        results = res[idx]
+    print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
+    ctrls = results.x if prob.bounded else prob.project(results.x).numpy()
+    vals = np.array(recs)[1:,-1]
+    nfuns = np.array(recs)[1:,1]-recs[0][1]
+    times = np.array(recs)[1:,2]-recs[0][2]
     ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    sols = np.array(sols,dtype=np.float32).reshape((-1,prob.n_step,prob.n_act))
     print('Best solution: ',ctrls)
-    return ctrls,vals,nfuns,times
+    return ctrls,vals,nfuns,times,sols
+
 
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
-    # ctx = mp.get_context("spawn")
     de = {
         # 'env':'astlingen',
         # 'act':'conti',
-        # 'processes':4,
-        # 'pop_size':1,
+        # 'processes':2,
+        # 'pop_size':16,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
-        # 'termination':['n_gen',200],
+        # # 'termination':['n_gen',5,'time','00:05:00'],
         # 'surrogate':True,
+        # 'gradient': True,
         # 'predict':False,
-        # 'lbfgsb':True,
-        # 'rain_dir':'./envs/config/ast_test5_events.csv',
+        # 'method':'l-bfgs-b',
+        # 'use_current':True,
+        # 'rain_dir':'./envs/config/ast_test2007_events.csv',
         # 'rain_suffix':'chaohu_testall',
         # 'rain_num':100,
+        # 'swmm_step':1,
+        # 'lag':True,
+        # 'horizon':120,
         # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs',
-        # 'result_dir':'./results/astlingen/test',
+        # 'result_dir':'./results/astlingen/120s_conti_lbfgsb_pop16_2007',
         }
     # config['rain_dir'] = de['rain_dir']
     for k,v in de.items():
         setattr(args,k,v)
+
+    tf.random.set_seed(args.seed)
+    np.random.seed(args.seed)
 
     env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
@@ -705,7 +832,6 @@ if __name__ == '__main__':
             v = v and args.act
         setattr(args,k,v)
     setattr(args,'elements',env.elements)
-    # args.act = 'mpc'
 
     rain_arg = env.config['rainfall']
     if 'rain_dir' in config:
@@ -729,9 +855,7 @@ if __name__ == '__main__':
         env_args = env.get_args(margs.directed,margs.length,margs.order)
         for k,v in env_args.items():
             setattr(margs,k,v)
-        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = margs.seq_out * args.interval
-    else:
-        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
+    args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
 
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
@@ -746,14 +870,14 @@ if __name__ == '__main__':
             continue
         t0 = time.time()
         if args.surrogate:
-            ts,runoff = get_runoff(env,event,tide=args.tide)
+            ts,runoff = get_runoff(env,event,tide=args.tide and args.is_outfall)
             tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
             tss.index = pd.to_datetime(tss.index)
             horizon = args.prediction['eval_horizon']//args.interval
             runoff = np.stack([np.concatenate([runoff[idx:idx+horizon],np.tile(np.zeros_like(s),(max(idx+horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
                                 for idx,s in enumerate(runoff)])
         elif args.prediction['no_runoff']:
-            ts,runoff_rate = get_runoff(env,event,True)
+            ts,runoff_rate = get_runoff(env,event,True,tide=args.tide and args.is_outfall)
             tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
             tss.index = pd.to_datetime(tss.index)
             horizon = args.prediction['eval_horizon']//args.interval
@@ -777,12 +901,12 @@ if __name__ == '__main__':
         setting = [env.controller('default') for _ in range(args.prediction['control_horizon']//args.setting_duration)]
         settings = [env.controller(args.keep,states[0],setting[0]) if args.keep != 'False' else setting[0]]
 
-        if args.surrogate and (args.lbfgsb or args.gradient):
-            prob = mpc_problem_gr(args,margs)
+        if args.surrogate and args.gradient:
+            prob = mpc_problem_gr(args,margs,load_model=True)
         else:
             prob = mpc_problem(args,margs=margs if args.surrogate else None)
 
-        done,i,j,valss,nfunss,timess = False,0,0,[],[],[]
+        done,i,j,valss,nfunss,timess,solss = False,0,0,[],[],[],[]
         while not done:
             if i*args.interval % args.control_interval == 0:
                 t2 = time.time()
@@ -806,13 +930,14 @@ if __name__ == '__main__':
                     # margs.runoff = r
                     prob.load_state(state,r,edge_state)
                     if args.gradient:
-                        setting,vals,nfuns,times = run_gr(prob,args,setting=setting)
-                    elif args.lbfgsb:
-                        setting,vals,nfuns,times = run_lbfgs(prob,args,setting=setting)
+                        if args.method.lower() == 'descent':
+                            setting,vals,nfuns,times,sols = run_gr(prob,args,setting=setting)
+                        else:
+                            setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
                     elif args.cross_entropy:
-                        setting,vals,nfuns,times = run_ce(prob,args,setting=setting)
+                        setting,vals,nfuns,times,sols = run_ce(prob,args,setting=setting)
                     else:
-                        setting,vals,nfuns,times = run_ea(prob,args,setting=setting)
+                        setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
                 else:
                     eval_file = env.get_eval_file(args.prediction['no_runoff'])
                     if args.prediction['no_runoff']:
@@ -820,21 +945,26 @@ if __name__ == '__main__':
                         rr = runoff_rate[int(tss.asof(t)['Index']),...,0]
                     prob.load_file(eval_file,env.data_log,rr if args.prediction['no_runoff'] else None)
                     if args.cross_entropy:
-                        setting,vals = run_ce(prob,args,setting=setting)
+                        setting,vals,nfuns,times,sols = run_ce(prob,args,setting=setting)
                     else:
-                        setting,vals = run_ea(prob,args,setting=setting)
+                        setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
                 valss.append(vals)
                 nfunss.append(nfuns)
                 timess.append(times)
+                solss.append(sols[:,:args.control_interval//args.setting_duration,:])
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
                 j = 0
+                lag = (t3-t2)/60/args.interval
+                prev_sett = sett.copy() if i > 0 else settings[0].copy()
                 sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
             elif i*args.interval % args.setting_duration == 0:
                 j += 1
                 sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
-            done = env.step(sett)
+            real_sett = prev_sett if args.lag and i*args.interval % args.control_interval < int(lag) else sett
+            done = env.step(real_sett,
+                            lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.control_interval == int(lag) else None)
             state = env.state_full(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)
@@ -843,7 +973,7 @@ if __name__ == '__main__':
             perfs.append(env.flood())
             objects.append(env.objective())
             edge_states.append(edge_state[-1] if args.surrogate else edge_state)
-            settings.append(sett)
+            settings.append(real_sett)
             i += 1
             print('Simulation time: %s'%env.data_log['simulation_time'][-1])            
         
@@ -855,6 +985,7 @@ if __name__ == '__main__':
         np.save(os.path.join(args.result_dir,name + '_%s_vals.npy'%item),np.array(valss))
         np.save(os.path.join(args.result_dir,name + '_%s_nfuns.npy'%item),np.array(nfunss))
         np.save(os.path.join(args.result_dir,name + '_%s_times.npy'%item),np.array(timess))
+        np.save(os.path.join(args.result_dir,name + '_%s_sols.npy'%item),np.array(solss))
 
         results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum(),np.stack(objects).sum()]
     results.to_csv(os.path.join(args.result_dir,'results_%s.csv'%item))

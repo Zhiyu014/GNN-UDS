@@ -1,0 +1,9 @@
+Multiple runs with different initial values
+At non-overflow/flood scenarios, the main objective is to maximize the WWTP inflow, in which the current setting usually leads to the optimum.
+At overflow/flood scenarios, the main objective is to minimize overflow, in which multiple initial values are necessary as there are many local minimas.
+
+Need to do some analyses on the iteration processes if the assumptions above are correct.
+Find the best initial value for iterations at different scenarios.
+
+Determine if it is necessary to split flood/non-flood scenarios to apply different pop sizes.
+Decide proper population size.

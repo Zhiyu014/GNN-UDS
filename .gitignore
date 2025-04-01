@@ -161,6 +161,7 @@ cython_debug/
 *.hsf
 *.json
 *.rar
+*.zip
 *.v2
 !hague.inp
 !shunqing.inp

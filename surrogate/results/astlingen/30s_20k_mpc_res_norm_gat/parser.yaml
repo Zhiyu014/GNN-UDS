@@ -1,8 +1,0 @@
-model_dir: 30s_20k_res_norm_gat
-pop_size: 128
-rain_dir: ast_test5_events.csv
-result_dir: 30s_20k_mpc_res_norm_gat
-surrogate: true
-termination:
-- n_gen
-- 200

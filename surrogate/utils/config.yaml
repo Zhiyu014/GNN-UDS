@@ -20,6 +20,7 @@ shunqing:
 
   # train args
   train: False
+  seed: 42
   load_model: False
   edge_fusion: False
   use_adj: False
@@ -81,6 +82,7 @@ RedChicoSur:
 
   # train args
   train: False
+  seed: 42
   load_model: False
   edge_fusion: False
   use_adj: False
@@ -142,6 +144,7 @@ astlingen:
 
   # train args
   train: False
+  seed: 42
   load_model: False
   edge_fusion: False
   use_adj: False
@@ -203,6 +206,7 @@ hague:
 
   # train args
   train: False
+  seed: 42
   load_model: False
   # there exists external flow to outfall, so edge_fusion donot work well
   edge_fusion: False
@@ -265,6 +269,7 @@ chaohu:
 
   # train args
   train: False
+  seed: 42
   load_model: False
   edge_fusion: False
   use_adj: False

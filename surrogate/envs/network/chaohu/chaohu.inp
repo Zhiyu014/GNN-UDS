@@ -25,7 +25,7 @@ DRY_DAYS             8
 REPORT_STEP          00:01:00
 WET_STEP             00:01:00
 DRY_STEP             00:01:00
-ROUTING_STEP         0:00:01
+ROUTING_STEP         00:00:01
 RULE_STEP            00:00:00
 INERTIAL_DAMPING     PARTIAL
 NORMAL_FLOW_LIMITED  BOTH
@@ -687,7 +687,6 @@ JKLQC           5.8000 50.2400
 XECQC  STORAGE  0.0000 120.0000
 XECQC          10.0000 120.0000
 XECQC          12.0000 120.0000
-
 
 ;;____________________________________________________________________________________________________
 [TIMESERIES]

@@ -1,0 +1,17 @@
+act: rand3
+agent: PPO
+agent_dir: 5s_10k_rand3_mbrl_observ_ppo_6ly_swmmstep10
+batch_size: 256
+data_dir: ./envs/data/astlingen/1s_edge_conti128_rain50
+episodes: 10000
+limit: 21
+mac: true
+model_based: true
+model_dir: 5s_20k_conti_500ledgef_res_norm_flood_gat
+n_layer: 6
+norm: true
+processes: 4
+rain_dir: ast_train50_events.csv
+stochastic: true
+swmm_step: 10
+train: true

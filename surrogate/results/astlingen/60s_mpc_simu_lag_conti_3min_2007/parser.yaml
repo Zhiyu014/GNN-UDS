@@ -1,0 +1,13 @@
+act: conti
+lag: true
+pop_size: 128
+processes: 32
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_mpc_simu_lag_conti_3min_2007
+swmm_step: 1
+termination:
+- time
+- 00:03:00
+- soo
+- period-10
+use_current: true

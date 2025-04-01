@@ -52,14 +52,14 @@ class basescenario(scenario):
         # initialize logger
         self.initialize_logger()
 
-    def step(self, actions=None, advance_seconds = None, log=True):
+    def step(self, actions=None, advance_seconds = None, lag_seconds = None, log=True):
         # Implement the actions and take a step forward
         if advance_seconds is None and self.config.get('interval') is not None:
             advance_seconds = self.config['interval'] * 60
         # if actions is not None:
         #     actions = self._convert_actions(actions)
 
-        done = self.env.step(actions, advance_seconds = advance_seconds)
+        done = self.env.step(actions, advance_seconds = advance_seconds, lag_seconds = lag_seconds)
         
         # Log the states, targets, and actions
         if log:
@@ -67,7 +67,7 @@ class basescenario(scenario):
 
         # Log the performance
         __performance = []
-        for typ, attribute, _ in self.config["performance_targets"]:
+        for typ, attribute, *_ in self.config["performance_targets"]:
             if typ in ['nodes','links','subcatchments']:
                 features = self.elements[typ]
                 __volume = [self.env.methods[attribute](ID) for ID in features]
@@ -245,7 +245,7 @@ class basescenario(scenario):
             self.data_log[attribute][ID] = [] if maxlen is None else deque(maxlen=maxlen)
 
         # Data logger for storing _performance & _state data
-        for ID, attribute, _ in config["performance_targets"]:
+        for ID, attribute, *_ in config["performance_targets"]:
             if attribute not in self.data_log.keys():
                 self.data_log[attribute] = {}
             if ID in ['nodes','links','subcatchments']:
@@ -295,8 +295,8 @@ class basescenario(scenario):
             # It seems that a tidal outfall may have large full depth hmax above the maximum tide level
             # args['hmax'] = np.array([node.MaxDepth for node in list(inp.JUNCTIONS.values())+list(inp.STORAGE.values())])
         else:
-            args['is_outfall'] = np.array([self.env._is_Outfall(node) for node in nodes])
-            args['is_storage'] = np.array([self.env._is_Storage(node) for node in nodes])
+            args['is_outfall'] = np.array([self.env._is_Outfall(node) for node in nodes],dtype=np.float32)
+            args['is_storage'] = np.array([self.env._is_Storage(node) for node in nodes],dtype=np.float32)
             args['hmax'] = np.array([self.env.methods['fulldepth'](node)+self.env.methods['surdepth'](node) for node in nodes])
             if args['global_state'][0][-1] == 'head':
                 args['hmin'] = np.array([self.env.methods['invertelev'](node) for node in nodes])
@@ -384,7 +384,7 @@ class basescenario(scenario):
             n_node = edges.max()+1
             adj = np.zeros((n_node,n_node))
             for n in range(n_node):
-                for a in list(nx.dfs_preorder_nodes(X,n,order)):
+                for a in list(nx.dfs_preorder_nodes(X,n,order) if order>0 else [n]):
                     adj[n,a] = 1
                     if not directed:
                         adj[a,n] = 1
@@ -424,7 +424,7 @@ class basescenario(scenario):
                 for a,l in p_l.items():
                     adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
             else:
-                for a in list(nx.dfs_preorder_nodes(EX,n,order)):
+                for a in list(nx.dfs_preorder_nodes(EX,n,order) if order>0 else [n]):
                     adj[n,a] = 1
         return adj
 
@@ -491,7 +491,7 @@ class basescenario(scenario):
                 X.add_edge(u,n_node+i)
                 X.add_edge(n_node+i,v)
             for n in range(n_node+n_edge):
-                for a in list(nx.dfs_preorder_nodes(X,n,order)):
+                for a in list(nx.dfs_preorder_nodes(X,n,order) if order>0 else [n]):
                     adj[n,a] = 1
                     if not directed:
                         adj[a,n] = 1
@@ -527,7 +527,7 @@ class basescenario(scenario):
                 for a,l in p_l.items():
                     adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
             else:
-                for a in list(nx.dfs_preorder_nodes(EX,n,order)):
+                for a in list(nx.dfs_preorder_nodes(EX,n,order) if order>0 else [n]):
                     adj[n,a] = 1
         return adj
             
@@ -549,6 +549,7 @@ class basescenario(scenario):
         inp = read_inp_file(self.config['swmm_input'])
 
         # Set the simulation time & hsf options
+        # inp['OPTIONS']['ROUTING_STEP'] = datetime.time(second=30)
         inp['OPTIONS']['START_DATE'] = inp['OPTIONS']['REPORT_START_DATE'] = ct.date()
         inp['OPTIONS']['START_TIME'] = inp['OPTIONS']['REPORT_START_TIME'] = ct.time()
         # inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).date()
@@ -561,24 +562,10 @@ class basescenario(scenario):
         
         # Set the outlet of subcatchments to themselves if no_runoff
         if no_runoff:
-            for k,v in inp.SUBCATCHMENTS.items():
+            for _,v in inp.SUBCATCHMENTS.items():
                 v.Outlet = v.Name
             if 'DWF' in inp.keys():
                 inp.pop('DWF')
-            
-        # Set the Control Rules
-        # inp['CONTROLS'] = Control.create_section()
-        # for i in range(self.config['prediction']['control_horizon']//self.config['control_interval']):
-        #     time = round(self.config['control_interval']/60*(i+1),2)
-        #     conditions = [Control._Condition('IF','SIMULATION','TIME', '<', str(time))]
-        #     actions = []
-        #     for idx,k in enumerate(self.config['action_space']):
-        #         logic = 'THEN' if idx == 0 else 'AND'
-        #         kind = self.env.methods['getlinktype'](k)
-        #         action = Control._Action(logic,kind,k,'SETTING','=',str('1.0'))
-        #         actions.append(action)
-        #     inp['CONTROLS'].add_obj(Control('P%s'%(i+1),conditions,actions,priority=5-i))
-    
 
         # Output the eval file
         eval_inp_file = os.path.join(os.path.dirname(self.config['swmm_input']),

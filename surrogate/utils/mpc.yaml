@@ -13,7 +13,10 @@ astlingen:
   control_interval: 5
   setting_duration: 5
   act: 'False'
-  processes: 5
+  lag: False
+
+  processes: 1
+  seed: 42
   horizon: 60
   pop_size: 32
   use_current: False
@@ -33,7 +36,7 @@ astlingen:
   model_dir: ./model/astlingen/
   epsilon: -1.0
   gradient: False
-  lbfgsb: False
+  method: descent
   cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
@@ -56,7 +59,10 @@ hague:
   control_interval: 30
   setting_duration: 15
   act: 'False'
-  processes: 5
+  lag: False
+
+  processes: 1
+  seed: 42
   horizon: 60
   pop_size: 32
   use_current: False
@@ -76,7 +82,7 @@ hague:
   model_dir: ./model/hague/
   epsilon: -1.0
   gradient: False
-  lbfgsb: False
+  method: descent
   cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
@@ -98,7 +104,10 @@ chaohu:
   control_interval: 10
   setting_duration: 10
   act: 'False'
-  processes: 5
+  lag: False
+  
+  processes: 1
+  seed: 42
   horizon: 60
   pop_size: 32
   use_current: False
@@ -119,7 +128,7 @@ chaohu:
   model_dir: ./model/chaohu/
   epsilon: -1.0
   gradient: False
-  lbfgsb: False
+  method: descent
   cross_entropy: 0.0
   stochastic: 0
   error: 0.0

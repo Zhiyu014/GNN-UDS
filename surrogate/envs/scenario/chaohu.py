@@ -124,7 +124,7 @@ class chaohu(basescenario):
         outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
                    for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         wwtp = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
-                for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
+                for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
         if self.config['global_state'][0][-1] == 'head':
             energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms)*gamma,axis=1)/ 8.814 * KWperHP/3600.0 * weight
@@ -144,12 +144,14 @@ class chaohu(basescenario):
         # return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
 
     def norm_obj(self,obj,states,g=False,inverse=False):
-        q_in,nodes = states[0][...,1],self.elements['nodes']
+        # q_in,nodes = states[0][...,1],self.elements['nodes']
         if g:
             import tensorflow as tf
-            __norm = tf.reduce_sum(tf.reduce_sum(q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]],axis=-1),axis=-1)
+            # __norm = tf.reduce_sum(tf.reduce_sum(q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]],axis=-1),axis=-1)
+            __norm = tf.reduce_sum(tf.reduce_sum(states[0][...,-1],axis=-1),axis=-1)
         else:
-            __norm = q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]].sum(axis=-1).sum(axis=-1)
+            # __norm = q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]].sum(axis=-1).sum(axis=-1)
+            __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
             while __norm.ndim < obj.ndim:
                 __norm = np.expand_dims(__norm,-1)
         return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
@@ -185,6 +187,14 @@ class chaohu(basescenario):
             if '2' in act:
                 actions = {(k[0]*3+k[1],k[2]*3+k[3]):v for k,v in actions.items()}
         return actions
+    
+    def get_action_space(self,act='rand'):
+        asp = self.config['action_space'].copy()
+        asps = {k:list(product(*[asp[p] for p in v]))
+                 for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
+        asps = {k:[va for va in v if va[0]>=va[1]] if len(v[0])==2 else v
+                for k,v in asps.items()}
+        return asps
 
     def get_args(self,directed=False,length=0,order=1,graph_base=0,act=False,dec=False):
         args = super().get_args(directed,length,order,graph_base)
@@ -203,6 +213,7 @@ class chaohu(basescenario):
             args['action_table'] = self.get_action_table(act)
             # For multi-agent
             args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
+            args['action_space'] = self.get_action_space(act)
             if dec:
                 args['n_agents'] = len(self.config['site'])
                 state = [s[0] for s in self.config['states']]
@@ -212,7 +223,6 @@ class chaohu(basescenario):
             else:
                 args['n_agents'] = 1
                 args['observ_space'] = self.config['states']
-                # args['action_shape'] = len(args['action_table'])
         return args
     
     def controller(self,mode='rand',state=None,setting=None):

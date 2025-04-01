@@ -80,7 +80,7 @@ class env_base(environment):
             'cumpumpenergy':self._getPumpEnergy,
             })
 
-    def step(self, actions=None, advance_seconds = None):
+    def step(self, actions=None, advance_seconds = None, lag_seconds = None):
         r"""
         Implements the control action and forwards
         the simulation by a step.
@@ -96,7 +96,45 @@ class env_base(environment):
         done : boolean
             event termination indicator
         """
-
+        if lag_seconds is None:
+            self._set_actions(actions)
+        
+        self._advance_seconds = advance_seconds
+        # take the step !
+        # add the swmm_stride option for a longer control step
+        if self._advance_seconds is None:
+            elapsed_time = self.sim._model.swmm_step()
+        else:
+            routing_step = self.sim._model.getSimAnalysisSetting(tkai.SimulationParameters.RouteStep)
+            if self.sim._model.getSimAnalysisSetting(routing_step) > 1:
+                # use swmm-stride in dll in pyswmm==2.0, avoid time lag when step==30/60s (still has lag)
+                self.log = self.ini_log(self.sim._model.curSimTime)
+                elapsed_time = self.sim._model.swmm_stride(self._advance_seconds)
+                self._log(elapsed_time)
+            else:
+                # src from the func swmm_stride in pyswmm==1.5.1, no time lag when step==1s
+                # Try swmm_stride(routestep), works similar
+                ctime = self.sim._model.curSimTime
+                self.log = self.ini_log(ctime)
+                advanceDays = self._advance_seconds / self.sec_per_day
+                eps = advanceDays * 0.00001
+                elapsed_time = 0
+                action_set = False
+                while self.sim._model.curSimTime <= ctime + advanceDays - eps:
+                    if lag_seconds is not None and self.sim._model.curSimTime >= ctime + lag_seconds / self.sec_per_day - eps and not action_set:
+                        self._set_actions(actions)
+                        action_set = True
+                    elapsed_time = self.sim._model.swmm_step()
+                    # elapsed_time = self.sim._model.swmm_stride(routing_step)
+                    self._log(elapsed_time)
+                    if elapsed_time == 0:
+                        break
+                    self.sim._model.curSimTime = elapsed_time
+            
+        done = False if elapsed_time > 0 else True
+        return done
+    
+    def _set_actions(self,actions=None):
         if (self.ctrl) and (actions is not None):
             # implement the actions based on type of argument passed
             # if actions are an array or a list
@@ -113,36 +151,6 @@ class env_base(environment):
                     )
                 )
         
-        self._advance_seconds = advance_seconds
-        # take the step !
-        # add the swmm_stride option for a longer control step
-        if self._advance_seconds is None:
-            elapsed_time = self.sim._model.swmm_step()
-        else:
-            routing_step = self.sim._model.getSimAnalysisSetting(tkai.SimulationParameters.RouteStep)
-            if self.sim._model.getSimAnalysisSetting(routing_step) > 1:
-                # use swmm-stride in dll in pyswmm==2.0, avoid time lag when step==30/60s
-                self.log = self.ini_log(self.sim._model.curSimTime)
-                elapsed_time = self.sim._model.swmm_stride(self._advance_seconds)
-                self._log(elapsed_time)
-            else:
-                # src from the func swmm_stride in pyswmm==1.5.1, no time lag when step==1s
-                # Try swmm_stride(routestep), works similar
-                ctime = self.sim._model.curSimTime
-                self.log = self.ini_log(ctime)
-                advanceDays = self._advance_seconds / self.sec_per_day
-                eps = advanceDays * 0.00001
-                elapsed_time = 0
-                while self.sim._model.curSimTime <= ctime + advanceDays - eps:
-                    elapsed_time = self.sim._model.swmm_step()
-                    # elapsed_time = self.sim._model.swmm_stride(routing_step)
-                    self._log(elapsed_time)
-                    if elapsed_time == 0:
-                        break
-                    self.sim._model.curSimTime = elapsed_time
-            
-        done = False if elapsed_time > 0 else True
-        return done
 
     def terminate(self):
         r"""

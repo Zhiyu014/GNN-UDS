@@ -10,7 +10,7 @@ import numpy as np
 import os
 # from line_profiler import LineProfiler
 import tensorflow as tf
-tf.config.list_physical_devices(device_type='GPU')
+# tf.config.list_physical_devices(device_type='GPU')
 
 import yaml,time,matplotlib.pyplot as plt
 from main import Argument,HERE
@@ -181,7 +181,7 @@ class Predictor:
     def predict(self,state,runoff,settings,edge_state):
         x,b,e = [self.normalize(dat,item) for dat,item in zip([state,runoff,edge_state],'xbe')]
         if self.full:
-            x,b,e = [tf.reshape(dat,dat.shape[:2]+(-1,)) for dat in [x,b,e]]
+            x,b,e = [tf.reshape(dat,dat.shape[:2]+(np.prod(dat.shape[2:]),)) for dat in [x,b,e]]
             inp = [x,e,b,settings] if self.act else [x,e,b]
         else:
             moni = tf.stack([x[...,i,j] for i,j in self.moni_nodes]+[e[...,i,j] for i,j in self.moni_links],axis=-1)
@@ -197,6 +197,7 @@ class Predictor:
             preds = self.normalize(preds,'o',inverse=True)
         return preds
     
+    @tf.function
     def predict_tf(self,state,runoff,settings,edge_state):
         return self.predict(state,runoff,settings,edge_state)
 

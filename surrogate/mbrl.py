@@ -10,9 +10,6 @@ warnings.filterwarnings("ignore")
 import tensorflow as tf
 tf.config.list_physical_devices(device_type='GPU')
 # tf.config.experimental.set_memory_growth(gpu, True)
-# from tensorflow.keras import mixed_precision
-# policy = mixed_precision.Policy('mixed_float16')
-# mixed_precision.set_global_policy(policy)
 from emulator import Emulator
 from dataloader import DataGenerator
 from agent import get_agent
@@ -21,6 +18,10 @@ from envs import get_env
 from utils.utilities import get_inp_files
 import pandas as pd,matplotlib.pyplot as plt
 import argparse,time
+from keras import mixed_precision
+mixed_precision.set_global_policy('float32')
+# 5 runs with different seeds
+# seeds = [42, 123, 246, 357, 489]
 
 HERE = os.path.dirname(__file__)
 
@@ -42,6 +43,7 @@ def parser(config=None):
 
     # rl args
     parser.add_argument('--train',action="store_true",help='if train')
+    parser.add_argument('--seed',type=int,default=42,help='random seed')
     parser.add_argument('--episodes',type=int,default=1000,help='training episodes')
     parser.add_argument('--batch_size',type=int,default=128,help='training batch size')
     parser.add_argument('--limit',type=int,default=23,help='maximum capacity 2^n of the buffer')
@@ -61,7 +63,7 @@ def parser(config=None):
 
     # agent args
     parser.add_argument('--agent',type=str,default='SAC',help='agent name')
-    parser.add_argument('--conv',type=str,default='GATconv',help='convolution type')
+    parser.add_argument('--conv',type=str,default='False',help='convolution type')
     parser.add_argument('--use_pred',action="store_true",help='if use prediction runoff')
     parser.add_argument('--net_dim',type=int,default=128,help='number of decision-making channels')
     parser.add_argument('--n_layer',type=int,default=3,help='number of decision-making layers')
@@ -76,7 +78,7 @@ def parser(config=None):
     parser.add_argument('--norm',action="store_true",help='if use reward normalization')
     parser.add_argument('--scale',type=float,default=1.0,help='reward scaling factor')
     parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
-    parser.add_argument('--en_disc',type=float,default=0.5,help='target entropy discount factor')
+    parser.add_argument('--en_disc',type=float,default=-1,help='target entropy discount factor')
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--update_interval',type=float,default=0.005,help='target update interval')
@@ -86,6 +88,7 @@ def parser(config=None):
 
     # testing scenario args: rain and result dir not useful here
     parser.add_argument('--test',action="store_true",help='if test')
+    parser.add_argument('--stochastic',action="store_true",help='if use stochastic policy')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
@@ -96,18 +99,19 @@ def parser(config=None):
     args = parser.parse_args()
     if config is not None:
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
-        hyp = {k:v for k,v in hyps.items() if hasattr(args,k)}
-        parser.set_defaults(**hyp)
+        hyps = {k:v for k,v in hyps[args.env].items() if hasattr(args,k)}
+        parser.set_defaults(**hyps)
     args = parser.parse_args()
 
-    config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k,v)}
+    config = {k:v for k,v in args.__dict__.items() if v!=hyps.get(k,v)}
     for k,v in config.items():
         if '_dir' in k:
-            setattr(args,k,os.path.join(hyps[args.env][k],v))
+            setattr(args,k,os.path.join(hyps[k],v))
 
     print('MBRL configs: {}'.format(args))
     return args,config
 
+# TODO: cpu-based ctrl.control is time-consuming. Try a virtual gpu
 def interact_steps(args,event,runoff,ctrl=None,train=False):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     # with tf.device('/cpu:0'):
@@ -156,7 +160,7 @@ def interact_steps(args,event,runoff,ctrl=None,train=False):
                 observ = tf.stack([tf.reduce_sum(observ[...,i],axis=-1) if 'cum' in attr or '_vol' in attr else observ[...,-1,i]
                                    for i,(_,attr) in enumerate(args.states)],axis=-1)
             setting = ctrl.control(observ,train).numpy()
-            setting = env.controller('safe',state[-1],setting)
+            # setting = env.controller('safe',state[-1],setting)
         done = env.step([float(sett) for sett in setting.tolist()])
         state = env.state_full(seq=args.setting_duration)
         if getattr(args,"if_flood",False):
@@ -179,29 +183,37 @@ if __name__ == '__main__':
     train_de = {
         # 'agent':'SAC',
         # 'train':True,
-        # 'env':'astlingen',
-        # 'act':'conti',
-        # 'mac':False,
+        # 'env':'chaohu','setting_duration':10,'control_interval':10,
+        # 'act':'rand',
+        # 'mac':True,
         # 'dec':False,
-        # 'model_based':True,'sample_gap':0,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
-        # 'model_dir':'./model/astlingen/5s_20k_conti_500ledgef_res_norm_flood_gat/',
+        # 'n_layer':5,
+        # 'model_based':True,'sample_gap':0,'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+        # 'model_dir':'./model/chaohu/10s_50k_rand_edgef_res_flood_gat/',
         # 'batch_size':64,
         # 'episodes':10000,
-        # 'limit':20,
+        # 'limit':21,
         # 'tune_gap':0,
         # 'horizon':60,
         # 'norm':True,'scale':1.0,
-        # 'conv':'False','use_pred':True,
-        # 'eval_gap':10,'start_gap':0,
-        # 'agent_dir': './agent/astlingen/test',
+        # 'conv':'False','use_pred':False,
+        # 'eval_gap':10,'start_gap':100,
+        # 'agent_dir': './agent/chaohu/test',
         # 'load_agent':False,
         # 'processes':4,
-        # 'rain_dir':'ast_train50_events.csv','swmm_step':10,
+        # 'swmm_step':10,
+        # 'rain_suffix':'chaohu_test','rain_num':4,
+        # # 'rain_dir':'ast_train50_events.csv',
         # 'test':False,
+        # 'stochastic':False,
         }
     for k,v in train_de.items():
         setattr(args,k,v)
         config[k] = v
+
+    tf.random.set_seed(args.seed)
+    tf.keras.utils.set_random_seed(args.seed)
+    np.random.seed(args.seed)
 
     env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,args.graph_base,act=args.act,dec=args.dec)
@@ -257,7 +269,7 @@ if __name__ == '__main__':
             res = [(ts,runoff) for ts,runoff in zip(res[0],res[1])]
         else:
             pool = mp.Pool(args.processes)
-            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide,))
+            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
                    for event in events]
             pool.close()
             pool.join()
@@ -297,7 +309,7 @@ if __name__ == '__main__':
             n_step,r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
             x,a,b,y = data[:4]
             r = tf.concat(data[4:6],axis=1)
-            ex = data[-2]
+            ex = data[6]
             xs,exs,settings,perfs = [x],[ex],[a[:,:args.seq_in,:]],[y[:,:args.seq_in,:,-1:]]
             for i in range(n_step):
                 bi = b[:,i*r_step:(i+1)*r_step,:]
@@ -312,7 +324,7 @@ if __name__ == '__main__':
                                         for i in range(b_norm.shape[-1])],axis=-1)
                     s_norm = [x_norm,b_norm,e_norm] if args.use_pred else [x_norm,e_norm]
                 else:
-                    r_norm = ctrl.normalize(r[:,i*r_step:(i+1)*r_step,:],'r')
+                    r_norm = ctrl.normalize(r[:,(i+1)*r_step:(i+2)*r_step,:],'r') if args.use_pred else ctrl.normalize(r[:,i*r_step:(i+1)*r_step,:],'r')
                     s_norm = tf.stack([x_norm[...,args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr)] if attr in args.attrs['nodes']
                                     else e_norm[...,args.elements['links'].index(idx),args.attrs['links'].index(attr)]
                                     for idx,attr in args.states if attr in args.attrs['nodes']+args.attrs['links']],axis=-1)
@@ -363,8 +375,8 @@ if __name__ == '__main__':
                 train_idxs = dG.get_data_idxs(train_ids,seq)
                 test_idxs = dG.get_data_idxs(test_ids,seq)
                 emul.set_norm(*dG.get_norm())
-                k = (1 + min(dG.cur_capa / dG.limit,1))
-                epochs,batch_size = int(k * args.epochs), int(k * args.batch_size)
+                k = 1 + min(dG.update_num / (dG.cur_capa - dG.update_num),5)
+                epochs,batch_size = int(k*args.epochs),int(k*args.batch_size)
                 for epoch in range(epochs):
                     t1 = time.time()
                     train_dats = dG.prepare_batch(train_idxs,seq,batch_size,interval=args.setting_duration,trim=False)
@@ -403,6 +415,7 @@ if __name__ == '__main__':
                 res = [r.get() for r in res]
                 trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
                 trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
+                trajs.append(np.concatenate([[0]*(r[0].shape[0]-1)+[1] for r in res],axis=-1).astype(np.float32))
                 dGv.update(trajs)
                 if args.model_based:
                     dG.update(trajs)
@@ -423,23 +436,15 @@ if __name__ == '__main__':
                 seq = max(args.seq_in,args.horizon)
                 train_idxs = dG.get_data_idxs(train_ids,seq)
                 train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,args.setting_duration,return_idx=True)
-                i,rand = 0,np.arange(train_dats[-1].shape[0])
-                # Split the trajs within the same event
-                while any(np.diff(train_dats[-1])==0):
-                    np.random.shuffle(rand)
-                    train_dats = [dat[rand] for dat in train_dats]
-                    i += 1
-                    if i > 100:
-                        break
                 train_dats = [tf.convert_to_tensor(dat) for dat in train_dats]
-                trajs_v = rollout(train_dats[:-1],tf.constant(episode))
-                # TODO: replace dataloader with memory
+                trajs_v = rollout(train_dats[:-2],tf.constant(episode))
                 xs,exs,settings,perfs,rains = [traj.numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
                 xs[...,1] += xs[...,-1]
                 if emul.if_flood:
                     xs = np.concatenate([xs[...,:-2],xs[...,-1:]],axis=-1)
                 idxs = np.repeat(train_dats[-1],args.horizon+args.seq_in)
-                trajs_v = [xs,perfs,settings,rains,exs,idxs]
+                dones = np.tile(np.eye(args.horizon+args.seq_in)[-1],args.batch_size)
+                trajs_v = [xs,perfs,settings,rains,exs,idxs,dones]
                 dGv.update(trajs_v) # data num: batch * (horizon + seq_in)
                 # Debugging reward scale
                 # xs,exs,perfs = [dat.reshape((-1,65,)+dat.shape[-2:]) for dat in [xs,exs,perfs]]
@@ -459,21 +464,22 @@ if __name__ == '__main__':
                 print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
 
             # Model-free update
-            if episode > args.start_gap:
+            if episode > args.start_gap and dGv.cur_capa > 0:
                 print(f"{episode}/{args.episodes} Start model-free update")
                 # TODO: normalization running mean and mean std
                 ctrl.set_norm(*dGv.get_norm())
-                k = (1 + dGv.cur_capa / dGv.limit)
+                k = 1 + dGv.cur_capa / dGv.limit
                 repeats,batch_size = int(k * args.repeats), int(k * args.batch_size)
                 for _ in range(repeats):
                     train_idxs = dGv.get_data_idxs(train_ids,args.setting_duration,args.setting_duration*2)
-                    train_dats = dGv.prepare_batch(train_idxs,args.setting_duration*2,batch_size,args.setting_duration,trim=False)
+                    # TODO: return idxs instead of rain_ids to tell whether the virtual rollout traj is done or not
+                    train_dats = dGv.prepare_batch(train_idxs,args.setting_duration*2,batch_size,args.setting_duration,continuous=ctrl.on_policy,trim=False)
                     x,settings,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
                     x_norm,b_norm,y_norm = [ctrl.normalize(dat,item) for dat,item in zip([x,b,y],'xby')]
                     b0,b1 = b_norm[:,:args.setting_duration,...],b_norm[:,args.setting_duration:,...]
                     x0,x1 = x_norm[:,-args.setting_duration:,...],tf.concat([y_norm[:,:args.setting_duration,:,:-1],b0],axis=-1)
                     settings = tf.repeat(settings[:,0:1,:],args.setting_duration,axis=1)
-                    ex,ey = train_dats[-2:]
+                    ex,ey = train_dats[6:8]
                     ex_norm,ey_norm = [ctrl.normalize(dat,'e') for dat in [ex,ey]]
                     ex0,ex1 = ex_norm[:,-args.setting_duration:,...],ey_norm[:,:args.setting_duration,...]
                     # Get edge action and concat into ex1
@@ -496,7 +502,8 @@ if __name__ == '__main__':
                                                 for i,attr in enumerate(args.attrs['links'])],axis=-1) for ei in [ex0,ex1]]
                         s,s_ = s+[ex0],s_+[ex1]
                     else:
-                        r0,r1 = ctrl.normalize(train_dats[4],'r')[:,-args.setting_duration:,...],ctrl.normalize(train_dats[5],'r')[:,:args.setting_duration,...]
+                        rx,ry = [ctrl.normalize(dat,'r') for dat in train_dats[4:6]]
+                        r0,r1 = [ry[:,:args.setting_duration,...],ry[:,args.setting_duration:,...]] if args.use_pred else [rx[:,-args.setting_duration:,...],ry[:,:args.setting_duration,...]]
                         s,s_ = [tf.stack([xi[...,args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr)] if attr in args.attrs['nodes']
                                            else ei[...,args.elements['links'].index(idx),args.attrs['links'].index(attr)]
                                            for idx,attr in args.states if attr in args.attrs['nodes']+args.attrs['links']],axis=-1)
@@ -511,7 +518,12 @@ if __name__ == '__main__':
                     r = - env.norm_obj(obj,states,g=True) * args.scale if args.norm else - obj * args.scale
                     # r = tf.clip_by_value(r, -10, 10)
                     a = ctrl.convert_setting_to_action(settings[:,0,:])
-                    train_loss = ctrl.update_eval(s,a,r,s_,train=True)
+                    d = tf.convert_to_tensor(train_dats[-1],dtype=tf.float32)
+                    # d = tf.cast(tf.reduce_sum(train_dats[-1][:,:args.setting_duration],axis=-1),dtype=tf.float32)
+                    # if ctrl.on_policy:
+                    #     d = tf.clip_by_value(d + tf.convert_to_tensor(np.eye(batch_size)[np.where(np.diff(train_dats[-2]) != 0)[0]].sum(axis=0),dtype=tf.float32),0,1)
+                    # d = tf.convert_to_tensor(np.eye(batch_size)[np.where(np.diff(train_dats[-1]) != 0)[0]].sum(axis=0) if ctrl.on_policy else np.zeros(batch_size),dtype=tf.float32)
+                    train_loss = ctrl.update_eval(s,a,r,s_,d,train=True)
                     train_losses.append([los.numpy() for los in train_loss] if isinstance(train_loss,tuple) else train_loss.numpy())
                 sec.append(time.time()-t)
                 t = time.time()
@@ -539,14 +551,15 @@ if __name__ == '__main__':
                 print(f"{episode}/{args.episodes} Start model-free interaction")
                 ctrl.save()
                 pool = mp.Pool(args.processes)
-                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,False,))
+                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,args.stochastic,))
                         for idx,event in zip(test_ids,test_events)]
                 pool.close()
                 pool.join()
                 res = [r.get() for r in res]
                 trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
-                trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
-                dG.update(trajs)
+                trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(test_ids,res)],axis=-1))
+                if not args.model_based or args.tune_gap > 0:
+                    dG.update(trajs)
                 # data = [np.concatenate([r[i] for r in res],axis=0) for i in range(4)]
                 test_objss.append(np.array([np.sum(r[-1]) for r in res]))
                 sec.append(time.time()-t)
@@ -566,16 +579,19 @@ if __name__ == '__main__':
                 if not os.path.exists(save_dir):
                     os.mkdir(save_dir)
                 ctrl.save(save_dir)
-            ctrl.update_func()
+            if not ctrl.on_policy or args.model_based or (episode+1) % args.sample_gap == 0:
+                ctrl.update_func()
+            if ctrl.on_policy and (args.model_based or (episode+1) % args.sample_gap == 0):
+                dGv.clear()
         ctrl.save()
         # dGv.save(args.agent_dir)
         if args.model_based and args.tune_gap > 0:
             np.save(os.path.join(ctrl.agent_dir,'model_loss.npy'),np.array(model_losses))
-            plt.plot(model_losses,label='model_loss')
+            plt.plot(model_losses,label='model_loss',alpha=0.5)
             plt.savefig(os.path.join(ctrl.agent_dir,'model_loss.png'),dpi=300)
             plt.clf()
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),np.array(train_losses))
-        plt.plot(train_losses,label='train_loss')
+        plt.plot(train_losses,label='train_loss',alpha=0.5)
         plt.savefig(os.path.join(ctrl.agent_dir,'train_loss.png'),dpi=300)
         plt.clf()
         if args.sample_gap > 0:
@@ -616,7 +632,7 @@ if __name__ == '__main__':
             res = [(ts,runoff) for ts,runoff in zip(res[0],res[1])]
         else:
             pool = mp.Pool(args.processes)
-            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide,))
+            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
                    for event in events]
             pool.close()
             pool.join()
@@ -637,7 +653,7 @@ if __name__ == '__main__':
 
         # Test the agent
         pool = mp.Pool(args.processes)
-        res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,False,))
+        res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],None,args.stochastic,))
                 for idx,event in enumerate(events)]
         pool.close()
         pool.join()

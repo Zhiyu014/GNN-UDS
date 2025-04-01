@@ -1,9 +1,0 @@
-act: rand3
-model_dir: 30s_20k_3act_1000ledgef_res_norm_flood_gat
-pop_size: 128
-rain_dir: ast_test5_events.csv
-result_dir: 30s_20k_3actmpc_edgef_res_norm_flood_gat2
-surrogate: true
-termination:
-- n_gen
-- 100

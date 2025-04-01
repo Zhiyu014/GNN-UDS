@@ -1,8 +1,0 @@
-model_dir: 60s_20k_act_edgef_res_norm_flood_gat
-pop_size: 128
-rain_dir: ast_test5_events.csv
-result_dir: 60s_20k_mpc_edgef_res_norm_flood_gat
-surrogate: true
-termination:
-- n_gen
-- 200

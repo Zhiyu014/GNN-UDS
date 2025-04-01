@@ -1,0 +1,7 @@
+act: rand3
+agent_dir: 5s_10k_rand3_mfrl_observ_sac_norough_swmmstep10_disc01/test
+processes: 4
+rain_dir: ast_test2007_events.csv
+result_dir: 5s_rand3_mfrl_observ_sac_disc01
+swmm_step: 10
+test: true

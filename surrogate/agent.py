@@ -1,21 +1,21 @@
 import tensorflow as tf
-from tensorflow.keras.losses import MeanSquaredError
-from tensorflow.keras.optimizers import Adam
+from keras.losses import MeanSquaredError
+from keras.optimizers import Adam
 # from tensorflow_probability.python.distributions import RelaxedOneHotCategorical,Normal
 # from tensorflow_probability.python.layers import DistributionLambda
 import tensorflow_probability as tfp
 tfd = tfp.distributions
-from tensorflow.keras import activations,Sequential
-from tensorflow.keras.layers import Dense,Input,Lambda
+from keras import activations,Sequential
+from keras.layers import Dense,Input,Lambda
 import numpy as np
 from numpy import array,save,load,concatenate
-from tensorflow.keras.models import Model
+from keras.models import Model
 from spektral.layers import GCNConv,GlobalAttnSumPool,GlobalAvgPool,GlobalSumPool,GATConv,DiffusionConv,GeneralConv
 from os.path import join
 import os
 from emulator import NodeEdge
-tf.config.list_physical_devices(device_type='GPU')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress infos and warnings
+# tf.config.list_physical_devices(device_type='GPU')
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress infos and warnings
 
 class ConvNet:
     def __init__(self,args,conv):
@@ -209,7 +209,8 @@ class Actor:
             return (action+1)/2
         elif isinstance(self.action_shape,(list,np.ndarray)):
             if self.mac:
-                return tf.stack([tf.gather(space,ai) for space,ai in zip(self.action_space,action)],axis=-1)
+                sett = [tf.gather(space,ai) for space,ai in zip(self.action_space,action)]
+                return tf.stack(sett,axis=-1) if len(sett[0].shape)==1 else tf.concat(sett,axis=-1)
             else:
                 return tf.gather(self.action_table,action)
         else:
@@ -220,8 +221,13 @@ class Actor:
             return tf.multiply(setting,2)-1
         elif isinstance(self.action_shape,(list,np.ndarray)):
             if self.mac:
-                return [tf.argmin([tf.abs(setting[...,i]-sp) for sp in space],axis=0)
+                if len(self.action_space[0].shape) > 1:
+                    spdim = [space.shape[-1] for space in self.action_space]
+                    return [tf.argmin([tf.reduce_sum(tf.abs(setting[...,sum(spdim[:i]):sum(spdim[:i+1])]-sp),axis=-1) for sp in space],axis=0)
                          for i,space in enumerate(self.action_space)]
+                else:
+                    return [tf.argmin([tf.abs(setting[...,i]-sp) for sp in space],axis=0)
+                            for i,space in enumerate(self.action_space)]
             else:
                 return tf.argmin([tf.reduce_sum(tf.abs(setting-tab),axis=-1) for tab in self.action_table],axis=0)
         else:
@@ -280,7 +286,7 @@ class QAgent:
             self.convnet = conv
         elif self.conv:
             self.convnet = ConvNet(args,self.conv)
-        self.dueling = getattr(args,"dueling",True) # Not defined in args
+        self.dueling = getattr(args,"dueling",False) # Not defined in args
         self.model = self.build_q_network(self.convnet.model if self.conv else None)
         self.target_model = self.build_q_network(self.convnet.model if self.conv else None)
         self.target_model.set_weights(self.model.get_weights())
@@ -432,9 +438,9 @@ class VAgent:
     
     def value_update(self,observ,act=None):
         inp = self.get_input(observ,act)
-        q = self.model(inp)
-        self.value_avg = self.value_tau * tf.reduce_mean(q) + (1-self.value_tau) * self.value_avg 
-        self.value_std = self.value_tau * tf.math.reduce_std(q) + (1-self.value_tau) * self.value_std
+        v = self.model(inp)
+        self.value_avg = self.value_tau * tf.reduce_mean(v) + (1-self.value_tau) * self.value_avg 
+        self.value_std = self.value_tau * tf.math.reduce_std(v) + (1-self.value_tau) * self.value_std
     
     def _soft_update_target_model(self,tau):
         target_model_weights = array(self.target_model.get_weights())
@@ -463,6 +469,7 @@ class AgentSAC:
             act_only = False):
         self.action_shape = action_shape
 
+        self.on_policy = False
         self.dec = getattr(args, "dec", False)
         self.act = getattr(args,"act","")
         self.conti = self.act.startswith('conti')
@@ -500,13 +507,15 @@ class AgentSAC:
             # TODO: for continuous action space, the maximum entropy is action_shape * log(2) for tanh normal
             # TODO: for discrete action space, tune the fraction constant 0.98, 0.5, 0.01 
             self.en_disc = getattr(args,"en_disc",0.5)
-            self.target_entropy = action_shape*np.log(2)*self.en_disc if self.conti else np.log(action_shape)*self.en_disc if self.mac else np.log(np.prod(action_shape))*self.en_disc
-            if self.mac and not self.conti:
-                self.alpha_log = [tf.Variable(0,dtype=tf.float32,trainable=True) for _ in range(self.n_agents)] 
-                self.alpha_optimizer = [Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0) for _ in range(self.n_agents)]
-            else:
-                self.alpha_log = tf.Variable(0,dtype=tf.float32,trainable=True)
-                self.alpha_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0)
+            self.target_entropy = action_shape*np.log(2) if self.conti else np.log(action_shape) if self.mac else np.log(np.prod(action_shape))
+            self.target_entropy *= self.en_disc
+            # if self.mac and not self.conti:
+            #     self.alpha_log = tf.Variable(np.zeros(self.n_agents),shape=(self.n_agents,),dtype=tf.float32,trainable=True)
+            #     self.alpha_log = [tf.Variable(0,dtype=tf.float32,trainable=True) for _ in range(self.n_agents)] 
+            #     self.alpha_optimizer = [Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0) for _ in range(self.n_agents)]
+            # else:
+            self.alpha_log = tf.Variable(0,dtype=tf.float32,trainable=True)
+            self.alpha_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0)
 
         self.agent_dir = args.agent_dir
         if args.load_agent:
@@ -516,7 +525,7 @@ class AgentSAC:
         self.reward_std = tf.constant(1.0)
 
     @tf.function
-    def update_eval(self,s,a,r,s_,train=True):
+    def update_eval(self,s,a,r,s_,d,train=True):
         # if self.dec:
         #     o = self._split_observ(s)
         # r = tf.no_gradient(self.reward_norm(r,update=True))
@@ -536,16 +545,13 @@ class AgentSAC:
             q_ = tf.minimum(self.qnet_0.forward(s_,a_,target=True),self.qnet_1.forward(s_,a_,target=True))
             q_target = r + self.gamma * (tf.squeeze(q_,axis=-1) - tf.exp(self.alpha_log) * logprobs_)
         elif self.mac:
+            probs_,logprobs_ = self.actor.get_action_probs(s_)
+            # q_ = [tf.minimum(q0_,q1_) for q0_,q1_ in zip(self.qnet_0.forward(s_,target=True),self.qnet_1.forward(s_,target=True))]
+            # q_ = tf.stack([tf.reduce_sum((qi - tf.exp(self.alpha_log) * lp) * pi,axis=-1) for qi,lp,pi in zip(q_,logprobs_,probs_)],axis=-1)
+            # q_target = tf.expand_dims(r,axis=-1) + self.gamma * tf.expand_dims(1-d,axis=-1) * q_
             vf_target = self.vnet.forward(s_,target=True)
-            q_target = r + self.gamma * tf.squeeze(vf_target,axis=-1)
+            q_target = tf.expand_dims(r,axis=-1) + self.gamma * vf_target
         else:
-            # if isinstance(self.action_shape,(list,np.ndarray)):
-            #     logprobs_ = [tf.math.log(distri_.probs+1e-5) for distri_ in distr_]
-            #     q_ = self.qnet_0.forward(s_,target=True),self.qnet_1.forward(s_,target=True)
-            #     q_ = [tf.minimum(q0,q1) for q0,q1 in zip(q_[0],q_[1])]
-            #     q_target = tf.stack([r + self.gamma * tf.reduce_sum((qi - tf.exp(self.alpha_log) * lp) * distri_.probs,axis=-1)
-            #                 for qi,lp,distri_ in zip(q_,logprobs_,distr_)],axis=-1)
-            # else:
             probs_,logprobs_ = self.actor.get_action_probs(s_)
             q_ = tf.minimum(self.qnet_0.forward(s_,target=True),self.qnet_1.forward(s_,target=True))
             q_target = r + self.gamma * tf.reduce_sum((q_ - tf.exp(self.alpha_log) * logprobs_) * probs_,axis=-1)
@@ -554,8 +560,8 @@ class AgentSAC:
             tape.watch(train_vars)
             q0,q1 = self.qnet_0.forward(s,a),self.qnet_1.forward(s,a)
             # TODO: MASAC-discrete: sum/mean over all agents?
-            if len(q0.shape) > 1:
-                q0,q1 = tf.reduce_mean(q0,axis=-1),tf.reduce_mean(q1,axis=-1)
+            # if len(q0.shape) > 1:
+            #     q0,q1 = tf.reduce_mean(q0,axis=-1),tf.reduce_mean(q1,axis=-1)
             value_loss = 0.5 * (self.mse(q_target,q0) + self.mse(q_target,q1))
             if train:
                 grads = tape.gradient(value_loss, train_vars)
@@ -565,32 +571,55 @@ class AgentSAC:
                 self.cri_optimizer.apply_gradients(zip(grads, train_vars))
         return value_loss
     
+    # TODO: how many alphas? what is the target entropy?
     @tf.function
     def alpha_update(self,s,train=True):
-        if train:
-            probs,log_probs = self.actor.get_action_probs(s)
-            for i,alp in enumerate(self.alpha_log if isinstance(self.alpha_log,list) else [self.alpha_log]):
-                opt = self.alpha_optimizer[i] if isinstance(self.alpha_optimizer,list) else self.alpha_optimizer
-                with tf.GradientTape() as tape:
-                    tape.watch(alp)
-                    if self.conti:
-                        entropy = tf.stop_gradient(- tf.reduce_mean(log_probs))
-                    elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
-                        entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs[i]*probs[i],axis=-1)))
-                    else:
-                        entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs*probs,axis=-1)))
-                    alpha_loss = alp * (entropy - self.target_entropy[i] if isinstance(self.target_entropy, np.ndarray) else entropy - self.target_entropy)
-                    grads = tape.gradient(alpha_loss, [alp])
-                    grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
-                            for grad in grads]
-                    # grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
-                    opt.apply_gradients(zip(grads, [alp]))
-        alp = tf.reduce_mean([tf.exp(alp) for alp in self.alpha_log]) if isinstance(self.alpha_log,list) else tf.exp(self.alpha_log)
-        return alp,entropy
+        probs,log_probs = self.actor.get_action_probs(s)
+        with tf.GradientTape() as tape:
+            tape.watch(self.alpha_log)
+            if self.conti:
+                entropy = tf.stop_gradient(- log_probs)
+            elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
+                entropy = tf.stop_gradient(tf.transpose([- tf.reduce_sum(lp*prob,axis=-1)
+                                                            for lp,prob in zip(log_probs,probs)],[1,0]))
+            else:
+                entropy = tf.stop_gradient(- tf.reduce_sum(log_probs*probs,axis=-1))
+            if train and self.alpha_log.trainable:
+                alpha_loss = tf.reduce_mean(self.alpha_log * (entropy - self.target_entropy))
+                grads = tape.gradient(alpha_loss, [self.alpha_log])
+                grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
+                        for grad in grads]
+                self.alpha_optimizer.apply_gradients(zip(grads, [self.alpha_log]))
+        return tf.reduce_mean(tf.exp(self.alpha_log)),tf.reduce_mean(entropy)
+
+    # def alpha_update(self,s,train=True):
+    #     if train:
+    #         probs,log_probs = self.actor.get_action_probs(s)
+    #         for i,alp in enumerate(self.alpha_log if isinstance(self.alpha_log,list) else [self.alpha_log]):
+    #             opt = self.alpha_optimizer[i] if isinstance(self.alpha_optimizer,list) else self.alpha_optimizer
+    #             with tf.GradientTape() as tape:
+    #                 tape.watch(alp)
+    #                 if self.conti:
+    #                     entropy = tf.stop_gradient(- tf.reduce_mean(log_probs))
+    #                 elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
+    #                     entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs[i]*probs[i],axis=-1)))
+    #                 else:
+    #                     entropy = tf.stop_gradient(- tf.reduce_mean(tf.reduce_sum(log_probs*probs,axis=-1)))
+    #                 alpha_loss = alp * (entropy - self.target_entropy[i] if isinstance(self.target_entropy, np.ndarray) else entropy - self.target_entropy)
+    #                 grads = tape.gradient(alpha_loss, [alp])
+    #                 grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
+    #                         for grad in grads]
+    #                 # grads = [tf.clip_by_value(grad, -1.0, 1.0) for grad in grads]
+    #                 opt.apply_gradients(zip(grads, [alp]))
+    #     alp = tf.reduce_mean([tf.exp(alp) for alp in self.alpha_log]) if isinstance(self.alpha_log,list) else tf.exp(self.alpha_log)
+    #     return alp,entropy
 
     @tf.function
     def actor_update(self,s,train=True):
         variables = self.actor.model.trainable_variables
+        if not self.conti:
+            q_pg = self.qnet_0.forward(s),self.qnet_1.forward(s)
+            q_pg = [tf.minimum(q0,q1) for q0,q1 in zip(q_pg[0],q_pg[1])] if self.mac else tf.minimum(q_pg[0],q_pg[1])
         if getattr(self,"vnet",None) is not None:
             vpred = self.vnet.forward(s)
         with tf.GradientTape() as tape:
@@ -600,12 +629,10 @@ class AgentSAC:
                 q_pg = tf.minimum(self.qnet_0.forward(s,a_pg), self.qnet_1.forward(s,a_pg))
                 policy_loss = tf.squeeze(q_pg,axis=-1) - log_probs * tf.exp(self.alpha_log)
             elif self.mac:
-                q_pg = self.qnet_0.forward(s),self.qnet_1.forward(s)
-                q_pg = [tf.minimum(q0,q1) for q0,q1 in zip(q_pg[0],q_pg[1])]
-                policy_loss = tf.reduce_mean([tf.reduce_sum(pg*(qi - vpred - lp * tf.exp(alp)),axis=-1)
-                                                for qi,pg,lp,alp in zip(q_pg,a_pg,log_probs,self.alpha_log)],axis=0)
+                # TODO: Multi-discrete the target value v, q or both?
+                policy_loss = tf.reduce_mean([tf.reduce_sum(pg*(qi - vpred - lp * tf.exp(self.alpha_log)),axis=-1)
+                                                for qi,pg,lp in zip(q_pg,a_pg,log_probs)],axis=0)
             else:
-                q_pg = tf.minimum(self.qnet_0.forward(s),self.qnet_1.forward(s))
                 policy_loss = tf.reduce_sum(a_pg*(q_pg - log_probs * tf.exp(self.alpha_log)),axis=-1)
             policy_loss = tf.reduce_mean(policy_loss,axis=0)
             # assert tf.abs(policy_loss) < 10, "Policy loss is too large: %.3f"%tf.abs(policy_loss)
@@ -617,17 +644,15 @@ class AgentSAC:
                 self.act_optimizer.apply_gradients(zip(grads, variables))
         return policy_loss
     
+    # TODO: is vnet useful for multi-discrete action space?
     @tf.function
     def vnet_update(self,s,train=True):
         a_pg,log_probs = self.actor.get_action_probs(s)
-        if self.conti:
-            q_pg = tf.minimum(self.qnet_0.forward(s,a_pg),self.qnet_1.forward(s,a_pg))
-            v_target = tf.squeeze(q_pg,axis=-1) - tf.exp(self.alpha_log) * log_probs
-        elif self.mac and isinstance(self.action_shape,(list,np.ndarray)):
+        if self.mac and isinstance(self.action_shape,(list,np.ndarray)):
             q_pg = self.qnet_0.forward(s),self.qnet_1.forward(s)
             q_pg = [tf.minimum(q0,q1) for q0,q1 in zip(q_pg[0],q_pg[1])]
-            v_target = tf.reduce_mean([tf.reduce_sum(pg*(qi - lp * tf.exp(alp)),axis=-1)
-                                    for qi,pg,lp,alp in zip(q_pg,a_pg,log_probs,self.alpha_log)],axis=0)
+            v_target = tf.reduce_mean([tf.reduce_sum(pg*(qi - lp * tf.exp(self.alpha_log)),axis=-1)
+                                    for qi,pg,lp in zip(q_pg,a_pg,log_probs)],axis=0)
         else:
             q_pg = tf.minimum(self.qnet_0.forward(s),self.qnet_1.forward(s))
             v_target = tf.reduce_sum(a_pg*(q_pg - log_probs * tf.exp(self.alpha_log)),axis=-1)
@@ -715,7 +740,272 @@ class AgentSAC:
         else:
             return (dat - mini)/(maxi-mini)
     
-#TODO: AgentPPO, AgentTD3
+#TODO: AgentPPO
+class ActorPPO(Actor):
+    def __init__(self,
+                 action_shape,
+                 observ_size,
+                 args,
+                 conv = None):
+        super().__init__(action_shape,observ_size,args,conv)
+        if self.conti:
+            self.std_log = tf.Variable(np.zeros((1,action_shape), dtype=np.float32), name='std_log')
+            self.last_std_log = tf.Variable(np.zeros((1,action_shape), dtype=np.float32), name='last_std_log')
+        self.last_model = self.build_pi_network(self.convnet.model if self.conv else None)
+        self.last_model.set_weights(self.model.get_weights())
+
+    def build_pi_network(self,conv=None):
+        if conv is None:
+            x_in = Input(shape=(self.observ_size,))
+            x = x_in
+        else:
+            x_in = [Input(shape=ip.shape[1:]) for ip in conv.input]
+            x = conv(x_in)
+        for _ in range(self.n_layer):
+            x = Dense(self.net_dim, activation=self.activation)(x)
+        if self.conti:
+            output = Dense(self.action_shape, activation='linear')(x)
+        elif isinstance(self.action_shape,np.ndarray) and self.mac:
+            output = [Dense(act_shape, activation='softmax')(x) for act_shape in self.action_shape]
+        else:
+            output = Dense(np.product(self.action_shape), activation='softmax')(x)
+        model = Model(inputs=x_in, outputs=output)
+        return model
+    
+    def forward(self, observ, last=False):
+        inp = self.get_input(observ)
+        probs = self.last_model(inp) if last else self.model(inp)
+        return probs
+    
+    def get_action(self, observ, train=True, last=False):
+        probs = self.forward(observ,last)
+        if not train:
+            return tf.tanh(probs) if self.conti else [tf.argmax(prob,axis=-1) for prob in probs] if isinstance(probs,list) else tf.argmax(probs,axis=-1)
+        else:
+            if self.conti:
+                distr = tfd.Normal(probs, tf.exp(self.last_std_log if last else self.std_log))
+                return tf.tanh(distr.sample())
+            elif isinstance(probs,list):
+                distr = [tfd.RelaxedOneHotCategorical(1.0,probs=prob) for prob in probs]
+                return [tf.argmax(distri.sample(),axis=-1) for distri in distr]
+            else:
+                distr = tfd.RelaxedOneHotCategorical(1.0,probs=probs)
+                return tf.argmax(distr.sample(),axis=-1)
+
+    def get_probs_entropy(self, observ, a, last=False):
+        probs = self.forward(observ,last)
+        if self.conti:
+            distr = tfd.Normal(probs, tf.exp(self.last_std_log if last else self.std_log))
+            logp_action = distr.log_prob(tf.atanh(a))
+            entropy = distr.entropy()
+            log_probs,entropy = tf.reduce_sum(logp_action,axis=-1), tf.reduce_sum(entropy,axis=-1)
+        elif isinstance(probs,list):
+            log_probs = [tf.math.log(prob+1e-5) for prob in probs]
+            entropy = [-tf.reduce_sum(lp*prob,axis=-1) for prob,lp in zip(probs,log_probs)]
+            log_probs = [tf.gather(lp,ai,axis=-1,batch_dims=1) for ai,lp in zip(a,log_probs)]
+        else:
+            log_probs = tf.math.log(probs+1e-5)
+            entropy = -tf.reduce_sum(log_probs*probs,axis=-1)
+            log_probs = tf.gather(log_probs,a,axis=-1,batch_dims=1)
+        return log_probs,entropy
+                
+    def _update_last_model(self):
+        self.last_model.set_weights(self.model.get_weights())
+        if self.conti:
+            self.last_std_log.assign(self.std_log)
+    
+class CriticPPO(QAgent):
+    def __init__(self,
+                 action_shape,
+                 observ_size,
+                 args,
+                 conv=None):
+        super().__init__(action_shape,observ_size,args,conv)
+
+    def build_q_network(self, conv=None):
+        if conv is None:
+            inp = Input(shape=(self.observ_size,))
+            x = inp
+        else:
+            inp = [Input(shape=ip.shape[1:]) for ip in conv.input]
+            x = conv(inp)
+        for _ in range(self.n_layer):
+            x = Dense(self.net_dim, activation=self.activation)(x)
+        output = Dense(1, activation='linear')(x)
+        model = Model(inputs=inp, outputs=output)
+        return model
+
+    def get_input(self,observ,act=None):
+        if self.conv:
+            inp = observ[:1] + [self.convnet.filter]
+            if self.convnet.use_pred:
+                inp += [observ[1:2]]
+            inp += observ[-1:] + [self.convnet.edge_filter]
+        else:
+            inp = observ
+        return inp
+    
+    def criticize(self,observ,last=False):
+        inp = self.get_input(observ)
+        q = self.target_model(inp) if last else self.model(inp)
+        return q
+    
+    def _update_last_model(self):
+        self.target_model.set_weights(self.model.get_weights())
+    
+class AgentPPO(AgentSAC):
+    def __init__(self,
+            action_shape,
+            observ_space,
+            args = None,
+            act_only = False):
+        self.action_shape = action_shape
+
+        self.on_policy = True
+        self.dec = getattr(args, "dec", False)
+        self.act = getattr(args,"act","")
+        self.conti = self.act.startswith('conti')
+        self.mac = getattr(args,"mac",False)
+        if self.mac:
+            self.n_agents = action_shape if self.conti else action_shape.shape[0]
+
+        self.conv = getattr(args,"conv",False)
+        self.conv = False if str(self.conv) in ['None','False','NoneType'] else self.conv
+        if self.conv:
+            self.convnet = ConvNet(args,self.conv)
+
+        if self.dec:
+            self.actor = [ActorPPO(action_shape[i],len(observ_space[i]),args) 
+            for i in range(self.n_agents)]
+            state_shape = len(getattr(args,'states'))
+        else:
+            state_shape = len(observ_space)
+            self.actor = ActorPPO(action_shape,state_shape,args,self.convnet if self.conv else None)
+
+        self.act_only = act_only
+        if not self.act_only:
+            self.qnet = CriticPPO(action_shape,state_shape,args,self.convnet if self.conv else None)
+            self.gamma = getattr(args, "gamma", 0.98)
+            self.horizon = getattr(args, "horizon", 60)//getattr(args, "setting_duration", 5)
+            self.lambda_gae = getattr(args, "lambda_gae", 0.95)
+            self.lambda_entropy = getattr(args, "lambda_entropy", 0.01)
+            self.clip_ratio = getattr(args, "clip_ratio", 0.2)
+            self.update_interval = getattr(args,"update_interval",0.005)
+            self.act_optimizer = Adam(learning_rate=getattr(args,"act_lr",1e-4),clipnorm=1.0)
+            self.cri_optimizer = Adam(learning_rate=getattr(args,"cri_lr",1e-3),clipnorm=1.0)
+            self.mse = MeanSquaredError()
+
+        self.agent_dir = args.agent_dir
+        if args.load_agent:
+            self.load()
+        # TODO: reward normalization
+        self.value_tau = getattr(args,"value_tau",0.0)
+        self.reward_std = tf.constant(1.0)
+
+    def get_advantages(self,r,d,value,next_value):
+        # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
+        # from ElegantRL
+        # update rewards when truncated
+        advs = np.zeros_like(r)
+        bs = r.shape[0]
+        iters = bs // self.horizon + 1
+        for i in range(iters):
+            idx0,idx1 = i*self.horizon,min(bs,(i+1)*self.horizon)
+            next_ = value[idx1] if idx1 < bs else next_value[-1]
+            adv = 0
+            for t in range(min(bs,idx1)-1, idx0-1, -1):
+                next_ = r[t] + self.gamma * ((1-d[t]) * next_ + d[t] * next_value[t])
+                advs[t] = adv = next_ - value[t] + self.gamma * (1-d[t]) * self.lambda_gae * adv
+                next_ = value[t]
+        return tf.convert_to_tensor(advs)
+
+    def update_eval(self,s,a,r,s_,d,train=True):
+        value = tf.squeeze(self.qnet.criticize(s,last=True),axis=-1)
+        next_value = tf.squeeze(self.qnet.criticize(s_,last=True),axis=-1)
+        advs = self.get_advantages(r,d,value,next_value)
+        returns  = advs + value
+        log_probs,_ = self.actor.get_probs_entropy(s,a,last=True)
+        
+        value_loss = self.critic_update(s, returns, train)
+        policy_loss = self.actor_update(s, a, log_probs, advs, train)
+        return value_loss,policy_loss
+
+    @tf.function
+    def critic_update(self,s,returns,train=True):
+        with tf.GradientTape() as tape:
+            tape.watch(self.qnet.model.trainable_variables)
+            y_preds = tf.squeeze(self.qnet.forward(s))
+            value_loss = self.mse(y_preds, returns)
+        if train:
+            grads = tape.gradient(value_loss, self.qnet.model.trainable_variables)
+            self.cri_optimizer.apply_gradients(zip(grads, self.qnet.model.trainable_variables))
+        return value_loss
+
+    @tf.function
+    def actor_update(self,s,a,log_probs,advs,train=True):
+        variables = self.actor.model.trainable_variables
+        variables += [self.actor.std_log] if self.conti else []
+        with tf.GradientTape() as tape:
+            tape.watch(variables)
+            new_log_probs,entropy = self.actor.get_probs_entropy(s,a)
+            min_adv = tf.where(
+                advs > 0,
+                (1 + self.clip_ratio) * advs,
+                (1 - self.clip_ratio) * advs
+            )
+            if self.mac:
+                ratio = [tf.exp(nlp - lp) for nlp,lp in zip(new_log_probs,log_probs)]
+                policy_loss = [-tf.minimum(rat * advs, min_adv) - en * self.lambda_entropy
+                                for en,rat in zip(entropy,ratio)]
+                policy_loss = tf.reduce_mean(tf.stack(policy_loss))
+            else:
+                ratio = tf.exp(new_log_probs - log_probs)
+                policy_loss = - tf.reduce_mean(tf.minimum(ratio * advs, min_adv))
+                policy_loss -= tf.reduce_mean(entropy) * self.lambda_entropy # entropy loss
+        if train:
+            grads = tape.gradient(policy_loss, variables)
+            self.act_optimizer.apply_gradients(zip(grads, variables))
+        return policy_loss
+    
+    def update_func(self):
+        self.qnet._update_last_model()
+        if self.dec:
+            for actor in self.actor:
+                actor._update_last_model()
+        else:
+            self.actor._update_last_model()
+
+    def save(self,agent_dir=None,agents=True):
+        # Save the normalization paras
+        agent_dir = self.agent_dir if agent_dir is None else agent_dir
+        for item in 'xbyer':
+            if hasattr(self,'norm_%s'%item):
+                save(join(agent_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
+        # Load the agent paras
+        if agents:
+            if self.dec:
+                for i,actor in enumerate(self.actor):
+                    actor.save(agent_dir,i)
+            else:
+                self.actor.save(agent_dir)
+            self.qnet.save(agent_dir)
+
+    def load(self,agent_dir=None,agents=True):
+        # Load the normalization paras
+        agent_dir = self.agent_dir if agent_dir is None else agent_dir
+        for item in 'xbyer':
+            if os.path.exists(join(agent_dir,'norm_%s.npy'%item)):
+                setattr(self,'norm_%s'%item,load(join(agent_dir,'norm_%s.npy'%item)))
+        # Load the agent paras
+        if agents:
+            if self.dec:
+                for i,actor in enumerate(self.actor):
+                    actor.load(agent_dir,i)
+            else:
+                self.actor.load(agent_dir)
+            if not self.act_only:
+                self.qnet.load(agent_dir)
+
 class ActorTD3(Actor):
     def __init__(self,
                  action_shape,
@@ -788,6 +1078,7 @@ class AgentTD3(AgentSAC):
             act_only = False):
         self.action_shape = action_shape
 
+        self.on_policy = False
         self.dec = False
         self.act = getattr(args,"act","")
         self.conti = True
@@ -811,7 +1102,7 @@ class AgentTD3(AgentSAC):
             self.cri_optimizer = Adam(learning_rate=getattr(args,"cri_lr",1e-3),clipnorm=1.0)
             self.mse = MeanSquaredError()
 
-            self.policy_noise_std = self.explore_noise_std  # standard deviation of policy noise
+            self.policy_noise_std = self.explore_noise_std * 2 # standard deviation of policy noise
             self.update_freq = tf.constant(getattr(args, "repeats", 5))  # delay actor update frequency, same as repeats per episode
             self.update_times = tf.constant(0)
 
@@ -822,7 +1113,7 @@ class AgentTD3(AgentSAC):
         self.value_tau = getattr(args,"value_tau",0.0)
         self.reward_std = tf.constant(1.0)
 
-    def update_eval(self,s,a,r,s_,train=True):
+    def update_eval(self,s,a,r,s_,d,train=True):
         self.update_times += 1
         # if self.dec:
         #     o = self._split_observ(s)
@@ -839,10 +1130,8 @@ class AgentTD3(AgentSAC):
         train_vars = self.qnet_0.model.trainable_variables+self.qnet_1.model.trainable_variables
         with tf.GradientTape() as tape:
             tape.watch(train_vars)
-            q0,q1 = self.qnet_0.forward(s,a),self.qnet_1.forward(s,a)
-            if len(q0.shape) > 1:
-                q0,q1 = tf.squeeze(q0,axis=-1),tf.squeeze(q1,axis=-1)
-            value_loss = self.mse(q_target,q0) + self.mse(q_target,q1)
+            q0,q1 = tf.squeeze(self.qnet_0.forward(s,a),axis=-1),tf.squeeze(self.qnet_1.forward(s,a),axis=-1)
+            value_loss = 0.5 * (self.mse(q_target,q0) + self.mse(q_target,q1))
             if train:
                 grads = tape.gradient(value_loss, train_vars)
                 grads = [tf.zeros_like(grad) if tf.reduce_any(tf.math.is_inf(grad)) or tf.reduce_any(tf.math.is_nan(grad)) else grad
@@ -888,6 +1177,7 @@ class AgentQMIX:
         self.net_dim = getattr(args,"net_dim",128)
         self.activation = getattr(args,"activation",False)
 
+        self.on_policy = False
         self.mac = getattr(args,"mac",False)
         if self.mac:
             self.n_agents = self.action_shape.shape[0]
@@ -964,11 +1254,11 @@ class AgentQMIX:
             return tf.argmin(tf.abs(setting-self.action_space),axis=-1)
     
     @tf.function
-    def update_eval(self,s,a,r,s_,train=True):
+    def update_eval(self,s,a,r,s_,d,train=True):
         # if self.dec:
         #     o = self._split_observ(s)
         # r = tf.no_gradient(self.reward_norm(r,update=True))
-        target = self._calculate_target(r,s_)
+        target = self._calculate_target(r,s_,d)
         variables = self.qnet.model.trainable_variables
         variables += self.mix.model.trainable_variables
         with tf.GradientTape() as tape:
@@ -989,7 +1279,7 @@ class AgentQMIX:
         return loss
 
     @tf.function
-    def _calculate_target(self,r,s_):
+    def _calculate_target(self,r,s_,d):
         tqs_ = self.qnet.forward(s_,target=True)
         if self.mac:
             if self.double:
@@ -1008,7 +1298,7 @@ class AgentQMIX:
                 target_q_tot = tf.reduce_sum(tqs_*tf.one_hot(tf.argmax(qs_,axis=-1),self.action_shape),axis=-1)
             else:
                 target_q_tot = tf.reduce_max(tqs_,axis=-1)
-        return r + self.gamma * target_q_tot
+        return r + self.gamma * (1-d) * target_q_tot
 
     def reward_norm(self,r,update=False):
         if update:

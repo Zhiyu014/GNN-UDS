@@ -1,0 +1,13 @@
+act: conti
+lag: true
+model_dir: 60s_50k_conti_pred_norm
+pop_size: 128
+predict: true
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_50k_conti_blm_galag_soo_2007
+surrogate: true
+termination:
+- time
+- 00:03:00
+- soo
+- period-10

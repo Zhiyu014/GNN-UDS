@@ -1,0 +1,16 @@
+act: conti
+batch_size: 32
+conv: GAT
+data_dir: 1s_conti32_rain50
+edge_fusion: true
+epochs: 50000
+if_flood: 3
+model_dir: 30s_50k_conti_edgef_res_flood_gat_3lyrs
+n_sp_layer: 3
+n_tp_layer: 3
+recurrent: Conv1D
+resnet: true
+save_gap: 5000
+seq_in: 30
+seq_out: 30
+train: true

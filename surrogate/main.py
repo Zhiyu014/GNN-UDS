@@ -1,15 +1,20 @@
+import tensorflow as tf
+tf.config.list_physical_devices(device_type='GPU')
 from emulator import Emulator # Emulator should be imported before env
 from dataloader import DataGenerator
 from utils.utilities import get_inp_files
 import argparse,yaml
 from envs import get_env
 import numpy as np
-import os,time
+import os,time,shutil
 import matplotlib.pyplot as plt
-import tensorflow as tf
 from keras.utils import plot_model
 # from line_profiler import LineProfiler
 HERE = os.path.dirname(__file__)
+# mixed_float16 causes nan values in log ops (softmax in GAT and bce loss in if_flood)
+from keras import mixed_precision
+policy = mixed_precision.Policy('float32')
+mixed_precision.set_global_policy(policy)
 
 class Argument(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
@@ -37,6 +42,7 @@ class Argument(argparse.ArgumentParser):
 
         # train args
         self.add_argument('--train',action="store_true",help='if train the emulator')
+        self.add_argument('--seed',type=int,default=42,help='random seeds')
         self.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
         self.add_argument('--edge_fusion',action='store_true',help='if use node-edge fusion model')
         self.add_argument('--use_adj',action="store_true",help='if use filter to act control')
@@ -101,21 +107,21 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'astlingen',
-    #             'length':501,
-    #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
-    #             'act':'conti',
-    #             'model_dir':'./model/astlingen/test/',
+    #             'env':'chaohu',
+    #             'order':1,
+    #             'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+    #             'act':'rand',
+    #             'model_dir':'./model/chaohu/10s_10k_rand_edgef_res_flood_gat/',
     #             'load_model':False,
-    #             'roll':1,
-    #             'batch_size':128,
+    #             'roll':0,
+    #             'batch_size':32,
     #             'epochs':5000,
     #             'n_sp_layer':3,
     #             'n_tp_layer':3,
     #             'resnet':True,
     #             'edge_fusion':True,
     #             'balance':False,
-    #             'seq_in':5,'seq_out':5,
+    #             'seq_in':10,'seq_out':10,
     #             'if_flood':3,
     #             'conv':'GAT',
     #             'recurrent':'Conv1D'}
@@ -137,6 +143,10 @@ if __name__ == "__main__":
     #            'rain_dir':'./envs/config/hg_test_events.csv'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
+
+    os.environ['PYTHONHASHSEED'] = str(args.seed)
+    tf.random.set_seed(args.seed)
+    np.random.seed(args.seed)
 
     env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,args.graph_base)
@@ -195,11 +205,13 @@ if __name__ == "__main__":
         t0 = time.time()
         train_losses,test_losses,secs = [],[],[0]
         log_dir = "logs/model/"
+        shutil.rmtree(log_dir, ignore_errors=True)
+        os.makedirs(log_dir,exist_ok=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for epoch in range(args.epochs):
             train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
-            ex,ey = [dat for dat in train_dats[-2:]]
+            ex,ey = [dat for dat in train_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             train_loss = emul.fit_eval(x,a,b,y,ex,ey)
             train_loss = train_loss.numpy()
@@ -208,7 +220,7 @@ if __name__ == "__main__":
 
             test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
-            ex,ey = [dat for dat in test_dats[-2:]]
+            ex,ey = [dat for dat in test_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
             test_loss = [los.numpy() for los in test_loss]
@@ -236,6 +248,7 @@ if __name__ == "__main__":
             log += " Edge: {:.4f})".format(test_loss[i])
             print(log)
             with tf.summary.create_file_writer(log_dir).as_default():
+                tf.summary.scalar('train loss', train_loss, step=epoch)
                 tf.summary.scalar('Node loss', test_loss[0], step=epoch)
                 i = 1
                 if args.if_flood and not args.balance:
@@ -264,7 +277,7 @@ if __name__ == "__main__":
             elif k == 'data_dir':
                 v = os.path.join(args.data_dir,v)
             setattr(args,k,v)
-        env_args = env.get_args(args.directed,args.length,args.orde,args.graph_base)
+        env_args = env.get_args(args.directed,args.length,args.order,args.graph_base)
         for k,v in env_args.items():
             if k == 'act':
                 v = v and args.act != 'False' and args.act

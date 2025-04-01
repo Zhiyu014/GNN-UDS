@@ -1,0 +1,16 @@
+act: rand
+batch_size: 64
+conv: GAT
+data_dir: 1s_edge_rand64_rain50
+edge_fusion: true
+epochs: 50000
+if_flood: 3
+model_dir: 10s_50k_rand_edgef_res_flood_gat
+n_sp_layer: 3
+n_tp_layer: 3
+recurrent: Conv1D
+resnet: true
+save_gap: 2000
+seq_in: 10
+seq_out: 10
+train: true

@@ -1,0 +1,8 @@
+act: rand3
+agent_dir: 5s_10k_rand3_mbrl_observ_ppo_swmmstep10/test
+processes: 4
+rain_dir: ast_test2007_events.csv
+result_dir: 5s_rand3_mbrl_observ_ppo
+stochastic: true
+swmm_step: 10
+test: true

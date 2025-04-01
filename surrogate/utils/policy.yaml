@@ -12,6 +12,7 @@ astlingen:
 
   # Arguments for RL process
   train: False
+  seed: 42
   episodes: 5000
   batch_size: 128 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
@@ -31,13 +32,13 @@ astlingen:
 
   # Arguments for the agent
   agent: SAC  # agent name
-  conv: GATconv
+  conv: 'False'
   use_pred: False  # if use prediction runoff as states
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  activation: relu # if use dueling layer
+  activation: relu
   agent_dir: ./agent/astlingen/ # the working directory
   load_agent: False # if load the current model
 
@@ -46,7 +47,7 @@ astlingen:
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
   gamma: 0.98 # discouted rate
-  en_disc: 0.5 # target entropy discouted factor
+  en_disc: -1.0 # target entropy discouted factor
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
@@ -56,6 +57,7 @@ astlingen:
 
   # Arguments for the testing
   test: False
+  stochastic: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
@@ -77,6 +79,7 @@ chaohu:
 
   # Arguments for RL process
   train: False
+  seed: 42
   episodes: 5000
   batch_size: 64 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
@@ -96,13 +99,13 @@ chaohu:
 
   # Arguments for the agent
   agent: SAC  # agent name
-  conv: GATconv
+  conv: 'False'
   use_pred: False  # if use prediction runoff as states
   net_dim: 128 # dimension of hidden layers
   n_layer: 3 # number of network layers
   conv_dim: 128 # dimension of hidden layers
   n_sp_layer: 3 # number of network layers
-  activation: relu # if use dueling layer
+  activation: relu
   agent_dir: ./agent/chaohu/ # the working directory
   load_agent: False # if load the current model
 
@@ -111,7 +114,7 @@ chaohu:
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
   gamma: 0.95 # discouted rate
-  en_disc: 0.5 # target entropy discouted factor
+  en_disc: -1.0 # target entropy discouted factor
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   update_interval: 0.005 # update the target network per update_interval
@@ -121,6 +124,7 @@ chaohu:
 
   # Arguments for the testing
   test: False
+  stochastic: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events

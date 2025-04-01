@@ -241,7 +241,7 @@ def generate_split_file(base_inp_file,
             inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[ts])
 
         if arg.get('tide',False):
-            tide = tidets[start_time:end_time]
+            tide = tidets[start_time-dt.timedelta(hours=1):end_time+dt.timedelta(hours=1)]
             tidedata = {col:[(dt,vol)
             for dt,vol in zip(tide.index,tide[col])]
             for col in tide.columns if col not in ['date','time','datetime']}

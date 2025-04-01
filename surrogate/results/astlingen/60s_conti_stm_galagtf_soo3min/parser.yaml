@@ -1,0 +1,14 @@
+act: conti
+lag: true
+model_dir: 60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs
+pop_size: 128
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_conti_stm_galagtf_soo3min
+surrogate: true
+swmm_step: 1
+termination:
+- time
+- 00:03:00
+- soo
+- period-10
+use_current: true

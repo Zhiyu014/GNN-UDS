@@ -1,8 +1,0 @@
-env: astlingen
-model_dir: 30s_10k_act_edgef_resn_norm_flood
-pop_size: 128
-result_dir: 30s_10k_mpc_edgef_resn_norm_flood
-surrogate: true
-termination:
-- n_gen
-- 100
