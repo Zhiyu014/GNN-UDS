@@ -448,7 +448,7 @@ def call_counter(func):
     helper.__name__= func.__name__
     return helper
     
-class mpc_problem_gr:
+class mpc_problem_gr(tf.Module):
     def __init__(self,args,margs,load_model=False):
         self.args = args
         self.margs = margs
@@ -480,18 +480,9 @@ class mpc_problem_gr:
                             for v in self.asp])
 
     def load_model(self,margs,predict=False):
-        if self.args.processes > 1:
-            self.emul = []
-            for i in range(self.args.processes):
-                with tf.device(f'/device:GPU:{i}'):
-                    emul = Predictor(margs.recurrent,margs) if predict \
-                        else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
-                    emul.load(margs.model_dir)
-                    self.emul.append(emul)
-        else:
-            self.emul = Predictor(margs.recurrent,margs) if predict \
-                else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
-            self.emul.load(margs.model_dir)
+        self.emul = Predictor(margs.recurrent,margs) if predict \
+            else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+        self.emul.load(margs.model_dir)
 
     def load_state(self,state,runoff,edge_state):
         self.state,self.runoff,self.edge_state = [tf.cast(tf.convert_to_tensor(x),tf.float32) for x in [state,runoff,edge_state]]
@@ -559,8 +550,7 @@ class mpc_problem_gr:
 
     @call_counter
     @tf.function
-    def objective_fn(self,y,state,runoff,edge_state,n_emul=0):
-        emul = self.emul[n_emul] if isinstance(self.emul,list) else self.emul
+    def objective_fn(self,y,state,runoff,edge_state):
         settings = tf.reshape(y,(-1,self.n_step,self.n_act))
         n_pop = settings.shape[0]
         settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
@@ -581,18 +571,18 @@ class mpc_problem_gr:
                 if self.margs.if_flood and idx > 0:
                     f = tf.cast(perf>0,tf.float32)
                     state = tf.concat([state[...,:-1],f,state[...,-1:]],axis=-1)
-                preds = emul.predict_tf(state,ri,sett,edge_state)
+                preds = self.emul.predict_tf(state,ri,sett,edge_state)
                 state,perf = tf.concat([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
-                ae = emul.get_edge_action(sett,True)
+                ae = self.emul.get_edge_action(sett,True)
                 edge_state = tf.concat([preds[1],ae],axis=-1)
                 predss.append(preds)
             predss = [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
             obj = self.env.objective_pred_tf(predss,s0,sett)
         else:
-            preds = emul.predict_tf(state,runoff,settings,edge_state)
+            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
             if self.args.predict:
                 obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-                if not getattr(emul,'norm',False):
+                if not getattr(self.emul,'norm',False):
                     obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
             else:
                 obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
@@ -603,13 +593,13 @@ class mpc_problem_gr:
 
     @call_counter
     @tf.function
-    def gradient_fn(self,y,state,runoff,edge_state,n_emul=0):
+    def gradient_fn(self,y,state,runoff,edge_state):
         y = tf.cast(tf.convert_to_tensor(y),tf.float32)
         with tf.GradientTape(watch_accessed_variables=False) as tape:
             tape.watch(y)
             if not self.bounded:
                 y = self.project(y)
-            obj = self.objective_fn(y,state,runoff,edge_state,n_emul)
+            obj = self.objective_fn(y,state,runoff,edge_state)
         grads = tape.gradient(obj,y)
         return obj,grads
 
@@ -619,11 +609,11 @@ class mpc_problem_gr:
     
     @call_counter
     @tf.function
-    def hessp_fn(self,y,p,state,runoff,edge_state,n_emul=0):
+    def hessp_fn(self,y,p,state,runoff,edge_state):
         y,p = tf.cast(tf.convert_to_tensor(y),tf.float32),tf.cast(tf.convert_to_tensor(p),tf.float32)
         with tf.GradientTape(watch_accessed_variables=False) as tape:
             tape.watch(y)
-            _,grads = self.gradient_fn(y,state,runoff,edge_state,n_emul)
+            _,grads = self.gradient_fn(y,state,runoff,edge_state)
         hvp = tape.gradient(grads,y,output_gradients=tf.stop_gradient(p))
         return hvp
 
@@ -689,46 +679,6 @@ def run_gr(prob,args,setting=None):
     vals,nfuns,times,sols = np.array(recs)[1:,-1],np.array(recs)[1:,1]-prob.calls*args.pop_size,np.array(recs)[1:,2],np.array(sols)
     return ctrls,vals,nfuns,times,sols
 
-def minimize_mt(args,prob,x0,state,callback):
-    return scioptminimize(prob.gradient,
-                        x0=x0 if prob.bounded else prob.project(x0,True),
-                        args=state+(int(threading.current_thread().name.split('_')[-1]),),
-                        method=args.method,
-                        jac=True,
-                        hessp=prob.hessp,
-                        bounds=list(zip(prob.xl,prob.xu)),
-                        callback=callback,
-                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
-                        )
-
-def minimize_mp(args,prob,x0,state):
-    # tf.config.list_logical_devices(device_type='GPU')
-    # tf.config.experimental.set_memory_growth(gpus[0], True)
-    # with tf.device('/device:GPU:%s'%n_gpu):
-    recs,sols = [[0,prob.calls,time.time(),1e6]],[]
-    print('===============================================')
-    print(' n_gen | n_fun |     time      |       f       ')
-    print('===============================================')
-    def mycallback(intermediate_result):
-        sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
-        obj = getattr(intermediate_result,'fun',np.nan)
-        nfev = prob.calls
-        rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
-        log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
-        print(log[:-1])
-        rec[1],rec[2] = nfev,time.time()
-        recs.append(rec)
-    return scioptminimize(prob.gradient,
-                        x0=x0 if prob.bounded else prob.project(x0,True),
-                        args=state,
-                        method=args.method,
-                        jac=True,
-                        hessp=prob.hessp,
-                        bounds=list(zip(prob.xl,prob.xu)),
-                        callback=mycallback,
-                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
-                        )
-
 # TODO: multiple runs in LBFGS. multi-process/thread not working, try tensorflow serving
 def run_ntopt(prob,args,setting=None):
     '''
@@ -752,36 +702,21 @@ def run_ntopt(prob,args,setting=None):
         print(log[:-1])
         rec[1],rec[2] = nfev,time.time()
         recs.append(rec)
-    if args.processes <= 1:
-        res = []
-        for x0 in sampling:
-            results = scioptminimize(lambda *arg: tuple([re.numpy() for re in prob.gradient_fn(*arg)]),
-                                        x0=x0 if prob.bounded else prob.project(x0,True),
-                                        args=prob.get_state(),
-                                        method=args.method,
-                                        jac=True,
-                                        hessp=lambda *arg: prob.hessp_fn(*arg).numpy(),
-                                        bounds=list(zip(prob.xl,prob.xu)),
-                                        callback=mycallback,
-                                        options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
-                                        )
-            res.append(results)
-        idx = np.argmin([r.fun for r in res])
-        results = res[idx]
-    else:
-        # GPU seems to work well in multi-threads, but not faster than single-thread
-        pool = ThreadPoolExecutor(max_workers=args.processes)
-        res = [pool.submit(minimize_mt,args,prob,x0,prob.get_state(),mycallback) for x0 in sampling]
-        res = [r.result() for r in res]
-        pool.shutdown()
-        # GPU cannot work in multiprocessing
-        # pool = mp.Pool(processes=args.processes)
-        # res = [pool.apply_async(minimize_mp,args=(args,prob,x0,prob.get_state(),)) for x0 in sampling]
-        # pool.close()
-        # pool.join()
-        # res = [r.get() for r in res]
-        idx = np.argmin([r.fun for r in res])
-        results = res[idx]
+    res = []
+    for x0 in sampling:
+        results = scioptminimize(lambda *arg: tuple([re.numpy() for re in prob.gradient_fn(*arg)]),
+                                    x0=x0 if prob.bounded else prob.project(x0,True),
+                                    args=prob.get_state(),
+                                    method=args.method,
+                                    jac=True,
+                                    hessp=lambda *arg: prob.hessp_fn(*arg).numpy(),
+                                    bounds=list(zip(prob.xl,prob.xu)),
+                                    callback=mycallback,
+                                    options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                                    )
+        res.append(results)
+    idx = np.argmin([r.fun for r in res])
+    results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
     ctrls = results.x if prob.bounded else prob.project(results.x).numpy()
     vals = np.array(recs)[1:,-1]
@@ -857,6 +792,11 @@ if __name__ == '__main__':
             setattr(margs,k,v)
     args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
 
+    if args.surrogate and args.gradient:
+        prob = mpc_problem_gr(args,margs,load_model=True)
+    else:
+        prob = mpc_problem(args,margs=margs if args.surrogate else None)
+
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
     yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
@@ -900,11 +840,6 @@ if __name__ == '__main__':
         # setting = [1 for _ in args.action_space]
         setting = [env.controller('default') for _ in range(args.prediction['control_horizon']//args.setting_duration)]
         settings = [env.controller(args.keep,states[0],setting[0]) if args.keep != 'False' else setting[0]]
-
-        if args.surrogate and args.gradient:
-            prob = mpc_problem_gr(args,margs,load_model=True)
-        else:
-            prob = mpc_problem(args,margs=margs if args.surrogate else None)
 
         done,i,j,valss,nfunss,timess,solss = False,0,0,[],[],[],[]
         while not done:
