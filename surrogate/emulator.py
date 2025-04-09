@@ -1,51 +1,40 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from keras.layers import Dense,Input,GRU,Conv1D,LSTM,Softmax,Add,Subtract,Dropout
-from keras import activations
-from keras.models import Model,Sequential
-from keras.regularizers import l1,l2
-from keras.optimizers import Adam
-from keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
+import torch as th
+from torch import nn
+from torch_geometric.nn import GATConv,GCNConv
 import numpy as np
-import os
-# from line_profiler import LineProfiler
-from spektral.layers import GCNConv,GATConv,ECCConv,GeneralConv,DiffusionConv
-import tensorflow as tf
-from keras import mixed_precision
-# tf.config.list_physical_devices(device_type='GPU')
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-class MixedGAT(GATConv):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-    def build(self, *args, **kwargs):
-        super().build(*args, **kwargs)
-        self.dropout = Dropout(self.dropout_rate, 
-                               dtype=mixed_precision.global_policy())
-        self.built = True
-
-class NodeEdge(tf.keras.layers.Layer):
+class NodeEdge(nn.Module):
     def __init__(self, inci, **kwargs):
         super(NodeEdge,self).__init__(**kwargs)
-        self.inci = inci
+        self.inci = nn.Parameter(inci,requires_grad=False)
+        self.w = nn.Parameter(th.randn(inci.shape),requires_grad=True,name='nodeedge/weight')
+        self.b = nn.Parameter(th.zeros_like(inci),requires_grad=True,name='nodeedge/bias')
 
-    def build(self,input_shape):
-        assert input_shape[-2] == self.inci.shape[1]
-        self.w = self.add_weight(
-            name='weight',shape=self.inci.shape,initializer='random_normal',trainable=True,
-        )
-        self.b = self.add_weight(
-            name='bias',shape=self.inci.shape,initializer='zeros',trainable=True,
-        )
-        super(NodeEdge,self).build(input_shape)
-
-    def call(self,inputs):
-        mat = self.w * tf.cast(self.inci,mixed_precision.global_policy().compute_dtype) + self.b
-        # mat = self.w * self.inci + self.b
-        return tf.matmul(mat, inputs)
+    def forward(self,inputs):
+        return th.mm(self.w * self.inci + self.b, inputs)
     
+class STNet(nn.Module):
+    def __init__(self,n_sp,n_tp,dim,kernel):
+        self.spnets = [
+            GATConv(dim,dim)
+            for _ in range(n_sp)
+        ]
+        self.tpnets = [
+            nn.Conv1d(dim,dim,kernel,dilation=2**i,padding=i)
+            for i in range(n_tp)
+        ]
+        pass
+    def forward(self,x,e):
+        return x,e
+
+class MlpNet(nn.Module):
+    def __init__(self,n_lyr):
+        pass
+    def forward(self,x):
+        return x
+        
 class Emulator:
-    def __init__(self,conv=None,resnet=False,recurrent=None,args=None):
+    def __init__(self,args=None):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
         self.tide = getattr(args,'tide',False)
         # Runoff (tide) is boundary
@@ -80,7 +69,7 @@ class Emulator:
         self.ehmax = getattr(args,"ehmax",np.array([0.5 for _ in range(self.n_edge)]))
         self.pump = getattr(args,"pump",np.array([0.0 for _ in range(self.n_edge)]))
         self.ewei = getattr(args,"ewei",np.array([1.0 for _ in range(self.n_edge)]))
-        self.node_edge = tf.convert_to_tensor(getattr(args,"node_edge"),dtype=tf.float32)
+        self.node_edge = getattr(args,"node_edge").astype(np.float32)
         if self.edge_fusion:
             self.n_out -= 2 # exclude q_in, q_out
             # self.node_index = tf.convert_to_tensor(getattr(args,"node_index"),dtype=tf.int32)
@@ -98,16 +87,15 @@ class Emulator:
         self.pump_out = getattr(args,"pump_out",np.array([0.0 for _ in range(self.n_node)]))        
         self.offset = getattr(args,"offset",np.array([0.0 for _ in range(self.n_edge)]))
 
-        self.conv = False if conv in ['None','False','NoneType'] else conv
-        self.recurrent = recurrent
-        self.model = self.build_network(self.conv,resnet,self.recurrent)
-        self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
-        if mixed_precision.global_policy().compute_dtype != 'float32':
-            self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
-        self.mse = MeanSquaredError()
+        self.conv = False if args.conv in ['None','False','NoneType'] else args.conv
+        self.recurrent = args.recurrent
+        self.model = self.build_network(self.conv,args.resnet,self.recurrent)
+        self.optimizer = th.optim.Adam(lr=getattr(args,"learning_rate",1e-3))
+        # if mixed_precision.global_policy().compute_dtype != 'float32':
+        #     self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
+        self.mse = nn.MSELoss()
         if self.if_flood:
-            self.bce = BinaryCrossentropy()
-            # self.cce = CategoricalCrossentropy()
+            self.bce = nn.BCELoss()
 
         self.roll = getattr(args,"roll",0)
         self.model_dir = getattr(args,"model_dir")
@@ -118,20 +106,12 @@ class Emulator:
             net = GCNConv
             self.filter = GCNConv.preprocess(self.adj)
             self.edge_filter = GCNConv.preprocess(self.edge_adj)
-        elif 'Diff' in conv:
-            net = DiffusionConv
-            self.filter = DiffusionConv.preprocess(self.adj)
-            self.edge_filter = DiffusionConv.preprocess(self.edge_adj)
         elif 'GAT' in conv:
-            net = MixedGAT
+            net = GATConv
             # filter needs changed <1 -->0 for models (2024.8.9)
             # self.filter = self.adj.astype(int)
             self.filter = (self.adj>0).astype(int)
             # self.edge_filter = self.edge_adj.astype(int)
-            self.edge_filter = (self.edge_adj>0).astype(int)
-        elif 'General' in conv:
-            net = GeneralConv
-            self.filter = (self.adj>0).astype(int)
             self.edge_filter = (self.edge_adj>0).astype(int)
         else:
             raise AssertionError("Unknown Convolution layer %s"%str(conv))
@@ -139,12 +119,12 @@ class Emulator:
         
     def get_tem_nets(self,recurrent):
         if recurrent == 'Conv1D':
-            return [Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,
+            return [nn.Conv1d(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,
                            activation=self.activation) for i in range(self.n_tp_layer)]
         elif recurrent == 'GRU':
-            return [GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+            return [nn.GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
         elif recurrent == 'LSTM':
-            return [LSTM(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
+            return [nn.LSTM(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)]
         else:
             return []
         
