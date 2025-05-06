@@ -4,10 +4,10 @@ shunqing:
   directed: False
   length: 0
   order: 1
-  graph_base: 0
+  graph_base: False
   rain_dir: ./envs/config/
-  rain_suffix: bpswmm
-  rain_num: 119
+  rain_suffix:
+  rain_num: 50
   swmm_step: 1
 
   # simulate args
@@ -22,31 +22,23 @@ shunqing:
   train: False
   seed: 42
   load_model: False
-  edge_fusion: False
-  use_adj: False
   model_dir: ./model/shunqing/
   ratio: 0.8
   learning_rate: 0.001
   epochs: 500
   save_gap: 500
-  batch_size: 256
+  batch_size: 128
   roll: 0
-  balance: 0
+  mixed_precision: False
+  gradnorm: False
   
   # network args
-  conv: GCNconv
-  embed_size: 128
-  n_sp_layer: 2
-  dropout: 0.0
-  activation: relu
-  recurrent: GRU
-  hidden_dim: 64
-  kernel_size: 3
-  n_tp_layer: 2
-  seq_in: 6
+  dim: 128
+  nly: 2
+  kernel: 3
+  seq: 6
   seq_out: 1
-  resnet: False
-  if_flood: 0
+  if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
@@ -60,21 +52,21 @@ shunqing:
   result_dir: ./results/shunqing/
   hotstart: False
 
-RedChicoSur:
+redchicosur:
   # env args
-  env: RedChicoSur
+  env: redchicosur
   directed: False
   length: 0
   order: 1
-  graph_base: 0
+  graph_base: False
   rain_dir: ./envs/config/
   rain_suffix:
-  rain_num: 1
+  rain_num: 50
   swmm_step: 1
 
   # simulate args
   simulate: False
-  data_dir: ./envs/data/RedChicoSur/
+  data_dir: ./envs/data/redchicosur/
   train_event_id: ''
   act: 'False'
   processes: 5
@@ -84,31 +76,23 @@ RedChicoSur:
   train: False
   seed: 42
   load_model: False
-  edge_fusion: False
-  use_adj: False
-  model_dir: ./model/RedChicoSur/
+  model_dir: ./model/redchicosur/
   ratio: 0.8
   learning_rate: 0.001
   epochs: 500
   save_gap: 500
-  batch_size: 256
+  batch_size: 128
   roll: 0
-  balance: 0
+  mixed_precision: False
+  gradnorm: False
   
   # network args
-  conv: GCNconv
-  embed_size: 128
-  n_sp_layer: 2
-  dropout: 0.0
-  activation: relu
-  recurrent: GRU
-  hidden_dim: 64
-  kernel_size: 3
-  n_tp_layer: 2
-  seq_in: 6
+  dim: 128
+  nly: 2
+  kernel: 3
+  seq: 6
   seq_out: 1
-  resnet: False
-  if_flood: 0
+  if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
@@ -119,7 +103,7 @@ RedChicoSur:
 
   # test args
   test: False
-  result_dir: ./results/RedChicoSur/
+  result_dir: ./results/redchicosur/
   hotstart: False
 
 astlingen:
@@ -128,7 +112,7 @@ astlingen:
   directed: False
   length: 0
   order: 1
-  graph_base: 0
+  graph_base: False
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
@@ -146,31 +130,23 @@ astlingen:
   train: False
   seed: 42
   load_model: False
-  edge_fusion: False
-  use_adj: False
   model_dir: ./model/astlingen/
   ratio: 0.8
   learning_rate: 0.001
   epochs: 500
   save_gap: 500
-  batch_size: 256
+  batch_size: 128
   roll: 0
-  balance: 0
+  mixed_precision: False
+  gradnorm: False
   
   # network args
-  conv: GCNconv
-  embed_size: 128
-  n_sp_layer: 2
-  dropout: 0.0
-  activation: relu
-  recurrent: GRU
-  hidden_dim: 64
-  kernel_size: 3
-  n_tp_layer: 2
-  seq_in: 6
+  dim: 128
+  nly: 2
+  kernel: 3
+  seq: 6
   seq_out: 1
-  resnet: False
-  if_flood: 0
+  if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
@@ -190,7 +166,7 @@ hague:
   directed: False
   length: 0
   order: 1
-  graph_base: 0
+  graph_base: False
   rain_dir: ./envs/config/
   rain_suffix:
   rain_num: 50
@@ -208,32 +184,23 @@ hague:
   train: False
   seed: 42
   load_model: False
-  # there exists external flow to outfall, so edge_fusion donot work well
-  edge_fusion: False
-  use_adj: False
   model_dir: ./model/hague/
   ratio: 0.8
   learning_rate: 0.001
   epochs: 500
   save_gap: 500
-  batch_size: 256
+  batch_size: 128
   roll: 0
-  balance: 0
+  mixed_precision: False
+  gradnorm: False
   
   # network args
-  conv: GCNconv
-  embed_size: 128
-  n_sp_layer: 2
-  dropout: 0.0
-  activation: relu
-  recurrent: GRU
-  hidden_dim: 64
-  kernel_size: 3
-  n_tp_layer: 2
-  seq_in: 6
+  dim: 128
+  nly: 2
+  kernel: 3
+  seq: 6
   seq_out: 1
-  resnet: False
-  if_flood: 0
+  if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
@@ -241,7 +208,7 @@ hague:
   norm: False
   vol: False
   cum: False
-  
+
   # test args
   test: False
   result_dir: ./results/hague/
@@ -253,9 +220,9 @@ chaohu:
   directed: False
   length: 0
   order: 1
-  graph_base: 0
+  graph_base: False
   rain_dir: ./envs/config/
-  rain_suffix: chaohu
+  rain_suffix:
   rain_num: 50
   swmm_step: 1
 
@@ -271,31 +238,23 @@ chaohu:
   train: False
   seed: 42
   load_model: False
-  edge_fusion: False
-  use_adj: False
   model_dir: ./model/chaohu/
   ratio: 0.8
   learning_rate: 0.001
   epochs: 500
   save_gap: 500
-  batch_size: 256
+  batch_size: 128
   roll: 0
-  balance: 0
+  mixed_precision: False
+  gradnorm: False
   
   # network args
-  conv: GCNconv
-  embed_size: 128
-  n_sp_layer: 2
-  dropout: 0.0
-  activation: relu
-  recurrent: GRU
-  hidden_dim: 64
-  kernel_size: 3
-  n_tp_layer: 2
-  seq_in: 6
+  dim: 128
+  nly: 2
+  kernel: 3
+  seq: 6
   seq_out: 1
-  resnet: False
-  if_flood: 0
+  if_flood: False
   epsilon: -1.0
 
   # predictor benchmark

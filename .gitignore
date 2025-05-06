@@ -154,6 +154,7 @@ cython_debug/
 *.npy
 !train_id_*.npy
 *.h5
+*.pth
 *.inp
 *.out
 *.rpt
@@ -163,6 +164,7 @@ cython_debug/
 *.rar
 *.zip
 *.v2
+*.0
 !hague.inp
 !shunqing.inp
 !astlingen.inp

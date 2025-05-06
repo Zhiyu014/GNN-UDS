@@ -11,16 +11,13 @@ class DataGenerator:
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
         self.items = ['states','perfs','settings','rains','edge_states','event_id','dones']
         self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval']
-        self.seq_in = getattr(args,"seq_in",getattr(args,"setting_duration",5))
-        self.seq_out = getattr(args,"seq_out",getattr(args,"horizon",1))
+        self.seq_in = self.seq_out = getattr(args,"seq",5)
         self.if_flood = getattr(args,"if_flood",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
         self.setting_duration = getattr(args,"setting_duration",5)
         if self.act:
             self.action_space = self.config['action_space']
-            # self.adj = env.get_adj()
-            # self.act_edges = env.get_edge_list(list(self.action_space.keys()))
         self.limit = 2**getattr(args,"limit",22)
         self.cur_capa = 0
         self.update_num = 0
@@ -77,6 +74,19 @@ class DataGenerator:
         self.dones = np.concatenate([np.eye(r[0][self.pre_step:].shape[0],dtype=np.int32)[-1] for r in res],axis=0)
         self.cur_capa = self.states.shape[0]
 
+    def get_flood_weight(self,seq=0):
+        if not hasattr(self,f"flood_weight_{seq}"):
+            wei = self.perfs.sum(axis=-1).sum(axis=-1)
+            wei = np.pad(np.convolve(wei,np.ones(max(seq,1)),'valid'),(0,max(seq,1)-1),'constant')
+            n_flood,n_dry = wei[wei>0].shape[0],wei[wei==0].shape[0]
+            if n_flood > 0 and n_flood / wei.shape[0] < 0.5:
+                ratio = n_dry / n_flood
+                wei = np.ones_like(wei) * (wei == 0) + np.ones_like(wei) * ratio * (wei > 0)
+            else:
+                wei = np.ones_like(wei)
+            setattr(self,f"flood_weight_{seq}",wei)
+        return getattr(self,f"flood_weight_{seq}")
+
     def expand_seq(self,dats,seq,zeros=True):
         dats = np.stack([np.concatenate([np.tile(np.zeros_like(s) if zeros else np.ones_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
         return dats
@@ -95,7 +105,11 @@ class DataGenerator:
             idxs = np.random.randint(event_idxs.shape[0]//interval-batch_size)
             idxs = interval*np.arange(idxs,idxs+batch_size)
         else:
-            idxs = interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False)
+            wei = self.get_flood_weight(seq)[event_idxs][np.arange(0,event_idxs.shape[0],interval)]
+            idxs = interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False,
+                                             p=wei/wei.sum(),
+                                             )
+            # idxs = interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False)
         idxs = event_idxs[idxs]
         if seq > 0:
             ixs = np.apply_along_axis(lambda t:np.arange(t-seq,t),axis=1,arr=np.expand_dims(idxs,axis=-1))
@@ -158,6 +172,15 @@ class DataGenerator:
         if trim:
             ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
         return ex,ey
+    
+    def get_flood_poswei(self):
+        if self.if_flood:
+            n_flood = np.bincount(np.where(self.perfs>0)[1])
+            flood_wei = self.perfs.shape[0]/n_flood - 1
+            flood_wei[np.isinf(flood_wei)] = 1
+            return flood_wei
+        else:
+            return np.ones(self.perfs.shape[1])
 
     def update(self,trajs,test_id=None):
         for traj,item in zip(trajs,self.items):

@@ -1,5 +1,4 @@
 from envs.scenario import *
-from envs.environment import *
 
 def get_env(name):
     try:

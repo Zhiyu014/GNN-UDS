@@ -1,0 +1,9 @@
+act: conti
+batch_size: 64
+data_dir: 1s_edge_conti128_rain50
+epochs: 50000
+if_flood: true
+model_dir: 60s_50k_conti_5ly
+nly: 5
+seq: 60
+train: true

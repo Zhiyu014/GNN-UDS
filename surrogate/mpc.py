@@ -1,11 +1,8 @@
 import os,time,math
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow as tf
-# gpus = tf.config.list_physical_devices(device_type='GPU')
-# tf.config.experimental.set_memory_growth(gpus[0], True)
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+import torch as th
+from einops import rearrange,repeat,reduce
 from emulator import Emulator # Emulator should be imported before env
-from predictor import Predictor
+# from predictor import Predictor
 from utils.utilities import get_inp_files
 import pandas as pd
 import multiprocessing as mp
@@ -13,14 +10,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from scipy.stats import truncnorm
-from keras.optimizers import Adam
-from tensorflow_probability import distributions as tfd
 from scipy.optimize import minimize as scioptminimize
 import argparse,yaml
 from envs import get_env
 from pymoo.optimize import minimize as pymoominimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
-from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling,random_by_bounds
+from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling
 from pymoo.operators.sampling.lhs import LatinHypercubeSampling,sampling_lhs
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.crossover.binx import BX
@@ -138,27 +133,25 @@ def pred_simu(y,file,args,r=None,act=True):
     # return np.array(perf)
     return env.objective(idx)
 
-class mpc_problem(Problem):
+class mpc_ga(Problem):
     def __init__(self,args,margs=None):
         self.args = args
         if margs is not None:
-            tf.keras.backend.clear_session()    # to clear backend occupied models
-            if args.predict:
-                self.emul = Predictor(margs.recurrent,margs)
-            else:
-                self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+            # if args.predict:
+            #     self.emul = Predictor(margs.recurrent,margs)
+            # else:
+            self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
             self.emul.load(margs.model_dir)
             self.stochastic = getattr(args,"stochastic",False)
         self.step = args.interval
         self.eval_hrz = args.prediction['eval_horizon']
         self.n_step = args.prediction['control_horizon']//args.setting_duration
         self.r_step = args.setting_duration//args.interval
-        self.n_obj = 1
         self.env = get_env(args.env)(initialize=False)
         if args.act.startswith('conti'):
             self.n_act = len(args.action_space)
             self.n_var = self.n_act*self.n_step
-            super().__init__(n_var=self.n_var, n_obj=self.n_obj,
+            super().__init__(n_var=self.n_var, n_obj=1,
                             xl = np.array([min(v) for _ in range(self.n_step)
                                             for v in args.action_space.values()]),
                             xu = np.array([max(v) for _ in range(self.n_step)
@@ -167,25 +160,20 @@ class mpc_problem(Problem):
         else:
             self.actions = args.action_table
             self.n_act = np.array(list(self.actions)).shape[-1]
-            self.n_var = self.n_act*self.n_step
-            # self.actions = [{i:v for i,v in enumerate(val)}
-            #                 for val in args.action_space.values()]            
-            super().__init__(n_var=self.n_var, n_obj=self.n_obj,
+            self.n_var = self.n_act*self.n_step         
+            super().__init__(n_var=self.n_var, n_obj=1,
                             xl = np.zeros(self.n_var),
-                            # xu = np.array([len(v)-1 for _ in range(self.n_step)
-                            #     for v in self.actions]),
                             xu = np.array([v for _ in range(self.n_step)
                                 for v in np.array(list(self.actions.keys())).max(axis=0)]),
                             vtype=bool if args.act.endswith('bin') else int)
-            # print(self.n_var,self.xu)
-    
+
     def load_state(self,state,runoff,edge_state):
         self.state,self.runoff,self.edge_state = state,runoff,edge_state
     
     def load_file(self,eval_file,log=None,runoff_rate=None):
         self.file,self.runoff_rate,self.log = eval_file,runoff_rate,log
 
-    def pred_simu(self,y):
+    def obj_simu(self,y):
         y = y.reshape((self.n_step,self.n_act))
         y = np.repeat(y,self.r_step,axis=0)
         if y.shape[0] < self.eval_hrz // self.step:
@@ -201,16 +189,13 @@ class mpc_problem(Problem):
                 for node,ri in zip(self.env.elements['nodes'],self.runoff_rate[idx]):
                     self.env.env._setNodeInflow(node,ri)
             yi = y[idx]
-            # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
             done = self.env.step(yi if self.args.act.startswith('conti') else self.actions[tuple(yi.astype(int))])
-            # perf += env.performance().sum()
             idx += 1
         return self.env.objective(idx).sum()
     
-    def pred_emu(self,y):
+    def pre_state(self,y,state,runoff,edge_state):
         y = y.reshape((-1,self.n_step,self.n_act))
         pop_size = y.shape[0]
-        # settings = y if self.args.act.startswith('conti') else np.stack([np.vectorize(self.actions[i].get)(y[...,i]) for i in range(self.n_act)],axis=-1)
         settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y.astype(int))
         settings = np.repeat(settings,self.r_step,axis=1)
         if settings.shape[1] < self.eval_hrz // self.step:
@@ -223,48 +208,47 @@ class mpc_problem(Problem):
             runoff = np.repeat(np.expand_dims(self.runoff,0),pop_size,axis=0)
         state = np.repeat(np.expand_dims(self.state,0),settings.shape[0],axis=0)
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0)
-        preds = self.emul.predict(state,runoff,settings,edge_state)
+        return settings,state,runoff,edge_state
+
+    def predict(self,settings,state,runoff,edge_state):
+        if self.eval_hrz > self.margs.seq_out * self.args.interval:
+            state,edge_state = state[:,-self.margs.seq_in:,...],edge_state[:,-self.margs.seq_in:,...]
+            predss = []
+            for idx in range(self.eval_hrz//self.margs.seq_out):
+                ri = runoff[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,...]
+                sett = settings[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,:]
+                if self.margs.if_flood and idx > 0:
+                    f = (perf>0).astype(np.float32)
+                    state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                preds = self.emul.predict(state,ri,sett,edge_state)
+                state,perf = np.concatenate([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
+                ae = self.emul.get_edge_action(sett)
+                edge_state = np.concatenate([preds[1],ae],axis=-1)
+                predss.append(preds)
+        else:
+            return self.emul.predict(state,runoff,settings,edge_state)   
+
+    def obj_emu(self,y,state,runoff,edge_state):
+        settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
+        preds = self.predict(settings,state,runoff,edge_state)
         if self.args.predict:
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
             if not getattr(self.emul,'norm',False):
                 objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
         else:
             objs = self.env.objective_pred(preds,[state,edge_state],settings).sum(axis=-1)
-        return np.array([objs[i*self.stochastic:(i+1)*self.stochastic].mean() for i in range(pop_size)]) if self.stochastic else objs
-        
-    @tf.function
-    def pred_emu_tf(self,y,runoff,state,edge_state):
-        runoff = tf.cast(tf.tile(runoff,(self.args.pop_size,)+tuple([1 for _ in range(runoff.ndim-1)])) if self.stochastic else\
-                          tf.repeat(tf.expand_dims(runoff,0),self.args.pop_size,axis=0),tf.float32)
-        state = tf.cast(tf.repeat(tf.expand_dims(state,0),max(self.stochastic*self.args.pop_size,self.args.pop_size),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(edge_state,0),max(self.stochastic*self.args.pop_size,self.args.pop_size),axis=0),tf.float32)
-        settings = tf.reshape(y,(-1,self.n_step,self.n_act))
-        if not self.args.act.startswith('conti'):
-            settings = tf.stack([tf.gather(self.actions[i],settings[...,i]) for i in range(self.n_act)],axis=-1)
-        settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
-        if settings.shape[1] < self.eval_hrz // self.step:
-            # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-            settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
         if self.stochastic:
-            settings = tf.repeat(settings,self.stochastic,axis=0)
-        preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-        if self.args.predict:
-            objs = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-            if not getattr(self.emul,'norm',False):
-                objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
-        else:
-            objs = self.env.objective_pred_tf(preds,[state,edge_state],settings)
-        if self.stochastic:
-            objs = tf.stack([tf.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic]) for i in range(self.args.pop_size)])
+            objs = np.stack([np.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic])
+                              for i in range(y.shape[0])])
         return objs
 
     def _evaluate(self,x,out,*args,**kwargs):        
         if hasattr(self,'emul'):
             # out['F'] = self.pred_emu(x)+1e-6
-            out['F'] = self.pred_emu_tf(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
+            out['F'] = self.obj_emu(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
         else:
             pool = mp.Pool(self.args.processes)
-            res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
+            res = [pool.apply_async(func=self.obj_simu,args=(xi,)) for xi in x]
             pool.close()
             pool.join()
             F = [r.get() for r in res]
@@ -273,15 +257,15 @@ class mpc_problem(Problem):
     def pred(self,x):
         if hasattr(self,'emul'):
             # return self.pred_emu(x)+1e-6
-            return self.pred_emu_tf(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
+            return self.obj_emu(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
         else:
             pool = mp.Pool(self.args.processes)
-            res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
+            res = [pool.apply_async(func=self.obj_simu,args=(xi,)) for xi in x]
             pool.close()
             pool.join()
             F = [r.get() for r in res]
             return np.array(F)+1e-6
-
+        
 class BestCallback(Callback):
     def __init__(self) -> None:
         super().__init__()
@@ -307,13 +291,6 @@ def initialize(x0,xl,xu,pop_size,prob,conti=False):
 
 def run_ea(prob,args,setting=None):
     print('Running genetic algorithm')
-    # if margs is not None:
-    #     prob = mpc_problem(args,margs=margs)
-    # elif eval_file is not None:
-    #     prob = mpc_problem(args,eval_file=eval_file)
-    # else:
-    #     raise AssertionError('No margs or file claimed')
-
     if args.use_current and setting is not None:
         sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.act.startswith('conti'))
     else:
@@ -353,17 +330,9 @@ def run_ea(prob,args,setting=None):
                         termination = termination,
                         callback=BestCallback(),
                         verbose = True)
-    # Multiple solutions with the same performance
-    # Choose the minimum changing
-    # if res.X.ndim == 2:
-    #     X = res.X[:,:prob.n_pump]
-    #     chan = (X-np.array(settings)).sum(axis=1)
-    #     ctrls = res.X[chan.argmin()]
-    # else:
     ctrls = res.X
     ctrls = ctrls.reshape((prob.n_step,prob.n_act))
     if not args.act.startswith('conti'):
-        # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
         ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls.astype(int))
     print("Best solution found: %s" % ctrls.tolist())
     print("Function value: %s" % res.F)
@@ -375,70 +344,7 @@ def run_ea(prob,args,setting=None):
     sols = np.array(sols).reshape((-1,prob.n_step,prob.n_act))
     if not args.act.startswith('conti'):
         sols = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,sols.astype(int))
-    # if margs is not None:
-    #     del prob.emul
-    # del prob
-    # gc.collect()
     return ctrls.tolist(),vals,nfuns,times,sols
-
-def run_ce(prob,args,setting=None):
-    print('Running cross entropy')
-    def sample_conti(mu,sig,n=1):
-        return np.array([truncnorm.rvs((prob.xl-mu)/sig,(prob.xu-mu)/sig)*sig+mu for _ in range(n)])
-    def sample_disc(pr,n=1):
-        pr = [np.array(pri)/np.sum(pri) for pri in pr]
-        return np.array([np.random.choice(np.arange(pri.shape[0]),p=pri,size=n) for pri in pr]).T
-    
-    # Initialize
-    if args.act.startswith('conti'):
-        mu,sig = np.random.uniform(low=prob.xl,high=prob.xu,size=prob.n_var),np.random.uniform(low=0.001,size=prob.n_var)
-    else:
-        pr = [np.random.uniform(low=0.001,size=int(xui)+1) for xui in prob.xu]
-
-    def if_terminate(item,vm,rec):
-        if item == 'n_gen':
-            return rec[0] >= vm
-        elif item == 'obj':
-            return rec[-2] <= vm  # TODO
-        elif item == 'time':
-            return rec[1] >= vm
-        
-    t0 = time.time()
-    recs,sols = [[0,0,1e6,1e6,1e6]],[]
-    print('=======================================================================')
-    print(' n_gen |      time     |     f_lam     |     f_min     |     g_min     ')
-    print('=======================================================================')
-    obj = np.random.uniform(size=(args.pop_size,))
-    while not if_terminate(*args.termination,recs[-1]):
-        x = sample_conti(mu,sig,args.pop_size) if args.act.startswith('conti') else sample_disc(pr,args.pop_size)
-        obj = prob.pred(x)
-        rec = [recs[-1][0]+1, time.time()-t0-recs[-1][1], 
-               obj.mean(), 
-               obj.min(), 
-               min(obj.argsort()[int(args.pop_size*args.cross_entropy)],recs[-1][1])]
-        if obj.min() < recs[-1][2]:
-            ctrls = np.clip(x[obj.argmin()],prob.xl,prob.xu)
-            ctrls = ctrls.reshape((prob.n_step,prob.n_act))
-            if not args.act.startswith('conti'):
-                # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
-                ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
-            ctrls = ctrls.tolist()
-        sols.append(ctrls)
-        # formulate a new distribution with elites
-        x_new = x[obj<=rec[-1]]
-        if args.act.startswith('conti'):
-            mu,sig = x_new.mean(axis=0),x_new.std(axis=0)
-        else:
-            pr = [np.bincount(x_ni) for x_ni in x_new.T]
-        
-        log = ''.join([str(round(r,4)).center(7 if i == 0 else 15) + '|' for i,r in enumerate(rec)])
-        print(log[:-1])
-        rec[1] = time.time() - t0
-        recs.append(rec)
-    # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
-    print('Best solution: ',ctrls)
-    vals,nfuns,times,sols = np.array(recs)[1:,-2],np.arange(1,len(vals)+1)*args.pop_size,np.array(recs)[1:,1],np.array(sols)
-    return ctrls,vals,nfuns,times,sols
 
 def call_counter(func):
     def helper(*args, **kwargs):
@@ -448,18 +354,17 @@ def call_counter(func):
     helper.__name__= func.__name__
     return helper
     
-class mpc_problem_gr(tf.Module):
+class mpc_gr:
     def __init__(self,args,margs,load_model=False):
         self.args = args
         self.margs = margs
+        self.device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
         if load_model:
-            tf.keras.backend.clear_session()    # to clear backend occupied models
-            gpus = tf.config.list_physical_devices('GPU')
-            if args.processes > 1:
-                tf.config.experimental.set_virtual_device_configuration(
-                    gpus[0],
-                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)
-                    for _ in range(args.processes)])
+            # if args.processes > 1:
+            #     tf.config.experimental.set_virtual_device_configuration(
+            #         gpus[0],
+            #         [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)
+            #         for _ in range(args.processes)])
             self.load_model(margs,args.predict)
         self.cross_entropy = bool(getattr(args,"cross_entropy",False))
         self.stochastic = getattr(args,"stochastic",False)
@@ -470,7 +375,6 @@ class mpc_problem_gr(tf.Module):
         self.n_step = args.prediction['control_horizon']//args.setting_duration
         self.r_step = args.setting_duration//args.interval
         self.env = get_env(args.env)(initialize=False)
-        self.optimizer = Adam(getattr(args,"learning_rate",1e-3))
         self.pop_size = getattr(args,'pop_size',64)
         self.n_var = self.n_act*self.n_step
         self.bounded = args.method in ['l-bfgs-b','trust-constr']
@@ -480,127 +384,71 @@ class mpc_problem_gr(tf.Module):
                             for v in self.asp])
 
     def load_model(self,margs,predict=False):
-        self.emul = Predictor(margs.recurrent,margs) if predict \
-            else Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
+        self.emul = Emulator(margs.conv,margs.resnet,margs.recurrent,margs)
         self.emul.load(margs.model_dir)
 
     def load_state(self,state,runoff,edge_state):
-        self.state,self.runoff,self.edge_state = [tf.cast(tf.convert_to_tensor(x),tf.float32) for x in [state,runoff,edge_state]]
+        self.state,self.runoff,self.edge_state = [th.tensor(x).type(th.float32).to(self.device) for x in [state,runoff,edge_state]]
 
     def get_state(self):
         return tuple([getattr(self,item,None) for item in ['state','runoff','edge_state']])
 
-    def initialize(self,sampling):
-        if not hasattr(self,'y'):
-            self.y = tf.Variable(sampling)
-        else:
-            self.y.assign(sampling)
-        self.train_vars = [self.y]
-
-    def initialize_distr(self,sampling):
-        if not hasattr(self,'distr'):
-            self.distr = tfd.TruncatedNormal(loc=tf.Variable(sampling[0,:]),scale=tf.Variable(sampling[1,:]),
-                                             low=self.xl,high=self.xu)
-        else:
-            self.distr.loc.assign(sampling[0,:])
-            self.distr.scale.assign(sampling[1,:])
-        self.train_vars = [self.distr.loc,self.distr.scale]
-
-    # TODO: distr.sample does not work in autograph
-    # @tf.function
-    @call_counter
-    def pred_fit(self):
-        # assert getattr(self,'y',None) is not None
-        if self.stochastic:
-            runoff = tf.cast(tf.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)])),tf.float32)
-        else:
-            runoff = tf.cast(tf.repeat(tf.expand_dims(self.runoff,0),self.pop_size,axis=0),tf.float32)
-        state = tf.cast(tf.repeat(tf.expand_dims(self.state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.expand_dims(self.edge_state,0),self.pop_size*max(self.stochastic,1),axis=0),tf.float32)
-        with tf.GradientTape(watch_accessed_variables=False) as tape:
-            tape.watch(self.train_vars)
-            if self.cross_entropy:
-                # distr = tfd.TruncatedNormal(loc=tf.clip_by_value(self.train_vars[0],self.xl,self.xu),
-                #                             scale=tf.clip_by_value(self.train_vars[1],0,np.nan),
-                #                             low=self.xl,high=self.xu)
-                # self.x = distr.sample(self.pop_size)
-                self.train_vars[0].assign(tf.clip_by_value(self.train_vars[0],self.xl,self.xu))
-                self.train_vars[1].assign(tf.clip_by_value(self.train_vars[1],1e-3,np.inf))
-                self.y = self.distr.sample(self.pop_size)
-            settings = tf.reshape(tf.clip_by_value(self.y,self.xl,self.xu),(-1,self.n_step,self.n_act))
-            settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
-            if settings.shape[1] < self.eval_hrz // self.step:
-                # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-                settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
-            if self.stochastic:
-                settings = tf.repeat(settings,self.stochastic,axis=0)
-            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            if self.args.predict:
-                obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-                if not getattr(self.emul,'norm',False):
-                    obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
-            else:
-                obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
-            if self.stochastic:
-                obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic],axis=0) for i in range(self.pop_size)])
-            loss = tf.reduce_mean(obj,axis=0) if self.cross_entropy else obj
-        grads = tape.gradient(loss,self.train_vars)
-        self.optimizer.apply_gradients(zip(grads,self.train_vars))
-        return obj,grads
-
-    @call_counter
-    @tf.function
-    def objective_fn(self,y,state,runoff,edge_state):
-        settings = tf.reshape(y,(-1,self.n_step,self.n_act))
+    def pre_state(self,y,state,runoff,edge_state):
         n_pop = settings.shape[0]
-        settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
+        settings = rearrange(y,'b (s a) -> b s a',s=self.n_step,a=self.n_act)
+        settings = th.tensor(repeat(settings,'b s a -> b (s r) a',r=self.r_step)).type(th.float32).to(self.device)
         if settings.shape[1] < self.eval_hrz // self.step:
             # Expand settings to match runoff in temporal exis (control_horizon --> eval_horizon)
-            settings = tf.concat([settings,tf.repeat(settings[:,-1:,:],self.eval_hrz // self.step-settings.shape[1],axis=1)],axis=1)
+            settings = th.concat([settings,repeat(settings[:,-1:,:],'b s a -> b (s r) a',r=self.eval_hrz//self.step-settings.shape[1])],dim=1)
         if self.stochastic:
-            settings = tf.repeat(settings,self.stochastic,axis=0)
-        runoff = tf.repeat(tf.cast(runoff if self.stochastic else tf.expand_dims(runoff,0),tf.float32),n_pop,axis=0)
-        state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
-        edge_state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(edge_state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
+            settings = repeat(settings,'b s a -> (b sto) s a', sto=self.stochastic)
+        runoff = repeat(runoff,'sto s d -> (b sto) s d' if self.stochastic else 's d -> b s d',b=n_pop)
+        state = repeat(state,'s d -> b s d',b=n_pop*max(self.stochastic,1))
+        edge_state = repeat(edge_state,'s d -> b s d',b=n_pop*max(self.stochastic,1))
+        return settings,state,runoff,edge_state
+
+    def predict(self,settings,state,runoff,edge_state):
         if self.eval_hrz > self.margs.seq_out * self.args.interval:
             state,edge_state = state[:,-self.margs.seq_in:,...],edge_state[:,-self.margs.seq_in:,...]
-            predss,s0 = [],[state,edge_state]
+            predss = []
             for idx in range(self.eval_hrz//self.margs.seq_out):
                 ri = runoff[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,...]
                 sett = settings[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,:]
                 if self.margs.if_flood and idx > 0:
-                    f = tf.cast(perf>0,tf.float32)
-                    state = tf.concat([state[...,:-1],f,state[...,-1:]],axis=-1)
-                preds = self.emul.predict_tf(state,ri,sett,edge_state)
-                state,perf = tf.concat([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
+                    f = (perf>0).type(th.float32)
+                    state = th.concat([state[...,:-1],f,state[...,-1:]],dim=-1)
+                preds = self.emul.predict(state,ri,sett,edge_state)
+                state,perf = th.concat([preds[0][...,:-2],ri],dim=-1),preds[0][...,-1:]
                 ae = self.emul.get_edge_action(sett,True)
-                edge_state = tf.concat([preds[1],ae],axis=-1)
+                edge_state = th.concat([preds[1],ae],dim=-1)
                 predss.append(preds)
-            predss = [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
-            obj = self.env.objective_pred_tf(predss,s0,sett)
+            return [th.concat([preds[i] for preds in predss],dim=1) for i in range(2)]
         else:
-            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            if self.args.predict:
-                obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-                if not getattr(self.emul,'norm',False):
-                    obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
-            else:
-                obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
-        if self.stochastic:
-            objs = tf.stack([tf.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic])
-                              for i in range(n_pop)])
-        return tf.squeeze(obj)
+            return self.emul.predict_tf(state,runoff,settings,edge_state)
 
     @call_counter
-    @tf.function
+    def objective_fn(self,y,state,runoff,edge_state):
+        settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
+        preds = self.predict(settings,state,runoff,edge_state)
+        if self.args.predict:
+            obj = reduce(preds,'b s d -> b', 'sum')
+            if not getattr(self.emul,'norm',False):
+                obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+        else:
+            obj = self.env.objective_pred(preds,[state,edge_state],settings)
+        if self.stochastic:
+            obj = th.stack([obj[i*self.stochastic:(i+1)*self.stochastic].mean()
+                              for i in range(y.shape[0])],dim=0)
+        return obj.squeeze()
+
+    @call_counter
     def gradient_fn(self,y,state,runoff,edge_state):
-        y = tf.cast(tf.convert_to_tensor(y),tf.float32)
-        with tf.GradientTape(watch_accessed_variables=False) as tape:
-            tape.watch(y)
-            if not self.bounded:
-                y = self.project(y)
-            obj = self.objective_fn(y,state,runoff,edge_state)
-        grads = tape.gradient(obj,y)
+        y = th.tensor(y).type(th.float32).to(self.device)
+        if not self.bounded:
+            y = self.project(y)
+        self.emul.model.zero_grad()
+        obj = self.objective_fn(y,state,runoff,edge_state)
+        grads = th.autograd.grad(obj,y,retain_graph=True)[0]
         return obj,grads
 
     def gradient(self,*args):
@@ -608,13 +456,11 @@ class mpc_problem_gr(tf.Module):
         return objs.numpy(),grads.numpy()
     
     @call_counter
-    @tf.function
     def hessp_fn(self,y,p,state,runoff,edge_state):
-        y,p = tf.cast(tf.convert_to_tensor(y),tf.float32),tf.cast(tf.convert_to_tensor(p),tf.float32)
-        with tf.GradientTape(watch_accessed_variables=False) as tape:
-            tape.watch(y)
-            _,grads = self.gradient_fn(y,state,runoff,edge_state)
-        hvp = tape.gradient(grads,y,output_gradients=tf.stop_gradient(p))
+        y,p = th.tensor(y).type(th.float32).to(self.device),th.tensor(p).type(th.float32).to(self.device)
+        self.emul.model.zero_grad()
+        _,grads = self.gradient_fn(y,state,runoff,edge_state)
+        hvp = th.autograd.grad(grads,y,grad_outputs=p.detach())[0]
         return hvp
 
     def hessp(self,*args):
@@ -624,62 +470,14 @@ class mpc_problem_gr(tf.Module):
         # return tf.clip_by_value(y,self.xl,self.xu)
         if inverse:
             y = (y-self.xl)/(self.xu-self.xl)
-            return tf.math.log(y/(1-y+1e-6))
+            return th.log(y/(1-y+1e-6))
         else:
-            return tf.sigmoid(y)*(self.xu-self.xl)+self.xl
+            return th.sigmoid(y)*(self.xu-self.xl)+self.xl
 
     @property
     def calls(self):
         return self.pred_fit.calls + self.objective_fn.calls + self.gradient_fn.calls + self.hessp_fn.calls
 
-def run_gr(prob,args,setting=None):
-    print('Running gradient inversion')
-    prob.load_model()
-    if args.use_current and setting is not None:
-        sampling = initialize(setting,prob.xl,prob.xu,2 if args.cross_entropy else args.pop_size,args.sampling,conti=True)
-    else:
-        sampling = sampling_lhs(2 if args.cross_entropy else args.pop_size,prob.n_var,prob.xl,prob.xu)
-    def if_terminate(item,vm,rec):
-        if item == 'n_gen':
-            return rec[0] >= vm
-        elif item == 'obj':
-            return rec[-2] <= vm # TODO
-        elif item == 'grad':
-            return rec[2] <= vm
-        elif item == 'time':
-            return rec[1] >= vm
-
-    t0 = time.time()
-    recs,sols = [[0,prob.calls*args.pop_size,0,1e6,1e6,1e6,1e6]],[]
-    print('=======================================================================================')
-    print(' n_gen |      time     |     grads     |     f_avg     |     f_min     |     g_min     ')
-    print('=======================================================================================')
-    prob.initialize_distr(sampling) if args.cross_entropy else prob.initialize(sampling)
-    obj = tf.random.uniform((args.pop_size,))
-    while not if_terminate(*args.termination,recs[-1]):
-        obj,grads = prob.pred_fit()
-        rec = [recs[-1][0]+1, 
-               prob.calls*args.pop_size-recs[-1][1], 
-               time.time()-t0-recs[-1][2], 
-               np.mean([grad.numpy().mean() for grad in grads]), 
-               obj.numpy().mean(), 
-               obj.numpy().min(), 
-               min(recs[-1][-1],obj.numpy().min())]
-        if obj.numpy().min() < recs[-1][-1]:
-            ctrls = prob.y[obj.numpy().argmin()].numpy()
-            ctrls = np.clip(ctrls,prob.xl,prob.xu)
-            ctrls = ctrls.reshape((prob.n_step,prob.n_act)).tolist()
-        sols.append(ctrls)
-        log = ''.join([str(round(r,4)).center(7 if i == 0 else 15) + '|' for i,r in enumerate(rec)])
-        print(log[:-1])
-        rec[1],rec[2] = prob.calls*args.pop_size,time.time()-t0
-        recs.append(rec)
-    # print('Initial solution: ',sampling.reshape((-1,prob.n_step,prob.n_act)).tolist())
-    print('Best solution: ',ctrls)
-    vals,nfuns,times,sols = np.array(recs)[1:,-1],np.array(recs)[1:,1]-prob.calls*args.pop_size,np.array(recs)[1:,2],np.array(sols)
-    return ctrls,vals,nfuns,times,sols
-
-# TODO: multiple runs in LBFGS. multi-process/thread not working, try tensorflow serving
 def run_ntopt(prob,args,setting=None):
     '''
     l-bfgs-b or trust-constr
@@ -703,7 +501,7 @@ def run_ntopt(prob,args,setting=None):
         rec[1],rec[2] = nfev,time.time()
         recs.append(rec)
     res = []
-    for x0 in sampling:
+    for i,x0 in enumerate(sampling):
         results = scioptminimize(lambda *arg: tuple([re.numpy() for re in prob.gradient_fn(*arg)]),
                                     x0=x0 if prob.bounded else prob.project(x0,True),
                                     args=prob.get_state(),
@@ -749,15 +547,17 @@ if __name__ == '__main__':
         # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':120,
+        # 'horizon':60,
         # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs',
-        # 'result_dir':'./results/astlingen/120s_conti_lbfgsb_pop16_2007',
+        # 'result_dir':'./results/astlingen/60s_conti_lbfgsb16fl_2007',
         }
     # config['rain_dir'] = de['rain_dir']
     for k,v in de.items():
         setattr(args,k,v)
 
-    tf.random.set_seed(args.seed)
+    os.environ['PYTHONHASHSEED'] = str(args.seed)
+    th.manual_seed(args.seed)
+    th.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
 
     env = get_env(args.env)(initialize=False)
@@ -793,9 +593,9 @@ if __name__ == '__main__':
     args.prediction['eval_horizon'] = args.prediction['control_horizon'] = args.horizon * args.interval
 
     if args.surrogate and args.gradient:
-        prob = mpc_problem_gr(args,margs,load_model=True)
+        prob = mpc_gr(args,margs,load_model=True)
     else:
-        prob = mpc_problem(args,margs=margs if args.surrogate else None)
+        prob = mpc_ga(args,margs=margs if args.surrogate else None)
 
     if not os.path.exists(args.result_dir):
         os.mkdir(args.result_dir)
@@ -850,7 +650,6 @@ if __name__ == '__main__':
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
                         f = (flood>0).astype(float)
-                        # f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     t = env.env.methods['simulation_time']()
                     r = runoff[int(tss.asof(t)['Index'])]
@@ -865,12 +664,7 @@ if __name__ == '__main__':
                     # margs.runoff = r
                     prob.load_state(state,r,edge_state)
                     if args.gradient:
-                        if args.method.lower() == 'descent':
-                            setting,vals,nfuns,times,sols = run_gr(prob,args,setting=setting)
-                        else:
-                            setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
-                    elif args.cross_entropy:
-                        setting,vals,nfuns,times,sols = run_ce(prob,args,setting=setting)
+                        setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
                     else:
                         setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
                 else:
@@ -879,10 +673,7 @@ if __name__ == '__main__':
                         t = env.env.methods['simulation_time']()
                         rr = runoff_rate[int(tss.asof(t)['Index']),...,0]
                     prob.load_file(eval_file,env.data_log,rr if args.prediction['no_runoff'] else None)
-                    if args.cross_entropy:
-                        setting,vals,nfuns,times,sols = run_ce(prob,args,setting=setting)
-                    else:
-                        setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
+                    setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
                 valss.append(vals)
                 nfunss.append(nfuns)
                 timess.append(times)

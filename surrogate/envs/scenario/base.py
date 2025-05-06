@@ -5,7 +5,7 @@ import yaml
 import numpy as np
 import networkx as nx
 from swmm_api import read_inp_file
-from swmm_api.input_file.sections import FilesSection,Control
+from swmm_api.input_file.sections import FilesSection
 from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import datetime
 from functools import reduce
@@ -304,31 +304,32 @@ class basescenario(scenario):
             else:
                 args['hmin'] = np.zeros_like(args['hmax'])
 
+
+        args['edges'] = self.get_edge_list()
+        EX = self.get_edge_graph(args['edges'],directed=directed)
+        args['node_index'] = np.array(EX.edges)
+        args['node_edge'] = self.get_node_edge()
+        args['node_edge_index'] = self.get_node_edge_index(args['edges'],args['node_index'])
+        # TODO: Heterogeneous Graphs for node/edge based graph
+        # TODO: get edge_indices for pyg, adj is for spektral
+        # if graph_base == 1:
+        #     args['adj'] = self.get_node_based_adj(directed,length,order)
+        # elif graph_base == 2:
+        #     args['adj'] = self.get_edge_based_adj(directed,length,order)
+        # else:
+        #     args['adj'] = self.get_adj(directed,length,order)
+        # args['edge_adj'] = self.get_edge_adj(directed,length,order)
+
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
         args['nwei'] = np.array([self.config['loss_weight'].get(node,1.0) if self.config.get('loss_weight') is not None else 1.0 for node in nodes])
+        args['ewei'] = np.array([self.config['loss_weight'].get(link,1.0)
+                                    if self.config.get('loss_weight') is not None else 1.0
+                                    for link in self.get_features('links')])        
         args['elements'] = self.elements
         args['attrs'] = {'nodes':[attr for ele,attr in self.config['global_state'] if ele == 'nodes'],
                          'links':[attr for ele,attr in self.config['global_state'] if ele == 'links']}
-
-        if self.global_state:
-            args['edges'] = self.get_edge_list()
-            links = self.get_features('links')
-            inp = read_inp_file(self.config['swmm_input'])
-            args['ehmax'] = np.array([inp.XSECTIONS[link].Geom1 if link in inp.XSECTIONS else 0 for link in links])
-            args['ewei'] = np.array([self.config['loss_weight'].get(link,1.0) if self.config.get('loss_weight') is not None else 1.0 for link in links])
-
-            if graph_base == 1:
-                args['adj'] = self.get_node_based_adj(directed,length,order)
-            elif graph_base == 2:
-                args['adj'] = self.get_edge_based_adj(directed,length,order)
-            else:
-                args['adj'] = self.get_adj(directed,length,order)
-            args['edge_adj'] = self.get_edge_adj(directed,length,order)
-            args['node_edge'] = self.get_node_edge()
-            args['node_index'] = self.get_node_index(directed)  # n_edge,n_edge
-            args['edge_index'] = self.get_edge_index(directed)  # n_node,n_node
-            args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))            
+        args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))            
         return args
     
     # TODO: getters Use pyswmm api
@@ -356,50 +357,26 @@ class basescenario(scenario):
             links = [link for label in LINK_SECTIONS if label in inp for link in getattr(inp,label).values()]
         edges,lengths = [],[]
         for link in links:
-            if link.FromNode in nodes and link.ToNode in nodes:
-                edges.append((nodes.index(link.FromNode),nodes.index(link.ToNode)))
+            if link.from_node in nodes and link.to_node in nodes:
+                edges.append((nodes.index(link.from_node),nodes.index(link.to_node)))
                 lengths.append(getattr(link,'Length',0.0))
         if length:
             return np.array(edges),np.array(lengths)
         else:
             return np.array(edges)
-        
-    def get_adj(self,directed=False,length=0,order=1):
-        edges = self.get_edge_list(length=bool(length))
-        X = nx.DiGraph() if directed else nx.Graph()
-        if length:
-            edges,lengths = edges
-            l_std = np.std(lengths)
-            n_node = edges.max()+1
-            adj = np.zeros((n_node,n_node))
-            for (u,v),l in zip(edges,lengths):
-                X.add_edge(u,v,length=l)
-            for n in range(n_node):
-                path_length = nx.single_source_dijkstra_path_length(X,n,weight='length',cutoff=length)
-                for a,l in path_length.items():
-                    adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
-        else:
-            for u,v in edges:
-                X.add_edge(u,v)
-            n_node = edges.max()+1
-            adj = np.zeros((n_node,n_node))
-            for n in range(n_node):
-                for a in list(nx.dfs_preorder_nodes(X,n,order) if order>0 else [n]):
-                    adj[n,a] = 1
-                    if not directed:
-                        adj[a,n] = 1
-        return adj
 
-    def get_edge_adj(self,directed=False,length=0,order=1):
-        edges = self.get_edge_list(length=bool(length))
+    def get_node_graph(self,edges,length=0,directed=False):
         X = nx.DiGraph() if directed else nx.Graph()
         if length:
             edges,lengths = edges
-            l_std = np.std(lengths)
         for i,(u,v) in enumerate(edges):
             X.add_edge(u,v,edge=i)
             if length:
                 X[u][v].update(length=lengths[i])
+        return X
+
+    def get_edge_graph(self,edges,length=0,directed=False):
+        X = self.get_node_graph(edges,length,directed)
         EX = nx.DiGraph() if directed else nx.Graph()
         for n in X.nodes():
             if directed:
@@ -415,6 +392,35 @@ class basescenario(scenario):
                     EX.add_edge(u['edge'],v['edge'])
                     if length:
                         EX[u['edge']][v['edge']].update(length = (u['length']+v['length'])/2)
+        return EX
+
+    def get_adj(self,directed=False,length=0,order=1):
+        edges = self.get_edge_list(length=bool(length))
+        X = self.get_node_graph(edges,length,directed)
+        if length:
+            edges,lengths = edges
+            n_node,l_std = edges.max()+1,np.std(lengths)
+            adj = np.zeros((n_node,n_node))
+            for n in range(n_node):
+                path_length = nx.single_source_dijkstra_path_length(X,n,weight='length',cutoff=length)
+                for a,l in path_length.items():
+                    adj[n,a] = np.exp(-(l/(l_std+1e-5))**2)
+        else:
+            n_node = edges.max()+1
+            adj = np.zeros((n_node,n_node))
+            for n in range(n_node):
+                for a in list(nx.dfs_preorder_nodes(X,n,order) if order>0 else [n]):
+                    adj[n,a] = 1
+                    if not directed:
+                        adj[a,n] = 1
+        return adj
+
+    def get_edge_adj(self,directed=False,length=0,order=1):
+        edges = self.get_edge_list(length=bool(length))
+        if length:
+            edges,lengths = edges
+            l_std = np.std(lengths)
+        EX = self.get_edge_graph(edges,length,directed)
 
         n_edge = edges.shape[0]
         adj = np.zeros((n_edge,n_edge))
@@ -438,35 +444,13 @@ class basescenario(scenario):
             node_edge[v,i] += -1
         return node_edge
     
-    # For ECCConv
-    def get_node_index(self,directed=False):
-        edges = self.get_edge_list()
-        nodes_in,nodes_out = {},{}
-        for i,(u,v) in enumerate(edges):
-            nodes_in[u] = nodes_in[u] + [i] if u in nodes_in else [i]
-            nodes_out[v] = nodes_out[v] + [i] if v in nodes_out else [i]
-        n_edge = edges.shape[0]
-        node_idx = np.zeros((n_edge,n_edge))
-        for n in range(edges.max()+1):
-            if directed:
-                for a in nodes_in.get(n,[]):
-                    for b in nodes_out.get(n,[]):
-                        node_idx[a,b] = n
-            else:
-                for a,b in combinations(nodes_in.get(n,[])+nodes_out.get(n,[]),2):
-                    node_idx[a,b] = n
-        return node_idx.astype(int)
-
-    # For ECCConv
-    def get_edge_index(self,directed=False):
-        edges = self.get_edge_list()
+    def get_node_edge_index(self,edges,node_index):
         n_node = edges.max()+1
-        edge_idx = np.zeros((n_node,n_node))
+        edge_index = []
         for i,(u,v) in enumerate(edges):
-            edge_idx[u,v] = i
-            if not directed:
-                edge_idx[v,u] = i
-        return edge_idx.astype(int)
+            edge_index.extend([(u,n_node+i),(n_node+i,v)])
+        node_edge_index = np.concatenate([edges, node_index + n_node, np.array(edge_index)],axis=0)
+        return node_edge_index
     
     def get_node_based_adj(self,directed=False,length=0,order=1):
         edges = self.get_edge_list(length=bool(length))

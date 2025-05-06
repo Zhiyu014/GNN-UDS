@@ -65,12 +65,12 @@ global_state:
     - nodes
     # - lateralinflow
     - cumlateralinflow
-  - !!python/tuple
-    - links
-    - depthL
-  - !!python/tuple
-    - links
-    - volumeL
+  # - !!python/tuple
+  #   - links
+  #   - depthL
+  # - !!python/tuple
+  #   - links
+  #   - volumeL
   - !!python/tuple
     - links
     - flow_vol

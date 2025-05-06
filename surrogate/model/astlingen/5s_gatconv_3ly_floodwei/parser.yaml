@@ -1,0 +1,10 @@
+act: conti
+data_dir: 1s_edge_conti128_rain50
+epochs: 50000
+gradnorm: true
+if_flood: true
+model_dir: 5s_gatconv_3ly_floodwei
+nly: 3
+save_gap: 5000
+seq: 5
+train: true

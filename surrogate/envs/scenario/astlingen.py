@@ -71,41 +71,11 @@ class astlingen(basescenario):
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj = (obj*gamma).sum(axis=-1) if not keepdim else np.transpose(obj*gamma,(0,2,1))
         return obj
-    
-    def objective_pred_tf(self,preds,states,settings,gamma=None,rough=True):
-        import tensorflow as tf
-        preds,_ = preds
-        state,_ = states
-        q_w = preds[...,-1]
-        q_in = tf.concat([state[:,-1:,:,1],preds[...,1]],axis=1)
-        flood = [q_w[...,self.elements['nodes'].index(idx)] * weight
-                for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
-        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
-                for idx,attr,weight in self.config['performance_targets']
-                    if attr == 'cuminflow' and 'WWTP' in idx]
-        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(outflow,axis=0)
-        if rough:
-            # inflow = [tf.abs(tf.reduce_sum(preds[...,self.elements['nodes'].index(idx),1],axis=-1,keepdims=True)-\
-            #                  tf.reduce_sum(state[...,self.elements['nodes'].index(idx),1],axis=-1,keepdims=True)) * weight
-            #                  for idx,attr,weight in self.config['performance_targets']
-            #                  if attr == 'cuminflow' and 'WWTP' not in idx]
-            # inflow = [tf.repeat(inf,preds.shape[1],axis=-1)/preds.shape[1] for inf in inflow]
-            inflow = [tf.abs(tf.experimental.numpy.diff(q_in[...,self.elements['nodes'].index(idx)],axis=1)) * weight
-                    for idx,attr,weight in self.config['performance_targets']
-                        if attr == 'cuminflow' and 'WWTP' not in idx]
-            obj += tf.reduce_sum(inflow,axis=0)
-        gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
-        obj = tf.reduce_sum(obj*gamma,axis=-1)
-        return obj
 
-    def norm_obj(self,obj,states,g=False,inverse=False):
-        if g:
-            import tensorflow as tf
-            __norm = tf.reduce_sum(tf.reduce_sum(states[0][...,-1],axis=-1),axis=-1)
-        else:
-            __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
-            while __norm.ndim < obj.ndim:
-                __norm = np.expand_dims(__norm,-1)
+    def norm_obj(self,obj,states,inverse=False):
+        __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
+        while __norm.ndim < obj.ndim:
+            __norm = np.expand_dims(__norm,-1)
         return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
 
     def get_obj_norm(self,norm_y,norm_e=None,perfs=None):
@@ -145,11 +115,13 @@ class astlingen(basescenario):
         #     args['rainfall']['training_events'] = os.path.join(HERE,'config',args['rainfall']['training_events']+'.csv')
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([inp.CURVES[node.Curve].points[0][1] if sec == 'STORAGE' else 0.0
+        args['area'] = np.array([inp.CURVES[node.data].points[0][1] if sec == 'STORAGE' else 0.0
                                   for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
-
-        if self.global_state:
-            args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = [np.where((args['edges']==act_edge).all(1))[0]
+                        for act_edge in act_edges]
+        act_edges = [i for e in act_edges for i in e]
+        args['act_edges'] = sorted(list(set(act_edges)),key=act_edges.index)
         if act and self.config['act']:
             args['action_space'] = self.get_action_space(act)
             if not act.startswith('conti'):
