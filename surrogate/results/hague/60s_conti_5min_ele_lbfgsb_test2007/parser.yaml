@@ -1,0 +1,12 @@
+act: conti
+control_interval: 5
+gradient: true
+lag: true
+method: l-bfgs-b
+model_dir: 60s_100k_conti_edgef_res_flood_gat_5min_5lyrs/55000
+pop_size: 4
+rain_dir: hg_test2007_events.csv
+result_dir: 60s_conti_5min_ele_lbfgsb_test2007
+setting_duration: 5
+surrogate: true
+use_current: true

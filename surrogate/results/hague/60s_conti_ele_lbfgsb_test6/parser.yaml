@@ -1,0 +1,10 @@
+act: conti
+gradient: true
+lag: true
+method: l-bfgs-b
+model_dir: 60s_50k_conti_edgef_res_flood_gat_5lyrs
+pop_size: 1
+rain_dir: hg_test6_events.csv
+result_dir: 60s_conti_ele_lbfgsb_test6
+surrogate: true
+use_current: true

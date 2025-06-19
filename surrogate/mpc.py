@@ -548,9 +548,7 @@ class mpc_problem_gr(tf.Module):
         self.optimizer.apply_gradients(zip(grads,self.train_vars))
         return obj,grads
 
-    @call_counter
-    @tf.function
-    def objective_fn(self,y,state,runoff,edge_state):
+    def pre_state(self,y,state,runoff,edge_state):
         settings = tf.reshape(y,(-1,self.n_step,self.n_act))
         n_pop = settings.shape[0]
         settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
@@ -562,9 +560,12 @@ class mpc_problem_gr(tf.Module):
         runoff = tf.repeat(tf.cast(runoff if self.stochastic else tf.expand_dims(runoff,0),tf.float32),n_pop,axis=0)
         state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
         edge_state = tf.cast(tf.repeat(tf.repeat(tf.expand_dims(edge_state,0),n_pop,axis=0),max(self.stochastic,1),axis=0),tf.float32)
+        return settings,state,runoff,edge_state
+
+    def predict(self,settings,state,runoff,edge_state):
         if self.eval_hrz > self.margs.seq_out * self.args.interval:
             state,edge_state = state[:,-self.margs.seq_in:,...],edge_state[:,-self.margs.seq_in:,...]
-            predss,s0 = [],[state,edge_state]
+            predss = []
             for idx in range(self.eval_hrz//self.margs.seq_out):
                 ri = runoff[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,...]
                 sett = settings[:,idx*self.margs.seq_out:(idx+1)*self.margs.seq_out,:]
@@ -576,19 +577,24 @@ class mpc_problem_gr(tf.Module):
                 ae = self.emul.get_edge_action(sett,True)
                 edge_state = tf.concat([preds[1],ae],axis=-1)
                 predss.append(preds)
-            predss = [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
-            obj = self.env.objective_pred_tf(predss,s0,sett)
+            return [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
         else:
-            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
-            if self.args.predict:
-                obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
-                if not getattr(self.emul,'norm',False):
-                    obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
-            else:
-                obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
+            return self.emul.predict_tf(state,runoff,settings,edge_state)
+
+    @call_counter
+    @tf.function
+    def objective_fn(self,y,state,runoff,edge_state):
+        settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
+        preds = self.predict(settings,state,runoff,edge_state)
+        if self.args.predict:
+            obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
+            if not getattr(self.emul,'norm',False):
+                obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
+        else:
+            obj = self.env.objective_pred_tf(preds,[state,edge_state],settings)
         if self.stochastic:
-            objs = tf.stack([tf.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic])
-                              for i in range(n_pop)])
+            obj = tf.stack([tf.reduce_mean(obj[i*self.stochastic:(i+1)*self.stochastic])
+                              for i in range(y.shape[0])])
         return tf.squeeze(obj)
 
     @call_counter
@@ -687,7 +693,7 @@ def run_ntopt(prob,args,setting=None):
     print(f'Running {args.method} optimization')
     sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
     if args.use_current and setting is not None:
-        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-1])
+        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1)])
 
     recs,sols = [[0,prob.calls,time.time(),1e6]],[]
     print('===============================================')
@@ -703,7 +709,7 @@ def run_ntopt(prob,args,setting=None):
         rec[1],rec[2] = nfev,time.time()
         recs.append(rec)
     res = []
-    for x0 in sampling:
+    for i,x0 in enumerate(sampling):
         results = scioptminimize(lambda *arg: tuple([re.numpy() for re in prob.gradient_fn(*arg)]),
                                     x0=x0 if prob.bounded else prob.project(x0,True),
                                     args=prob.get_state(),
@@ -712,9 +718,24 @@ def run_ntopt(prob,args,setting=None):
                                     hessp=lambda *arg: prob.hessp_fn(*arg).numpy(),
                                     bounds=list(zip(prob.xl,prob.xu)),
                                     callback=mycallback,
-                                    options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                                    # options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
                                     )
+        # TODO: if result not success, try to run again with different initial point?
         res.append(results)
+        if args.pop_size == 1 and (results.success and len(recs) > 1):
+            break
+        # if args.pop_size > 1 and i == 0:
+        #     act_states = prob.pre_state(x0,*prob.get_state())
+        #     preds = [p.numpy() for p in prob.predict(*act_states)]
+        #     if args.predict:
+        #         obj = tf.reduce_sum(preds,axis=1)
+        #     else:
+        #         obj = prob.env.objective_pred(preds,act_states[1:3],settings)
+        #     if prob.stochastic:
+        #         obj = tf.reduce_mean(obj,axis=0,keepdims=True)
+        #     if tf.reduce_sum(obj[:,[i for i,(_,me,*_) in enumerate(prob.env.config['performance_targets'])
+        #                              if 'flood' in me]]) <= 0:
+        #         break
     idx = np.argmin([r.fun for r in res])
     results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
@@ -749,9 +770,9 @@ if __name__ == '__main__':
         # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':120,
+        # 'horizon':60,
         # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs',
-        # 'result_dir':'./results/astlingen/120s_conti_lbfgsb_pop16_2007',
+        # 'result_dir':'./results/astlingen/60s_conti_lbfgsb16fl_2007',
         }
     # config['rain_dir'] = de['rain_dir']
     for k,v in de.items():
@@ -803,7 +824,7 @@ if __name__ == '__main__':
 
     results = pd.DataFrame(columns=['rr time','fl time','perf','objective'])
     item = 'emul' if args.surrogate else 'simu'
-    # events = ['./envs/network/astlingen/astlingen_08_22_2007_21.inp']
+    # events = [f'./envs/network/hague/hague_{r}yr12hr_base_{str(t).zfill(2)}.inp' for r in [1,2,5] for t in range(0,40,5)]
     for event in events:
         name = os.path.basename(event).strip('.inp')
         if os.path.exists(os.path.join(args.result_dir,name + '_%s_state.npy'%item)):
@@ -850,7 +871,6 @@ if __name__ == '__main__':
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
                         f = (flood>0).astype(float)
-                        # f = np.eye(2)[f].squeeze(-2)
                         state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     t = env.env.methods['simulation_time']()
                     r = runoff[int(tss.asof(t)['Index'])]

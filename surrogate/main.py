@@ -54,6 +54,7 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--batch_size',type=int,default=256,help='training batch size')
         self.add_argument('--roll',type=int,default=0,help='if rolls out for curriculum learning')
         self.add_argument('--balance',action="store_true",help='if use balance not classification loss')
+        self.add_argument('--gradnorm',action="store_true",help='if use GradNorm to balance multi learning tasks')
 
         # network args
         self.add_argument('--conv',type=str,default='GCNconv',help='convolution type')
@@ -107,11 +108,11 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'chaohu',
+    #             'env':'astlingen',
     #             'order':1,
-    #             'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
-    #             'act':'rand',
-    #             'model_dir':'./model/chaohu/10s_10k_rand_edgef_res_flood_gat/',
+    #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+    #             'act':'conti',
+    #             'model_dir':'./model/astlingen/test/',
     #             'load_model':False,
     #             'roll':0,
     #             'batch_size':32,
@@ -121,6 +122,7 @@ if __name__ == "__main__":
     #             'resnet':True,
     #             'edge_fusion':True,
     #             'balance':False,
+    #             'gradnorm':True,
     #             'seq_in':10,'seq_out':10,
     #             'if_flood':3,
     #             'conv':'GAT',
@@ -189,11 +191,13 @@ if __name__ == "__main__":
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_idxs = dG.get_data_idxs(train_ids,seq)
         test_idxs = dG.get_data_idxs(test_ids,seq)
+        # if args.if_flood:
+        #     args.poswei = dG.get_flood_weight()
 
         emul = Emulator(args.conv,args.resnet,args.recurrent,args)
         # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
         if args.load_model:
-            emul.load(args.model_dir)
+            emul.load(args.model_dir,retrain=True)
             args.model_dir = os.path.join(args.model_dir,'retrain')
             if not os.path.exists(args.model_dir):
                 os.mkdir(args.model_dir)
@@ -214,9 +218,10 @@ if __name__ == "__main__":
             ex,ey = [dat for dat in train_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             train_loss = emul.fit_eval(x,a,b,y,ex,ey)
-            train_loss = train_loss.numpy()
-            if epoch >= 500:
-                train_losses.append(train_loss)
+            train_loss = [los.numpy() for los in train_loss]
+            train_losses.append(train_loss)
+            if args.if_flood and args.gradnorm and epoch > 0:
+                emul.fit_grad_norm(x,a,b,y,ex,ey,train_losses[0])
 
             test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
@@ -224,10 +229,9 @@ if __name__ == "__main__":
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
             test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
             test_loss = [los.numpy() for los in test_loss]
-            if epoch >= 500:
-                test_losses.append(test_loss)
+            test_losses.append(test_loss)
 
-            if train_loss < min([1e6]+train_losses[:-1]):
+            if sum(train_loss) < min([1e6]+[sum(los) for los in train_losses[:-1]]):
                 emul.save(os.path.join(args.model_dir,'train'))
             if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
                 emul.save(os.path.join(args.model_dir,'test'))
@@ -237,7 +241,7 @@ if __name__ == "__main__":
             secs.append(time.time()-t0)
 
             # Log output
-            log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],train_loss,sum(test_loss))
+            log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],sum(train_loss),sum(test_loss))
             log += " ("
             node_str = "Node bal: " if args.balance else "Node: "
             log += node_str + "{:.4f}".format(test_loss[0])
@@ -248,7 +252,7 @@ if __name__ == "__main__":
             log += " Edge: {:.4f})".format(test_loss[i])
             print(log)
             with tf.summary.create_file_writer(log_dir).as_default():
-                tf.summary.scalar('train loss', train_loss, step=epoch)
+                tf.summary.scalar('train loss', sum(train_loss), step=epoch)
                 tf.summary.scalar('Node loss', test_loss[0], step=epoch)
                 i = 1
                 if args.if_flood and not args.balance:
@@ -264,10 +268,10 @@ if __name__ == "__main__":
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
         np.save(os.path.join(args.model_dir,'time.npy'),np.array(secs[1:]))
-        plt.plot(train_losses,label='train')
-        plt.plot(np.array(test_losses).sum(axis=1),label='test')
-        plt.legend()
-        plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
+        # plt.plot(train_losses,label='train')
+        # plt.plot(np.array(test_losses).sum(axis=1),label='test')
+        # plt.legend()
+        # plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)

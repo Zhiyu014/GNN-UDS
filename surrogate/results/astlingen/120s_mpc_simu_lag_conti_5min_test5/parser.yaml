@@ -1,0 +1,13 @@
+act: conti
+horizon: 120
+lag: true
+pop_size: 128
+processes: 8
+rain_dir: ast_test5_events.csv
+result_dir: 120s_mpc_simu_lag_conti_5min_test5
+swmm_step: 1
+termination:
+- soo
+- time
+- 00:05:00
+use_current: true

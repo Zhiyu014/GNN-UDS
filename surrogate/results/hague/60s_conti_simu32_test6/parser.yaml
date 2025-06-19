@@ -1,0 +1,11 @@
+act: conti
+lag: true
+processes: 4
+rain_dir: hg_test6_events.csv
+result_dir: 60s_conti_simu32_2007
+swmm_step: 1
+termination:
+- soo
+- time
+- 00:05:00
+use_current: true

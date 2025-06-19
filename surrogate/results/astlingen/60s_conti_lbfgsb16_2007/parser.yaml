@@ -1,0 +1,11 @@
+act: conti
+gradient: true
+lag: true
+method: l-bfgs-b
+model_dir: 60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs
+pop_size: 16
+rain_dir: ast_test2007_events.csv
+result_dir: 60s_conti_lbfgsb16_2007
+surrogate: true
+swmm_step: 1
+use_current: true

@@ -80,8 +80,8 @@ global_state:
 
 # Key elements in loss function
 loss_weight:
-  st1: 5.0
-  st3: 5.0
+  # st1: 5.0
+  # st3: 5.0
 
 # Action space
 action_space:
@@ -103,8 +103,70 @@ action_space:
 
 # Performance Targets
 performance_targets:
+  # Replace system flooding with sensitive nodes
+  # J4,J8,J13,J33,J53,J54,J64,J65,J98,J102,J145,J146
+  # - !!python/tuple
+  #   - "nodes"
+  #   - cumflooding
+  #   - 0
+  #   - 1
   - !!python/tuple
-    - "nodes"
+    - "E133464"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E133481"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E134203"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E143274"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E143327"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E143329"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E143361"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "E143362"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "F133438"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "F133459"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "F143594"
+    - cumflooding
+    - 0
+    - 1
+  - !!python/tuple
+    - "F143595"
     - cumflooding
     - 0
     - 1
@@ -113,6 +175,11 @@ performance_targets:
   #   - cumflooding
   #   - 0
   #   - 1000
+  - !!python/tuple
+    - "16132"
+    - flow_vol
+    - 0
+    - -0.01
   # - !!python/tuple
   #   - "st1"
   #   - head

@@ -46,50 +46,64 @@ class hague(basescenario):
         # __object = np.zeros(seq) if seq else 0.0
         # __object += self.flood(seq).squeeze().sum(axis=-1)
         __object = []
-        perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
+        perfs = self.performance(seq if seq else 1)
         for i,(_,attr,target,weight) in enumerate(self.config['performance_targets']):
-            if attr == 'head' and weight == 1000:
-                __object += [(perfs[:,i]>target)*weight]
+            if attr == 'head':
+                if weight == 1000:
+                    __object += [(perfs[:,i]>target)*weight]
+                else:
+                    __object += [np.abs(perfs[:,i] - target)*weight]
             else:
-                __object += [np.abs(perfs[:,i] - target)*weight]
+                __object += [(perfs[:,i] - target)*weight]
         # return __object
-        return np.array(__object).sum(axis=-1) if seq else np.array(__object)
+        return np.array(__object).sum(axis=-1) if seq else np.array(__object).squeeze()
      
     def objective_pred(self,preds,states,settings,gamma=None,keepdim=False):
-        preds,_ = preds
-        h,q_w = preds[...,0],preds[...,-1]
-        nodes,targets = self.elements['nodes'],self.config['performance_targets']
+        preds,edge_preds = preds
+        h,q_w,fl = preds[...,0],preds[...,-1],edge_preds[...,-1]
+        nodes,links,targets = self.elements['nodes'],self.elements['links'],self.config['performance_targets']
         flood = [q_w.sum(axis=-1) * weight
                 for idx,attr,_,weight in targets 
                 if attr == 'cumflooding' and idx=='nodes']
         pondfl = [q_w[...,nodes.index(idx)] * weight
                   for idx,attr,_,weight in targets
                   if attr == 'cumflooding' and idx in nodes]
+        outflow = [fl[...,links.index(idx)] * weight
+                  for idx,attr,_,weight in targets
+                  if attr == 'flow_vol' and idx in links]
         depth = [np.abs(h[...,nodes.index(idx)]-target) * weight
                 for idx,attr,target,weight in targets
                 if attr == 'head' and weight < 1000]
         exced = [(h[...,nodes.index(idx)]>target)*weight
                 for idx,attr,target,weight in targets
                 if attr == 'head' and weight == 1000]
-        obj = np.stack(flood + pondfl + depth + exced,axis=1)
+        obj = np.stack(flood + pondfl + outflow + depth + exced,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         return obj.sum(axis=-1) if not keepdim else np.transpose(obj,(0,2,1))
     
     def objective_pred_tf(self,preds,states,settings,gamma=None):
         import tensorflow as tf
-        preds,_ = preds
-        h,q_w = preds[...,0],preds[...,-1]
-        nodes,targets = self.elements['nodes'],self.config['performance_targets']
-        flood = [tf.reduce_sum(q_w,axis=1) * weight
-                for idx,attr,_,weight in targets if attr == 'cumflooding' and idx=='nodes']
-        pondfl = [tf.reduce_sum(q_w[...,nodes.index(idx)],axis=1) * weight
-                for idx,attr,_,weight in targets if attr == 'cumflooding' and idx in nodes]
-        depth = [tf.reduce_sum(tf.abs(h[...,nodes.index(idx)]-target),axis=1) * weight
-                for idx,attr,target,weight in targets if attr == 'head' and weight < 1000]
-        exced = [tf.reduce_sum(tf.cast(h[...,nodes.index(idx)]>target,tf.float32),axis=1) * weight
-                for idx,attr,target,weight in targets if attr == 'head' and weight == 1000]
-        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(pondfl,axis=0) + tf.reduce_sum(depth,axis=0) + tf.reduce_sum(exced,axis=0)
+        preds,edge_preds = preds
+        h,q_w,fl = preds[...,0],preds[...,-1],edge_preds[...,-1]
+        nodes,links,targets = self.elements['nodes'],self.elements['links'],self.config['performance_targets']
+        # flood = [tf.reduce_sum(q_w,axis=-1) * weight
+        #         for idx,attr,_,weight in targets
+        #           if attr == 'cumflooding' and idx=='nodes']
+        pondfl = [q_w[...,nodes.index(idx)] * weight
+                for idx,attr,_,weight in targets
+                  if attr == 'cumflooding' and idx in nodes]
+        outflow = [fl[...,links.index(idx)] * weight
+                   for idx,attr,_,weight in targets
+                     if attr == 'flow_vol' and idx in links]
+        # depth = [tf.abs(h[...,nodes.index(idx)]-target) * weight
+        #         for idx,attr,target,weight in targets
+        #           if attr == 'head' and weight < 1000]
+        # exced = [tf.cast(h[...,nodes.index(idx)]>target,tf.float32) * weight
+        #         for idx,attr,target,weight in targets
+        #           if attr == 'head' and weight == 1000]
+        # obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(pondfl,axis=0)+ tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(depth,axis=0) + tf.reduce_sum(exced,axis=0)
+        obj = tf.reduce_sum(pondfl,axis=0) + tf.reduce_sum(outflow,axis=0)
         gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
         obj = tf.reduce_sum(obj*gamma,axis=-1)
         return obj
@@ -123,16 +137,16 @@ class hague(basescenario):
 
     def controller(self,mode='rand',state=None,setting=None):
         asp = self.config['action_space']
-        if mode.lower() == 'rand':
+        if mode.lower() == 'rand' or mode.lower() == 'default':
             return [table[np.random.randint(0,len(table))] for table in asp.values()]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
-        elif mode.lower() == 'off' or mode.lower() == 'default':
+        elif mode.lower() == 'on':
+            return [table[-1] for table in asp.values()]
+        elif mode.lower() == 'off':
             return [table[0] for table in asp.values()]
         elif mode.lower() == 'half':
             return [table[1] for table in asp.values()]
-        elif mode.lower() == 'on':
-            return [table[-1] for table in asp.values()]
         elif mode.lower() == 'safe':
             return setting
         else:

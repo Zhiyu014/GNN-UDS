@@ -163,8 +163,10 @@ cython_debug/
 *.rar
 *.zip
 *.v2
+*.svg
 !hague.inp
 !shunqing.inp
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
+surrogate/results/**/*.csv

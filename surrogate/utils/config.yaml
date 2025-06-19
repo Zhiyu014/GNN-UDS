@@ -31,7 +31,8 @@ shunqing:
   save_gap: 500
   batch_size: 256
   roll: 0
-  balance: 0
+  balance: False
+  gradnorm: False
   
   # network args
   conv: GCNconv
@@ -93,7 +94,8 @@ RedChicoSur:
   save_gap: 500
   batch_size: 256
   roll: 0
-  balance: 0
+  balance: False
+  gradnorm: False
   
   # network args
   conv: GCNconv
@@ -155,7 +157,8 @@ astlingen:
   save_gap: 500
   batch_size: 256
   roll: 0
-  balance: 0
+  balance: False
+  gradnorm: False
   
   # network args
   conv: GCNconv
@@ -218,7 +221,8 @@ hague:
   save_gap: 500
   batch_size: 256
   roll: 0
-  balance: 0
+  balance: False
+  gradnorm: False
   
   # network args
   conv: GCNconv
@@ -280,7 +284,8 @@ chaohu:
   save_gap: 500
   batch_size: 256
   roll: 0
-  balance: 0
+  balance: False
+  gradnorm: False
   
   # network args
   conv: GCNconv

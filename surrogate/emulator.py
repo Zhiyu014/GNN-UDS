@@ -4,7 +4,7 @@ from keras import activations
 from keras.models import Model,Sequential
 from keras.regularizers import l1,l2
 from keras.optimizers import Adam
-from keras.losses import MeanSquaredError,CategoricalCrossentropy,BinaryCrossentropy
+from keras.losses import MeanSquaredError,BinaryCrossentropy,BinaryFocalCrossentropy,MeanAbsoluteError
 import numpy as np
 import os
 # from line_profiler import LineProfiler
@@ -90,13 +90,20 @@ class Emulator:
         if self.act:
             self.act_edges = getattr(args,"act_edges")
             self.use_adj = getattr(args,"use_adj",False)
-        self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
-        self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
         self.area = getattr(args,"area",np.array([0.0 for _ in range(self.n_node)]))
-        self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
         self.pump_in = getattr(args,"pump_in",np.array([0.0 for _ in range(self.n_node)]))
         self.pump_out = getattr(args,"pump_out",np.array([0.0 for _ in range(self.n_node)]))        
         self.offset = getattr(args,"offset",np.array([0.0 for _ in range(self.n_edge)]))
+        self.hmax = getattr(args,"hmax",np.array([1.5 for _ in range(self.n_node)]))
+        self.hmin = getattr(args,"hmin",np.array([0.0 for _ in range(self.n_node)]))
+        self.nwei = getattr(args,"nwei",np.array([1.0 for _ in range(self.n_node)]))
+        self.nwei = np.repeat(self.nwei[:,np.newaxis],3+int(self.balance),axis=-1).astype(np.float32)
+        # narrow down norm range of water head
+        if self.hmin.max() > 0:
+            wei = (self.hmax-self.hmin)*(1-self.is_outfall) + (self.hmax-self.hmin).mean()*self.is_outfall
+            wei = (self.hmax.max()-self.hmin.min())/wei
+            wei = np.stack([wei] + (2+int(self.balance)) * [np.ones_like(wei)],axis=-1)
+            self.nwei *= wei
 
         self.conv = False if conv in ['None','False','NoneType'] else conv
         self.recurrent = recurrent
@@ -106,9 +113,16 @@ class Emulator:
             self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
         self.mse = MeanSquaredError()
         if self.if_flood:
+            self.poswei = getattr(args,"poswei",np.array([1.0 for _ in range(self.n_node)])).astype(np.float32)
             self.bce = BinaryCrossentropy()
-            # self.cce = CategoricalCrossentropy()
-
+        # GradNorm for multi-task learning
+        self.gradnorm = getattr(args,"gradnorm",False)
+        if self.gradnorm:
+            self.alpha_reg = tf.Variable(1.0,dtype=tf.float32,trainable=True)
+            self.alpha_cls = tf.Variable(1.0,dtype=tf.float32,trainable=True)
+            self.alpha_optimizer = Adam(learning_rate=1e-4)
+            self.mae = MeanAbsoluteError()
+            self.alpha = 0.5
         self.roll = getattr(args,"roll",0)
         self.model_dir = getattr(args,"model_dir")
 
@@ -208,11 +222,6 @@ class Emulator:
                 x = net(self.embed_size,activation=self.activation)(x)
                 x,e = tf.split(x,[self.n_node,self.n_edge],axis=-2)
             elif conv:
-                # n,n,e   B,E,H  how to convert e from beh to bnnh?
-                # x_e = tf.gather(e,self.edge_index,axis=1)
-                # e_x = tf.gather(x,self.node_index,axis=1)
-                # x = ECCConv(self.embed_size)([x,Adj_in,x_e])
-                # e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
                 x_e = Dense(self.embed_size//2,activation=self.activation)(e)
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
                 x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
@@ -266,11 +275,6 @@ class Emulator:
                 x = net(self.embed_size,activation=self.activation)(x)
                 x,e = tf.split(x,[self.n_node,self.n_edge],axis=-2)
             elif conv:
-                # n,n,e   B,E,H  how to convert e from beh to bnnh?
-                # x_e = tf.gather(e,self.edge_index,axis=1)
-                # e_x = tf.gather(x,self.node_index,axis=1)
-                # x = ECCConv(self.embed_size)([x,Adj_in,x_e])
-                # e = ECCConv(self.embed_size)([e,Eadj_in,e_x])
                 x_e = Dense(self.embed_size//2,activation=self.activation)(e)
                 e_x = Dense(self.embed_size//2,activation=self.activation)(x)
                 x = concat([x,NodeEdge(tf.abs(self.node_edge))(x_e)],axis=-1)
@@ -306,7 +310,7 @@ class Emulator:
         e = transpose(reshape(e,(-1,self.n_edge,self.seq_out,e.shape[-1])),[0,2,1,3]) if conv else e
         
         # Resnet
-        x_out = Dense(self.embed_size,activation='linear')(x)
+        x_out = Dense(self.embed_size,activation='linear',name='dense_resx')(x) # TODO: rename current models
         x_out = Dropout(self.dropout)(x_out) if self.dropout else x_out
         x = Add()([cumsum(x_out,axis=1),tile(res,(1,self.seq_out,)+(1,)*len(res.shape[2:]))]) if resnet else x_out
         x = activation(x)   # if activation is needed here?
@@ -393,93 +397,126 @@ class Emulator:
                 return out
             return np.expand_dims(np.apply_along_axis(set_edge_action,-1,a),-1)
 
-    @tf.function
-    def fit_eval(self,x,a,b,y,ex,ey,fit=True):
-        if self.act:
-            ae = self.get_edge_action(a,True)
-            if self.use_adj:
-                adj = self.get_adj_action(a,True)
-        with GradientTape() as tape:
-            tape.watch(self.model.trainable_variables)
-            if self.roll:       # Curriculum learning (long-term)
-                predss,edge_predss = [],[]
-                for i in range(self.roll):
-                    inp = [x[:,-self.seq_in:,...],b[:,i*self.seq_out:(i+1)*self.seq_out,:]]
-                    if self.conv:
-                        inp += [self.filter]
-                        inp += [adj[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act and self.use_adj else []
-                    inp += [ex[:,-self.seq_in:,...]]
-                    inp += [self.edge_filter] if self.conv and not self.graph_base else []
-                    inp += [ae[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act else []
-                    preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
-                    preds = [tf.cast(pred,tf.float32) for pred in preds]
-                    preds,edge_preds = self.post_proc_tf(preds,a[:,i*self.seq_out:(i+1)*self.seq_out,...],b[:,i*self.seq_out:(i+1)*self.seq_out,...])
-                    predss.append(preds)
-                    edge_predss.append(edge_preds)
-                    if self.if_flood:
-                        x_new = tf.concat([preds[...,:-1],tf.cast(preds[...,-1:]>0.5,tf.float32),b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
-                    else:
-                        x_new = tf.concat([preds,b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
-                    x = tf.concat([x[:,-(self.seq_in-self.seq_out):,...],x_new],axis=1) if self.seq_in > self.seq_out else x_new
-                    ae_new = self.get_edge_action(a[:,i*self.seq_out:(i+1)*self.seq_out,...],True)
-                    ex_new = tf.concat([edge_preds,ae_new],axis=-1)
-                    ex = tf.concat([ex[:,-(self.seq_in-self.seq_out):,...],ex_new],axis=1) if self.seq_in > self.seq_out else ex_new
-                preds = concat(predss,axis=1)
-                edge_preds = concat(edge_predss,axis=1)
-            else:
-                inp = [x,b]
+    def _model(self,x,a,b,ex,ae,adj=None,fit=True):
+        if self.roll:       # Curriculum learning (long-term)
+            predss,edge_predss = [],[]
+            for i in range(self.roll):
+                inp = [x[:,-self.seq_in:,...],b[:,i*self.seq_out:(i+1)*self.seq_out,:]]
                 if self.conv:
                     inp += [self.filter]
-                    inp += [adj] if self.act and self.use_adj else []
-                inp += [ex]
+                    inp += [adj[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act and self.use_adj else []
+                inp += [ex[:,-self.seq_in:,...]]
                 inp += [self.edge_filter] if self.conv and not self.graph_base else []
-                inp += [ae] if self.act else []
+                inp += [ae[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act else []
                 preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
                 preds = [tf.cast(pred,tf.float32) for pred in preds]
-                preds,edge_preds = self.post_proc_tf(preds,a,b)
-
-            # Loss funtion
-            # Flood calculation
-            if self.balance:
-                preds_re_norm = self.normalize(preds,'y',inverse=True)
-                b = self.normalize(b,'b',inverse=True)
-                q_w,preds_re_norm = self.constrain_tf(preds_re_norm,b[...,:1],None)
-                # q_w = self.get_flood(preds_re_norm,b[...,:1])
-                q_w = q_w/self.norm_y[0,:,-1]
-                preds = self.normalize(preds_re_norm,'y')
-                q_w = expand_dims(q_w,axis=-1)
+                preds,edge_preds = self.post_proc_tf(preds,a[:,i*self.seq_out:(i+1)*self.seq_out,...],b[:,i*self.seq_out:(i+1)*self.seq_out,...])
+                predss.append(preds)
+                edge_predss.append(edge_preds)
+                if self.if_flood:
+                    x_new = tf.concat([preds[...,:-1],tf.cast(preds[...,-1:]>0.5,tf.float32),b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
+                else:
+                    x_new = tf.concat([preds,b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
+                x = tf.concat([x[:,-(self.seq_in-self.seq_out):,...],x_new],axis=1) if self.seq_in > self.seq_out else x_new
+                ae_new = self.get_edge_action(a[:,i*self.seq_out:(i+1)*self.seq_out,...],True)
+                ex_new = tf.concat([edge_preds,ae_new],axis=-1)
+                ex = tf.concat([ex[:,-(self.seq_in-self.seq_out):,...],ex_new],axis=1) if self.seq_in > self.seq_out else ex_new
+            preds = concat(predss,axis=1)
+            edge_preds = concat(edge_predss,axis=1)
+        else:
+            inp = [x,b]
+            if self.conv:
+                inp += [self.filter]
+                inp += [adj] if self.act and self.use_adj else []
+            inp += [ex]
+            inp += [self.edge_filter] if self.conv and not self.graph_base else []
+            inp += [ae] if self.act else []
+            preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
+            preds = [tf.cast(pred,tf.float32) for pred in preds]
+            preds,edge_preds = self.post_proc_tf(preds,a,b)
+        preds = tf.clip_by_value(preds,0,1) # avoid large loss value
+        return preds,edge_preds
+    
+    def get_node_loss(self,y,b,preds):
+        if self.balance:
+            q_w,preds = self.constrain_tf(self.normalize(preds,'y',inverse=True),
+                                          self.normalize(b,'b',inverse=True)[...,:1])
+            q_w,preds = tf.expand_dims(q_w/self.norm_y[0,:,-1],axis=-1),self.normalize(preds,'y')
             preds = tf.clip_by_value(preds,0,1) # avoid large loss value
-            # narrow down norm range of water head
-            if self.hmin.max() > 0:
-                wei = (self.hmax-self.hmin)*(1-self.is_outfall) + (self.hmax-self.hmin).mean()*self.is_outfall
-                wei = (self.norm_y[0,:,0].max()-self.norm_y[1,:,0].min())/wei
-                preds = tf.concat([preds[...,:1] * wei,preds[...,1:]],axis=-1)
-                y = tf.concat([y[...,:1] * wei,y[...,1:]],axis=-1)
-            if self.balance:
-                loss = self.mse(concat([y[...,:3],y[...,-1:]],axis=-1),concat([preds[...,:3],q_w],axis=-1),sample_weight=self.nwei)
-            else:
-                loss = self.mse(y[...,:3],preds[...,:3],sample_weight=self.nwei)
-            if not fit:
-                loss = [loss]
-            if self.if_flood and not self.balance:
-                loss += self.bce(y[...,-2:-1],preds[...,-1:],sample_weight=self.nwei) if fit else [self.bce(y[...,-2:-1],preds[...,-1:],sample_weight=self.nwei)]
-                # loss += self.cce(y[...,-3:-1],preds[...,-2:]) if fit else [self.cce(y[...,-3:-1],preds[...,-2:])]
-                # edge_preds = tf.clip_by_value(edge_preds,0,1) # avoid large loss value
-            loss += self.mse(edge_preds,ey,sample_weight=self.ewei) if fit else [self.mse(edge_preds,ey,sample_weight=self.ewei)]
-            if fit and mixed_precision.global_policy().name != 'float32':
-                scaled_loss = self.optimizer.get_scaled_loss(loss)
-        if fit:
-            tf.debugging.assert_all_finite(loss, 'Loss contains NaN or Inf values.')
-            if mixed_precision.global_policy().name != 'float32':
-                scaled_gradients = tape.gradient(scaled_loss, self.model.trainable_variables)
-                grads = self.optimizer.get_unscaled_gradients(scaled_gradients)
-            else:
-                grads = tape.gradient(loss, self.model.trainable_variables)
-            for grad in grads:
-                tf.debugging.assert_all_finite(grad, "grads contain NaN/Inf!")
-            self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
-        return loss
+            node_loss = self.mse(tf.concat([y[...,:3],y[...,-1:]],axis=-1)*self.nwei,
+                                    tf.concat([preds[...,:3],q_w],axis=-1)*self.nwei)
+        else:
+            node_loss = self.mse(y[...,:3]*self.nwei,preds[...,:3]*self.nwei)
+        return node_loss
 
+    def get_flood_loss(self,y,preds):
+        weight = self.poswei * y[...,-2] + self.nwei[:,-1] * (1-y[...,-2])
+        fl_loss = self.bce(y[...,-2:-1],preds[...,-1:],sample_weight=weight)
+        return fl_loss
+    
+    @tf.function
+    def fit_eval(self,x,a,b,y,ex,ey,fit=True):
+        ae = self.get_edge_action(a,True) if self.act else None
+        adj = self.get_adj_action(a,True) if self.act and self.use_adj else None
+        with GradientTape() as tape:
+            tape.watch(self.model.trainable_variables)
+            preds,edge_preds = self._model(x,a,b,ex,ae,adj,fit)
+            # Loss funtion
+            node_loss = self.get_node_loss(y,b,preds)
+            if self.if_flood and not self.balance:
+                fl_loss = self.get_flood_loss(y,preds)
+            edge_loss = self.mse(ey,edge_preds,sample_weight=self.ewei)
+            if fit:
+                reg_loss = node_loss + edge_loss
+                loss = (self.alpha_reg if self.gradnorm else 1) * reg_loss
+                if self.if_flood:
+                    loss += (self.alpha_cls if self.gradnorm else 1) * fl_loss
+                tf.debugging.assert_all_finite(loss, 'Loss contains NaN or Inf values.')
+                if mixed_precision.global_policy().name != 'float32':
+                    scaled_loss = self.optimizer.get_scaled_loss(loss)
+                    scaled_gradients = tape.gradient(scaled_loss, self.model.trainable_variables)
+                    grads = self.optimizer.get_unscaled_gradients(scaled_gradients)
+                else:
+                    grads = tape.gradient(loss, self.model.trainable_variables)
+                for grad in grads:
+                    tf.debugging.assert_all_finite(grad, "grads contain NaN/Inf!")
+                self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
+        return [node_loss,fl_loss,edge_loss] if self.if_flood else [node_loss,edge_loss]
+
+    @tf.function
+    def fit_grad_norm(self,x,a,b,y,ex,ey,ini_loss):
+        ae = self.get_edge_action(a,True) if self.act else None
+        adj = self.get_adj_action(a,True) if self.act and self.use_adj else None
+        inps,outs = [x,a,b,ex,ae,adj],[y,ey]
+        with tf.GradientTape() as tape:
+            tape.watch([self.alpha_reg,self.alpha_cls])
+            alpha_loss = self._get_grad_norm(inps,outs,ini_loss)
+            alpha_grads = tape.gradient(alpha_loss, [self.alpha_reg,self.alpha_cls])
+        # update alpha
+        self.alpha_optimizer.apply_gradients(zip(alpha_grads, [self.alpha_reg,self.alpha_cls]))
+        
+        # alpha normalized with the sum as 2
+        alpha_sum = self.alpha_reg + self.alpha_cls
+        self.alpha_reg.assign(2.0 * self.alpha_reg / alpha_sum)
+        self.alpha_cls.assign(2.0 * self.alpha_cls / alpha_sum)
+
+    def _get_grad_norm(self,inps,outs,ini_loss):
+        W = self.model.get_layer('dense_resx').kernel
+        y,ey = outs
+        with tf.GradientTape(persistent=True) as tape:
+            tape.watch(W)
+            preds,edge_preds = self._model(*inps)
+            node_loss = self.get_node_loss(y,inps[2],preds)
+            edge_loss = self.mse(ey,edge_preds,sample_weight=self.ewei)
+            reg_loss = node_loss + edge_loss
+            fl_loss = self.get_flood_loss(y,preds)
+        grad_reg_norm = tf.norm(self.alpha_reg*tape.gradient(reg_loss,W))
+        grad_cls_norm = tf.norm(self.alpha_cls*tape.gradient(fl_loss,W))
+        r_reg,r_cls = reg_loss / (ini_loss[0]+ini_loss[-1]), fl_loss / ini_loss[1]
+        r_avg = (r_reg + r_cls) / 2
+        grad_norm = tf.stack([grad_reg_norm,grad_cls_norm])
+        target_grad = tf.stop_gradient(tf.reduce_mean(grad_norm)) * (tf.stack([r_reg,r_cls])/ r_avg) ** self.alpha
+        return self.mae(target_grad,grad_norm)
 
     def simulate(self,states,runoff,a=None,edge_states=None):
         # runoff shape: T_out, T_in, N
@@ -610,8 +647,9 @@ class Emulator:
             y = np.concatenate([np.expand_dims(h,axis=-1),y[...,1:]],axis=-1)
         # TODO: if need to regulate pipe inflow offset
         inoff = np.matmul(self.normalize(y,'y',True)[...,0] - self.hmin,np.clip(self.node_edge,0,1))
-        flow = np.expand_dims(ey[...,-1]*(inoff > self.offset)*(self.offset)+\
-                               ey[...,-1]*(self.offset==0),axis=-1)
+        flow = np.expand_dims(ey[...,-1]*(ey[...,-1]>0)*(self.offset>0)*(inoff > self.offset)+\
+                                ey[...,-1]*(ey[...,-1]<=0)*(self.offset>0)+\
+                                    ey[...,-1]*(self.offset==0),axis=-1)
         ey = np.concatenate([ey[...,:-1],flow],axis=-1)
         if self.act:
             ae = self.get_edge_action(a)
@@ -647,19 +685,24 @@ class Emulator:
             h = preds[...,0] * (1 - self.is_outfall) + b[...,-1]
             preds = tf.concat([tf.expand_dims(h,axis=-1),preds[...,1:]],axis=-1)
         # TODO: if need to regulate pipe inflow offset
-        inoff = tf.matmul(self.normalize(preds,'y',True)[...,0]-self.hmin,tf.clip_by_value(self.node_edge,0,1))
-        flow = edge_preds[...,-1]
-        flow = tf.expand_dims(flow * tf.cast(inoff > self.offset,tf.float32) * tf.cast(self.offset>0,tf.float32) * tf.cast(flow>0,tf.float32) +\
-                               flow * (1 - tf.cast(self.offset>0,tf.float32)*tf.cast(flow>0,tf.float32)),axis=-1)
-        edge_preds = concat([edge_preds[...,:-1],flow],axis=-1)
+        if self.offset.max() > 0:
+            inoff = tf.matmul(self.normalize(preds,'y',True)[...,0]-self.hmin,tf.clip_by_value(self.node_edge,0,1))
+            flow = edge_preds[...,-1]
+            flow = tf.expand_dims(flow * tf.cast(flow>0,tf.float32) * tf.cast(self.offset>0,tf.float32) * tf.cast(inoff > self.offset,tf.float32) +\
+                                  flow * tf.cast(flow<=0,tf.float32) * tf.cast(self.offset>0,tf.float32) +\
+                                  flow * tf.cast(self.offset==0,tf.float32),axis=-1)
+            edge_preds = concat([edge_preds[...,:-1],flow],axis=-1)
         # Control action regulation
         if self.act:
-            ae = self.get_edge_action(a,True)
             # regulate pumping flow (rated value if there is volume in inlet tank)
-            fl = self.pump*tf.matmul(tf.cast(preds[...,0]>0.01,tf.float32),tf.clip_by_value(self.node_edge,0,1))
-            fl *= tf.cast(self.norm_e[0,:,2]>1e-3,tf.float32)/self.norm_e[0,:,2]
-            flow = tf.expand_dims(edge_preds[...,-1] * tf.cast(fl==0,tf.float32) + fl,axis=-1)
+            if self.pump.min()>0:
+                fl = self.pump*tf.matmul(tf.cast(preds[...,0]>0.01,tf.float32),tf.clip_by_value(self.node_edge,0,1))
+                fl *= tf.cast(self.norm_e[0,:,2]>1e-3,tf.float32)/self.norm_e[0,:,2]
+                flow = tf.expand_dims(edge_preds[...,-1] * tf.cast(fl==0,tf.float32) + fl,axis=-1)
+            else:
+                flow = edge_preds[...,-1:]
             # regulate flow with setting
+            ae = self.get_edge_action(a,True)
             edge_preds = concat([edge_preds[...,:-1],tf.multiply(flow,ae)],axis=-1)
             if not self.edge_fusion:
                 a_out,a_in = self.get_action(a[:,:self.seq_out,...],True)
@@ -678,8 +721,6 @@ class Emulator:
             node_inflow = tf.matmul(tf.abs(tf.clip_by_value(self.node_edge,-1,0)),tf.clip_by_value(edge_flow,0,np.inf)) + tf.matmul(tf.clip_by_value(self.node_edge,0,1),-tf.clip_by_value(edge_flow,-np.inf,0))
             node_outflow *= tf.cast(self.norm_y[0,:,2:3]>1e-3,tf.float32)/self.norm_y[0,:,2:3]
             node_inflow *= tf.cast(self.norm_y[0,:,1:2]>1e-3,tf.float32)/self.norm_y[0,:,1:2]
-            # node_outflow = tf.clip_by_value(node_outflow,-10,10)
-            # node_inflow = tf.clip_by_value(node_inflow,-10,10)
             preds = concat([preds[...,:1],node_inflow,node_outflow,preds[...,1:]],axis=-1)
         return preds,edge_preds
      
@@ -784,7 +825,12 @@ class Emulator:
             if hasattr(self,'norm_%s'%item):
                 np.save(os.path.join(model_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
 
-    def load(self,model_dir=None):
+        np.save(os.path.join(model_dir,'optim.npy'), self.optimizer.get_weights())
+        if self.gradnorm:
+            checkpoint = tf.train.Checkpoint(cls=self.alpha_cls,reg=self.alpha_reg,optimizer=self.alpha_optimizer)
+            checkpoint.write(os.path.join(model_dir,"gradnorm.ckpt"))
+
+    def load(self,model_dir=None,retrain=False):
         model_dir = model_dir if model_dir is not None else self.model_dir
         if model_dir.endswith('.h5'):
             self.model.load_weights(model_dir)
@@ -795,3 +841,12 @@ class Emulator:
         for item in 'xbyre':
             if os.path.exists(os.path.join(model_dir,'norm_%s.npy'%item)):
                 setattr(self,'norm_%s'%item,np.load(os.path.join(model_dir,'norm_%s.npy'%item)))
+        
+        if retrain and os.path.exists(os.path.join(model_dir,'optim.npy')):
+            if len(self.optimizer.get_weights()) == 0:
+                self.optimizer.apply_gradients(zip([tf.zeros_like(va) for va in self.model.trainable_variables],
+                                                   self.model.trainable_variables))
+            self.optimizer.set_weights(np.load(os.path.join(model_dir,'optim.npy'),allow_pickle=True))
+        if retrain and self.gradnorm:
+            checkpoint = tf.train.Checkpoint(cls=self.alpha_cls,reg=self.alpha_reg,optimizer=self.alpha_optimizer)
+            checkpoint.restore(os.path.join(model_dir,"gradnorm.ckpt"))

@@ -76,10 +76,7 @@ class ConvNet:
         activation = activations.get(self.activation)
 
         # Embedding
-        x = Dense(self.conv_dim,activation=activation)(X_in)
-        if self.use_pred:
-            b = Dense(self.conv_dim//2,activation=activation)(B_in)
-            x = Dense(self.conv_dim,activation=activation)(tf.concat([x,b],axis=-1))
+        x = Dense(self.conv_dim,activation=activation)(tf.concat([X_in,B_in],axis=-1) if self.use_pred else X_in)
         e = Dense(self.conv_dim,activation=activation)(E_in)
 
         # Spatial block
@@ -305,8 +302,8 @@ class QAgent:
         if self.conti:
             a_dim = sum(self.action_shape) if isinstance(self.action_shape,(np.ndarray,list)) else self.action_shape
             a_in = Input(shape=(a_dim,))
-            a = Dense(self.net_dim, activation=self.activation)(a_in)
-            x = tf.concat([x,a],axis=-1)
+            # a = Dense(self.net_dim, activation=self.activation)(a_in)
+            x = tf.concat([x,a_in],axis=-1)
             inp = inp + [a_in] if isinstance(inp,list) else [inp,a_in]
         for _ in range(self.n_layer):
             x = Dense(self.net_dim, activation=self.activation)(x)
