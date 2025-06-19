@@ -35,7 +35,7 @@ shunqing:
   gradnorm: False
   
   # network args
-  conv: GCNconv
+  conv: GATconv
   embed_size: 128
   n_sp_layer: 2
   dropout: 0.0
@@ -98,7 +98,7 @@ RedChicoSur:
   gradnorm: False
   
   # network args
-  conv: GCNconv
+  conv: GATconv
   embed_size: 128
   n_sp_layer: 2
   dropout: 0.0
@@ -161,7 +161,7 @@ astlingen:
   gradnorm: False
   
   # network args
-  conv: GCNconv
+  conv: GATconv
   embed_size: 128
   n_sp_layer: 2
   dropout: 0.0
@@ -225,7 +225,7 @@ hague:
   gradnorm: False
   
   # network args
-  conv: GCNconv
+  conv: GATconv
   embed_size: 128
   n_sp_layer: 2
   dropout: 0.0
@@ -288,7 +288,7 @@ chaohu:
   gradnorm: False
   
   # network args
-  conv: GCNconv
+  conv: GATconv
   embed_size: 128
   n_sp_layer: 2
   dropout: 0.0
