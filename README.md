@@ -1,11 +1,9 @@
 # GNN-UDS
- A GNN-based surrogate model of urban drainage networks. 
+ A hydraulic surrogate model and real-time control methods of urban drainage networks. 
  
  Please feel free to read or cite our paper below.
 
- Zhang, Z., Tian, W., Lu, C., Liao, Z. and Yuan, Z. 2024. Graph neural network-based surrogate modelling for real-time hydraulic prediction of urban drainage networks. Water Research, 263, 122142. https://doi.org/10.1016/j.watres.2024.122142
-
- [Full text](https://authors.elsevier.com/c/1jWvN9pi-e1Yo) Please contact me for full text if the link fails.
+**GNN-based model**: Zhang, Z., Tian, W., Lu, C., Liao, Z. and Yuan, Z. 2024. Graph neural network-based surrogate modelling for real-time hydraulic prediction of urban drainage networks. Water Research, 263, 122142. https://doi.org/10.1016/j.watres.2024.122142
 
 ## How-to
 1. generate labels
@@ -34,26 +32,27 @@
 
 
 ## Drainage networks
-1. **astlingen**
+1. **shunqing**
+   - Stormwater network
+   - 113 nodes (105 junctions and 8 outfalls)
+   - 131 conduits and 106 subcatchments (cover 33.02 km2)
+   - 148 synthetic rainfalls included with duration of 6-24 hrs
+   - Details refer to [ga_ann_for_uds](https://github.com/lhmygis/ga_ann_for_uds).
+     
+2. **astlingen**
    - Combined sewer network
    - 30 nodes (23 junctions, 6 tanks and 1 outfall)
    - 29 edges (23 conduits and 6 outflow orifices)
    - 10-yr rainfall monitoring data of 4 gauges are included
    - Details refer to [SWMM-Astlingen](https://github.com/open-toolbox/SWMM-Astlingen).
 
-3. **shunqing**
-   - Stormwater network
-   - 113 nodes (105 junctions and 8 outfalls)
-   - 131 conduits and 106 subcatchments (cover 33.02 km2)
-   - 148 synthetic rainfalls included with duration of 6-24 hrs
-   - Details refer to [ga_ann_for_uds](https://github.com/lhmygis/ga_ann_for_uds).
+3. **chaohu**
+   - Combined sewer network
+   - 2 pump stations with storage tanks (CC and JK)
+   - CC has 2 storm pumps and 2 sewage pumps
+   - JK has 2 storm pumps and 1 sewage pump
+   - Chicago rainfall pattern.
 
-5. **RedChicoSur**
-   - Stormwater network
-   - 443 nodes (442 junctions and 1 outfall)
-   - 444 edges (390 conduits and 54 orifices)
-   - 2-hr synthetic rainfalls (Chicago hytograph) included
-   - Details refer to [MatSWMM](https://github.com/gandresr/MatSWMM).
 
 ## Requirements
 - tensorflow == 2.6.0
