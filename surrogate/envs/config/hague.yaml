@@ -11,7 +11,7 @@ interval: 1
 states:
   - !!python/tuple
     - "RG"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "E143250" # outfall tide level
     - head

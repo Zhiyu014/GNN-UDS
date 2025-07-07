@@ -56,6 +56,11 @@ shunqing:
   vol: False
   cum: False
 
+  # validate args
+  validate: False
+  horizon: 60
+  pop_size: 1
+
   # test args
   test: False
   result_dir: ./results/shunqing/
@@ -118,6 +123,11 @@ RedChicoSur:
   norm: False
   vol: False
   cum: False
+
+  # validate args
+  validate: False
+  horizon: 60
+  pop_size: 1
 
   # test args
   test: False
@@ -182,6 +192,11 @@ astlingen:
   vol: False
   cum: False
 
+  # validate args
+  validate: False
+  horizon: 60
+  pop_size: 1
+
   # test args
   test: False
   result_dir: ./results/astlingen/
@@ -245,6 +260,11 @@ hague:
   norm: False
   vol: False
   cum: False
+
+  # validate args
+  validate: False
+  horizon: 60
+  pop_size: 1
   
   # test args
   test: False
@@ -308,6 +328,11 @@ chaohu:
   norm: False
   vol: False
   cum: False
+
+  # validate args
+  validate: False
+  horizon: 60
+  pop_size: 1
 
   # test args
   test: False

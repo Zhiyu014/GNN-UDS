@@ -169,4 +169,5 @@ cython_debug/
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
-surrogate/results/**/*.csv
+surrogate/results/**/**
+!surrogate/results/**/.gitkeep

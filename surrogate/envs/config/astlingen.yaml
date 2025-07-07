@@ -11,16 +11,16 @@ interval: 1
 states:
   - !!python/tuple
     - "RG1"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG2"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG3"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG4"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "T1"
     - depthN

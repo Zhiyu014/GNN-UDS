@@ -161,7 +161,7 @@ class basescenario(scenario):
     def rainfall(self, seq = False):
         state = self.state(seq)
         rain_ind = [idx for idx,(_,attr) in enumerate(self.config['states'])
-                     if attr in ['rainfall','cumprecip']]
+                     if attr in ['rainfall','rainfall_vol','cumprecip']]
         return state[:,rain_ind] if seq else state[rain_ind]
 
     def performance(self, seq = False, metric = 'recent'):

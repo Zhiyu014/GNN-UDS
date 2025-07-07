@@ -1,4 +1,0 @@
-data_dir: edge
-rain_dir: ast_train_events.csv
-simulate: true
-use_edge: true

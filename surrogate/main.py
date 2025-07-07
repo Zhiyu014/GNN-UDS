@@ -7,6 +7,8 @@ import argparse,yaml
 from envs import get_env
 import numpy as np
 import os,time,shutil
+import pandas as pd
+from mpc import get_runoff, pred_simu
 import matplotlib.pyplot as plt
 from keras.utils import plot_model
 # from line_profiler import LineProfiler
@@ -72,9 +74,14 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
         self.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
 
+        # vali args
+        self.add_argument('--validate',action="store_true",help='if test the emulator')
+        self.add_argument('--horizon',type=int,default=60,help='horizon length')
+        self.add_argument('--pop_size',type=int,default=1,help='number of parallel control options')
+        self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
+
         # test args
         self.add_argument('--test',action="store_true",help='if test the emulator')
-        self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
         self.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
 
 def parser(config=None):
@@ -272,6 +279,149 @@ if __name__ == "__main__":
         # plt.plot(np.array(test_losses).sum(axis=1),label='test')
         # plt.legend()
         # plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
+    
+    if args.validate:
+        known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
+        for k,v in known_hyps.items():
+            if k in ['model_dir','act']:
+                continue
+            elif k == 'data_dir':
+                v = os.path.join(args.data_dir,v)
+            setattr(args,k,v)
+        env_args = env.get_args(args.directed,args.length,args.order,args.graph_base)
+        for k,v in env_args.items():
+            if k == 'act':
+                v = v and args.act != 'False' and args.act
+            setattr(args,k,v)
+        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
+        emul.load(args.model_dir)
+        if not os.path.exists(args.result_dir):
+            os.mkdir(args.result_dir)
+        yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
+        rain_arg = env.config['rainfall']
+        if 'rain_dir' in config:
+            rain_arg['rainfall_events'] = args.rain_dir
+        if 'rain_suffix' in config:
+            rain_arg['suffix'] = args.rain_suffix
+        if 'rain_num' in config:
+            rain_arg['rain_num'] = args.rain_num
+        events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
+        args.n_step,args.r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
+
+        emu_objss,simu_objss,objss,settingss = [],[],[],[]
+        for event in events:
+            name = os.path.basename(event).strip('.inp')
+
+            ts,runoff = get_runoff(env,event)
+            tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
+            tss.index = pd.to_datetime(tss.index)
+            runoff = np.stack([np.concatenate([runoff[idx:idx+args.horizon],
+                                               np.tile(np.zeros_like(s),(max(idx+args.horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                                            for idx,s in enumerate(runoff)])
+
+            if args.prediction['no_runoff']:
+                ts2,runoff_rate = get_runoff(env,event,True)
+                tss2 = pd.DataFrame.from_dict({'Time':ts2,'Index':np.arange(len(ts2))}).set_index('Time')
+                tss2.index = pd.to_datetime(tss2.index)
+                runoff_rate = np.stack([np.concatenate([runoff_rate[idx:idx+args.horizon],
+                                                        np.tile(np.zeros_like(s),(max(idx+args.horizon-runoff_rate.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                                    for idx,s in enumerate(runoff_rate)])
+
+            state = env.reset(event,global_state=True,seq=args.seq_in)
+            perf = env.flood(seq=args.seq_in)
+            edge_state = env.state_full(typ='links',seq=args.seq_in)
+            y = np.array([[env.controller(mode='conti')
+                        for _ in range(runoff.shape[0]//args.control_interval+args.n_step+1)]
+                            for _ in range(args.pop_size)])
+            done,i,j = False,0,0
+            emu_objs,simu_objs,objs,settings = [],[],[],[]
+            while not done:
+                if i*args.interval % args.control_interval == 0:
+                    t = env.env.methods['simulation_time']()
+                    yi = y[:,i//args.control_interval:i//args.control_interval+args.n_step,:]
+                    setting = np.concatenate([np.repeat(yi[:,idx:idx+1,:],args.r_step,axis=1)
+                                            for idx in range(yi.shape[1])],axis=1)
+                    if setting.shape[1] < args.horizon // args.interval:
+                        setting = np.concatenate([setting,np.repeat(setting[:,-1:,:],args.horizon // args.interval - setting.shape[1],axis=1)],axis=1)
+                    settings.append(setting)
+                    t0 = time.time()
+                    if args.error > 0:
+                        r = runoff[int(tss.asof(t)['Index'])]
+                        std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
+                        r += np.random.uniform(-std,std)
+                        r = np.repeat(np.expand_dims(r,0),args.pop_size,axis=0)
+                    else:
+                        r = np.repeat(np.expand_dims(runoff[int(tss.asof(t)['Index'])],0),args.pop_size,axis=0)
+
+                    state[...,1] = state[...,1] - state[...,-1]
+                    state = np.repeat(np.expand_dims(state,0),args.pop_size,axis=0)
+                    perf = np.repeat(np.expand_dims(perf,0),args.pop_size,axis=0)
+                    edge_state = np.repeat(np.expand_dims(edge_state,0),args.pop_size,axis=0)
+                    if args.horizon > args.seq_out * args.interval:
+                        predss = []
+                        s0,e0 = state.copy(),edge_state.copy()
+                        for idx in range(args.horizon//args.seq_in):
+                            ri = r[:,idx*args.seq_out:(idx+1)*args.seq_out,...]
+                            sett = setting[:,idx*args.seq_out:(idx+1)*args.seq_out,:]
+                            if args.if_flood:
+                                f = (perf>0).astype(float)
+                                state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                            preds = emul.predict(state,ri,sett,edge_state)
+                            state = np.concatenate([preds[0][...,:-2],ri],axis=-1)
+                            perf = preds[0][...,-1:]
+                            ae = emul.get_edge_action(sett,False)
+                            edge_state = np.concatenate([preds[1],ae],axis=-1)
+                            predss.append(preds)
+                        predss = [np.concatenate([preds[0] for preds in predss],axis=1),
+                                  np.concatenate([preds[1] for preds in predss],axis=1)]
+                        emu_obj = env.objective_pred(predss,[s0,e0],sett)
+                    else:
+                        if args.if_flood:
+                            f = (perf>0).astype(float)
+                            state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                        preds = emul.predict(state,r,setting,edge_state)
+                        if not args.predict:
+                            emu_obj = env.objective_pred(preds,[state,edge_state],setting)
+                        elif getattr(emul,'norm',False):
+                            emu_obj = preds.numpy().sum(axis=-2)
+                        else:
+                            emu_obj = env.norm_obj(preds.numpy().sum(axis=-2),[state,edge_state],inverse=True)
+                    t1 = time.time()
+                    print('emulation time: %s'%(t1-t0))
+                    emu_objs.append(emu_obj.squeeze())
+
+                    eval_file = env.get_eval_file(args.prediction['no_runoff'])
+                    if args.prediction['no_runoff']:
+                        r = np.repeat(np.expand_dims(runoff_rate[int(tss2.asof(t)['Index'])],0),args.pop_size,axis=0)
+                    else:
+                        r = [None for _ in range(len(y))]
+                    args.log = env.data_log.copy()
+                    simu_obj = np.stack([pred_simu(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,)
+                                        for sett,ri in zip(setting,r)])
+                    print('hsf simu time: %s'%(time.time()-t1))
+                    simu_objs.append(simu_obj.squeeze())
+
+                    objs.append(env.objective(args.horizon))
+                    j = 0
+                else:
+                    j += 1
+                done = env.step(setting[0,j,:])
+                state = env.state_full(seq=args.seq_in)
+                perf = env.flood(seq=args.seq_in)
+                edge_state = env.state_full(args.seq_in,'links')
+                i += 1
+            emu_objss.append(np.stack(emu_objs,axis=0))
+            simu_objss.append(np.stack(simu_objs,axis=0))
+            objss.append(np.stack(objs))
+            settingss.append(settings)
+        
+        emu_objss = np.concatenate([obj[:-args.n_step] for obj in emu_objss],axis=0)
+        simu_objss = np.concatenate([obj[:-args.n_step] for obj in simu_objss],axis=0)
+        objss = np.concatenate([obj[args.n_step:] for obj in objss],axis=0)
+        np.save(os.path.join(args.result_dir,'emu_objs.npy'),emu_objss)
+        np.save(os.path.join(args.result_dir,'simu_objs.npy'),simu_objss)
+        np.save(os.path.join(args.result_dir,'objs.npy'),objss)
+        np.save(os.path.join(args.result_dir,'settings.npy'),np.array(settingss))
 
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
