@@ -1,9 +1,0 @@
-act: rand
-pop_size: 64
-processes: 1
-rain_num: 4
-rain_suffix: chaohu_test
-result_dir: 60s_simu_test100
-termination:
-- time
-- 00:06:00
