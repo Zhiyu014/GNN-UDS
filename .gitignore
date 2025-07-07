@@ -169,5 +169,14 @@ cython_debug/
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
-surrogate/results/**/**
+surrogate/model/astlingen/**/
+surrogate/model/hague/**/
+surrogate/model/shunqing/**/
+surrogate/model/chaohu/**/
+!surrogate/model/**/.gitkeep
+surrogate/results/astlingen/**/
+surrogate/results/hague/**/
+surrogate/results/shunqing/**/
+surrogate/results/shunqing/*.csv
+surrogate/results/chaohu/**/
 !surrogate/results/**/.gitkeep
