@@ -552,8 +552,6 @@ class basescenario(scenario):
         # inp['OPTIONS']['ROUTING_STEP'] = datetime.time(second=30)
         inp['OPTIONS']['START_DATE'] = inp['OPTIONS']['REPORT_START_DATE'] = ct.date()
         inp['OPTIONS']['START_TIME'] = inp['OPTIONS']['REPORT_START_TIME'] = ct.time()
-        # inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).date()
-        # inp['OPTIONS']['END_TIME'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).time()
         
         if hsf_file is not None:
             if 'FILES' not in inp:

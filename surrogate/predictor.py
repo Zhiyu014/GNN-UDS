@@ -11,22 +11,68 @@ import os
 # from line_profiler import LineProfiler
 import tensorflow as tf
 # tf.config.list_physical_devices(device_type='GPU')
-
-import yaml,time,matplotlib.pyplot as plt
-from main import Argument,HERE
+import argparse,yaml,time,matplotlib.pyplot as plt
 from dataloader import DataGenerator
 from envs import get_env
+HERE = os.path.dirname(__file__)
 
-class ArgumentPredictor(Argument):
+class Argument(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(Argument, self).__init__(*args, **kwargs)
+
+        # env args
+        self.add_argument('--env',type=str,default='shunqing',help='set drainage scenarios')
+        self.add_argument('--directed',action='store_true',help='if use directed graph')
+        self.add_argument('--length',type=float,default=0,help='adjacency range')
+        self.add_argument('--order',type=int,default=1,help='adjacency order')
+        self.add_argument('--graph_base',type=int,default=0,help='if use node(1) or edge(2) based graph structure')
+
+        # simulate args
+        self.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
+        self.add_argument('--train_event_id',type=str,default='',help='the training event id file')
+        self.add_argument('--act',type=str,default='False',help='if and what control actions')
+        self.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
+
+        # train args
+        self.add_argument('--train',action="store_true",help='if train the emulator')
+        self.add_argument('--seed',type=int,default=42,help='random seeds')
+        self.add_argument('--load_model',action="store_true",help='if use existed model file to further train')
+        self.add_argument('--model_dir',type=str,default='./model/',help='the surrogate model weights')
+        self.add_argument('--ratio',type=float,default=0.8,help='ratio of training events')
+        self.add_argument('--learning_rate',type=float,default=1e-3,help='learning rate')
+        self.add_argument('--epochs',type=int,default=500,help='training epochs')
+        self.add_argument('--save_gap',type=int,default=100,help='save model per epochs')
+        self.add_argument('--batch_size',type=int,default=256,help='training batch size')
+
+        # network args
         self.add_argument('--full',action='store_true',help='if use full-scale input')
         self.add_argument('--norm',action='store_true',help='if norm targets individually')
         self.add_argument('--vol',action='store_true',help='if only fit volume-based objectives')
         self.add_argument('--cum',action='store_true',help='if fit cumulative values of the horizon')
+        self.add_argument('--embed_size',type=int,default=128,help='number of channels in each convolution layer')
+        self.add_argument('--n_sp_layer',type=int,default=3,help='number of spatial layers')
+        self.add_argument('--dropout',type=float,default=0.0,help='dropout rate')
+        self.add_argument('--activation',type=str,default='relu',help='activation function')
+        self.add_argument('--recurrent',type=str,default='GRU',help='recurrent type')
+        self.add_argument('--hidden_dim',type=int,default=64,help='number of channels in each recurrent layer')
+        self.add_argument('--kernel_size',type=int,default=3,help='number of channels in each convolution layer')
+        self.add_argument('--n_tp_layer',type=int,default=2,help='number of temporal layers')
+        self.add_argument('--seq_in',type=int,default=6,help='input sequential length')
+        self.add_argument('--seq_out',type=int,default=1,help='out sequential length. seq_out < seq_in ')
+        self.add_argument('--if_flood',type=int,default=0,help='if classify flooding with layers or not')
+
+        # vali args
+        self.add_argument('--validate',action="store_true",help='if test the emulator')
+        self.add_argument('--horizon',type=int,default=60,help='horizon length')
+        self.add_argument('--pop_size',type=int,default=1,help='number of parallel control options')
+        self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
+
+        # test args
+        self.add_argument('--test',action="store_true",help='if test the emulator')
+        self.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
 
 def parser(config=None):
-    parser = ArgumentPredictor(description='prediction')
+    parser = Argument(description='prediction')
     args = parser.parse_args()
     if config is not None:
         hyps = yaml.load(open(config,'r'),yaml.FullLoader)
@@ -253,7 +299,7 @@ if __name__ == '__main__':
         # 'act':'conti',
         # 'model_dir':'./model/chaohu/60s_50k_rand_pred_fitone/',
         # 'load_model':False,
-        # 'setting_duration':5,
+        # 'ctrl_step':5,
         # 'batch_size':64,
         # 'epochs':10000,
         # 'n_sp_layer':5,
@@ -314,7 +360,7 @@ if __name__ == '__main__':
     log_dir = "logs/model/"
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for epoch in range(args.epochs):
-        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
@@ -323,7 +369,7 @@ if __name__ == '__main__':
         train_loss = emul.fit_eval(x,ex,b,a,objs)
         train_losses.append(train_loss.numpy())
 
-        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[-2:]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)

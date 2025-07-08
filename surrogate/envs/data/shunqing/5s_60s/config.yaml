@@ -1,7 +1,7 @@
 act: false
 activation: relu
 batch_size: 256
-control_interval: 1
+ctrl_step: 1
 conv: GCNconv
 data_dir: 5s_60s
 edges: !!python/object/apply:numpy.core.multiarray._reconstruct

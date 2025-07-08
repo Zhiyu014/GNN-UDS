@@ -8,6 +8,7 @@ from envs import get_env
 import numpy as np
 import os,time,shutil
 import pandas as pd
+import multiprocessing as mp
 from mpc import get_runoff, pred_simu
 import matplotlib.pyplot as plt
 from keras.utils import plot_model
@@ -38,7 +39,7 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
         self.add_argument('--train_event_id',type=str,default='',help='the training event id file')
         self.add_argument('--act',type=str,default='False',help='if and what control actions')
-        self.add_argument('--setting_duration',type=int,default=5,help='setting duration')
+        self.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
         self.add_argument('--processes',type=int,default=1,help='number of simulation processes')
         self.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
 
@@ -137,6 +138,18 @@ if __name__ == "__main__":
     # for k,v in train_de.items():
     #     setattr(args,k,v)
 
+    # vali_de = {'validate':True,
+    #            'env':'astlingen',
+    #            'act':'rand3',
+    #            'pop_size':1,
+    #            'horizon':60,
+    #            'error':0,
+    #            'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs/',
+    #            'result_dir':'./results/astlingen/STM_vali/',
+    #            'rain_dir':'./envs/config/ast_test5_events0.csv'}
+    # for k,v in vali_de.items():
+    #     setattr(args,k,v)
+
     # test_de = {'test':True,
     #            'env':'hague',
     #            'act':False,
@@ -220,7 +233,7 @@ if __name__ == "__main__":
         os.makedirs(log_dir,exist_ok=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
             ex,ey = [dat for dat in train_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
@@ -230,7 +243,7 @@ if __name__ == "__main__":
             if args.if_flood and args.gradnorm and epoch > 0:
                 emul.fit_grad_norm(x,a,b,y,ex,ey,train_losses[0])
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
             x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
             ex,ey = [dat for dat in test_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
@@ -306,7 +319,7 @@ if __name__ == "__main__":
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
-        args.n_step,args.r_step = args.horizon//args.setting_duration,args.setting_duration//args.interval
+        args.n_step,args.r_step = args.horizon//args.ctrl_step,args.ctrl_step//args.interval
 
         emu_objss,simu_objss,objss,settingss = [],[],[],[]
         for event in events:
@@ -331,14 +344,14 @@ if __name__ == "__main__":
             perf = env.flood(seq=args.seq_in)
             edge_state = env.state_full(typ='links',seq=args.seq_in)
             y = np.array([[env.controller(mode='conti')
-                        for _ in range(runoff.shape[0]//args.control_interval+args.n_step+1)]
+                        for _ in range(runoff.shape[0]//args.ctrl_step+args.n_step+1)]
                             for _ in range(args.pop_size)])
-            done,i,j = False,0,0
+            done,i = False,0
             emu_objs,simu_objs,objs,settings = [],[],[],[]
             while not done:
-                if i*args.interval % args.control_interval == 0:
+                if i*args.interval % args.ctrl_step == 0:
                     t = env.env.methods['simulation_time']()
-                    yi = y[:,i//args.control_interval:i//args.control_interval+args.n_step,:]
+                    yi = y[:,i//args.ctrl_step:i//args.ctrl_step+args.n_step,:]
                     setting = np.concatenate([np.repeat(yi[:,idx:idx+1,:],args.r_step,axis=1)
                                             for idx in range(yi.shape[1])],axis=1)
                     if setting.shape[1] < args.horizon // args.interval:
@@ -380,12 +393,7 @@ if __name__ == "__main__":
                             f = (perf>0).astype(float)
                             state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                         preds = emul.predict(state,r,setting,edge_state)
-                        if not args.predict:
-                            emu_obj = env.objective_pred(preds,[state,edge_state],setting)
-                        elif getattr(emul,'norm',False):
-                            emu_obj = preds.numpy().sum(axis=-2)
-                        else:
-                            emu_obj = env.norm_obj(preds.numpy().sum(axis=-2),[state,edge_state],inverse=True)
+                        emu_obj = env.objective_pred(preds,[state,edge_state],setting)
                     t1 = time.time()
                     print('emulation time: %s'%(t1-t0))
                     emu_objs.append(emu_obj.squeeze())
@@ -396,16 +404,17 @@ if __name__ == "__main__":
                     else:
                         r = [None for _ in range(len(y))]
                     args.log = env.data_log.copy()
-                    simu_obj = np.stack([pred_simu(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,)
-                                        for sett,ri in zip(setting,r)])
+                    pool = mp.Pool(args.processes)
+                    res = [pool.apply_async(func=pred_simu,args=(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,))
+                            for sett,ri in zip(setting,r)]
+                    pool.close()
+                    pool.join()
+                    simu_obj = np.stack([r.get() for r in res])
                     print('hsf simu time: %s'%(time.time()-t1))
                     simu_objs.append(simu_obj.squeeze())
 
                     objs.append(env.objective(args.horizon))
-                    j = 0
-                else:
-                    j += 1
-                done = env.step(setting[0,j,:])
+                done = env.step(setting[0,0,:])
                 state = env.state_full(seq=args.seq_in)
                 perf = env.flood(seq=args.seq_in)
                 edge_state = env.state_full(args.seq_in,'links')

@@ -11,12 +11,12 @@ class DataGenerator:
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
         self.items = ['states','perfs','settings','rains','edge_states','event_id','dones']
         self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval'] if args is not None else 0
-        self.seq_in = getattr(args,"seq_in",getattr(args,"setting_duration",5))
+        self.seq_in = getattr(args,"seq_in",getattr(args,"ctrl_step",5))
         self.seq_out = getattr(args,"seq_out",getattr(args,"horizon",1))
         self.if_flood = getattr(args,"if_flood",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
-        self.setting_duration = getattr(args,"setting_duration",5)
+        self.ctrl_step = getattr(args,"ctrl_step",5)
         if self.act:
             self.action_space = self.config['action_space']
             # self.adj = env.get_adj()
@@ -42,7 +42,7 @@ class DataGenerator:
                 inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
                 inp.write_file(eval_file)
                 _ = swmm5_run(eval_file)
-            setting = env.controller(act,state,setting) if act and i % (self.setting_duration//self.config['interval']) == 0 else setting
+            setting = env.controller(act,state,setting) if act and i % (self.ctrl_step//self.config['interval']) == 0 else setting
             done = env.step(setting)
             state = env.state_full(seq=seq)
             rain = env.rainfall(seq=seq)

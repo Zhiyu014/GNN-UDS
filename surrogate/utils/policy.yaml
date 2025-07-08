@@ -4,8 +4,7 @@ astlingen:
   length: 0
   order: 1
   graph_base: 0
-  control_interval: 5
-  setting_duration: 5
+  ctrl_step: 5
   act: 'False'
   mac: False
   dec: False
@@ -71,8 +70,7 @@ chaohu:
   length: 0
   order: 1
   graph_base: 0
-  control_interval: 10
-  setting_duration: 10
+  ctrl_step: 10
   act: 'False'
   mac: False
   dec: False

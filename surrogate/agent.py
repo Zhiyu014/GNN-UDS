@@ -883,7 +883,7 @@ class AgentPPO(AgentSAC):
         if not self.act_only:
             self.qnet = CriticPPO(action_shape,state_shape,args,self.convnet if self.conv else None)
             self.gamma = getattr(args, "gamma", 0.98)
-            self.horizon = getattr(args, "horizon", 60)//getattr(args, "setting_duration", 5)
+            self.horizon = getattr(args, "horizon", 60)//getattr(args, "ctrl_step", 5)
             self.lambda_gae = getattr(args, "lambda_gae", 0.95)
             self.lambda_entropy = getattr(args, "lambda_entropy", 0.01)
             self.clip_ratio = getattr(args, "clip_ratio", 0.2)

@@ -30,7 +30,7 @@ def parser(config=None):
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
     parser.add_argument('--swmm_step',type=int,default=30,help='routing step for swmm inp files')
 
-    parser.add_argument('--setting_duration',type=int,default=5,help='setting duration')
+    parser.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
 
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
@@ -62,8 +62,8 @@ class mpc_problem(Problem):
         self.file = eval_file
         self.n_act = len(args.action_space)
         self.step = args.interval
-        self.n_step = args.prediction['control_horizon']//args.setting_duration
-        self.r_step = args.setting_duration//args.interval
+        self.n_step = args.horizon//args.ctrl_step
+        self.r_step = args.ctrl_step//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
         if args.act.startswith('conti'):
@@ -98,7 +98,7 @@ class mpc_problem(Problem):
             if self.args.prediction['no_runoff']:
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
                     env.env._setNodeInflow(node,ri)
-            if idx % self.args.setting_duration == 0:
+            if idx % self.args.ctrl_step == 0:
                 yi = y[idx]
                 sett = yi if self.args.act.startswith('conti') else self.actions[tuple(yi)]
                 # sett = np.array(env.controller('safe',state,sett)).astype(float)
@@ -176,7 +176,7 @@ if __name__ == '__main__':
         t1 = time.time()
         print('Runoff time: {} s'.format(t1-t0))
 
-        args.prediction['eval_horizon'] = args.prediction['control_horizon'] = runoff_rate.shape[0] * args.interval
+        args.horizon = runoff_rate.shape[0] * args.interval
         args.prediction['no_runoff'] = False
 
         prob = mpc_problem(args,eval_file=event)
@@ -216,7 +216,7 @@ if __name__ == '__main__':
         settings = [setting]
         done,idx = False,0
         while not done:
-            if idx % args.setting_duration == 0:
+            if idx % args.ctrl_step == 0:
                 setting = ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1]
                 setting = np.array(env.controller('safe',state,setting)).astype(float)
             done = env.step(setting)
