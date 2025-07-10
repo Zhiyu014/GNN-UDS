@@ -30,9 +30,9 @@ class Argument(argparse.ArgumentParser):
         # simulate args
         self.add_argument('--simulate',action="store_true",help='if simulate rainfall events for training data')
         self.add_argument('--data_dir',type=str,default='./envs/data/',help='the sampling data file')
-        self.add_argument('--train_event_id',type=str,default='',help='the training event id file')
+        self.add_argument('--train_event_id',type=str,default='train_id.npy',help='the training event id file')
         self.add_argument('--act',type=str,default='False',help='if and what control actions')
-        self.add_argument('--setting_duration',type=int,default=5,help='setting duration')
+        self.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
         self.add_argument('--processes',type=int,default=1,help='number of simulation processes')
         self.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
 
@@ -53,6 +53,7 @@ class Argument(argparse.ArgumentParser):
         # network args
         self.add_argument('--nly',type=int,default=3,help='number of spatial layers')
         self.add_argument('--dim',type=int,default=64,help='number of channels in each recurrent layer')
+        self.add_argument('--activation',type=str,default='relu',help='activation function')
         self.add_argument('--kernel',type=int,default=3,help='number of channels in each convolution layer')
         self.add_argument('--seq',type=int,default=6,help='input sequential length')
         self.add_argument('--if_flood',action="store_true",help='if classify flooding with layers or not')
@@ -101,7 +102,7 @@ if __name__ == "__main__":
     #             'model_dir':'./model/astlingen/test/',
     #             'load_model':False,
     #             'roll':0,
-    #             'batch_size':128,
+    #             'batch_size':64,
     #             'epochs':50000,
     #             'nly':3,
     #             'seq':5,
@@ -173,10 +174,15 @@ if __name__ == "__main__":
         # if args.if_flood:
         #     args.poswei = dG.get_flood_poswei()
 
-        device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
         emul = Emulator(args)
         if args.load_model:
-            emul.load()
+            args.model_dir = os.path.join(args.model_dir,'retrain')
+            emul.load(retrain=args.load_model)
+            setattr(emul,'model_dir',args.model_dir)
+            if not os.path.exists(args.model_dir):
+                os.mkdir(args.model_dir)
+            if 'model_dir' in config:
+                config['model_dir'] += '/retrain'
         emul.set_norm(*dG.get_norm())
         yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
@@ -187,25 +193,24 @@ if __name__ == "__main__":
         os.makedirs(log_dir,exist_ok=True)
         writer = SummaryWriter(log_dir)
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
-            x,a,b,y = [th.tensor(dat).to(device) for dat in train_dats[:4]]
-            ex,ey = [th.tensor(dat).to(device) for dat in train_dats[6:8]]
-            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
-            train_loss = emul.fit_eval(x,a,b,y,ex,ey)
-            train_loss = train_loss.detach().cpu().numpy()
-            if epoch >= 500:
-                train_losses.append(train_loss)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False,weight=True)
+            x,a,b,y = [emul.to_tensor(dat) for dat in train_dats[:4]]
+            ex,ey = [emul.to_tensor(dat) for dat in train_dats[6:8]]
+            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
+            ini_loss = emul.to_tensor(np.array(train_losses[0])) if epoch > 0 else None
+            train_loss = emul.fit_eval(x,a,b,y,ex,ey,ini_loss)
+            train_loss = [los.detach().cpu().numpy() for los in train_loss]
+            train_losses.append(train_loss)
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
-            x,a,b,y = [th.tensor(dat).to(device) for dat in test_dats[:4]]
-            ex,ey = [th.tensor(dat).to(device) for dat in test_dats[6:8]]
-            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],'xbyee')]
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False,weight=True)
+            x,a,b,y = [emul.to_tensor(dat) for dat in test_dats[:4]]
+            ex,ey = [emul.to_tensor(dat) for dat in test_dats[6:8]]
+            x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
             test_loss = emul.fit_eval(x,a,b,y,ex,ey,fit=False)
             test_loss = [los.detach().cpu().numpy() for los in test_loss]
-            if epoch >= 500:
-                test_losses.append(test_loss)
+            test_losses.append(test_loss)
 
-            if train_loss < min([1e6]+train_losses[:-1]):
+            if sum(train_loss) < min([1e6]+[sum(los) for los in train_losses[:-1]]):
                 emul.save('train')
             if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
                 emul.save('test')
@@ -215,22 +220,19 @@ if __name__ == "__main__":
             secs.append(time.time()-t0)
 
             # Log output
-            log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],train_loss,sum(test_loss))
+            log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],sum(train_loss),sum(test_loss))
+            writer.add_scalar('train loss', sum(train_loss), epoch)
             log += " ("
             log += "Node: {:.4f}".format(test_loss[0])
-            i = 1
-            if args.if_flood:
-                log += " if_flood: {:.4f}".format(test_loss[i])
-                i += 1
-            log += " Edge: {:.4f})".format(test_loss[i])
-            print(log)
-            writer.add_scalar('train loss', train_loss, epoch)
             writer.add_scalar('Node loss', test_loss[0], epoch)
             i = 1
             if args.if_flood:
+                log += " if_flood: {:.4f}".format(test_loss[i])
                 writer.add_scalar('Flood classification', test_loss[i], epoch)
                 i += 1
+            log += " Edge: {:.4f})".format(test_loss[i])
             writer.add_scalar('Edge loss', test_loss[i], epoch)
+            print(log)
 
         # save
         emul.save()
@@ -239,10 +241,10 @@ if __name__ == "__main__":
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
         np.save(os.path.join(args.model_dir,'time.npy'),np.array(secs[1:]))
-        plt.plot(train_losses,label='train')
-        plt.plot(np.array(test_losses).sum(axis=1),label='test')
-        plt.legend()
-        plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
+        # plt.plot(train_losses,label='train')
+        # plt.plot(np.array(test_losses).sum(axis=1),label='test')
+        # plt.legend()
+        # plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
 
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.model_dir,'parser.yaml'),'r'),yaml.FullLoader)
@@ -340,7 +342,7 @@ if __name__ == "__main__":
             if args.if_flood:
                 loss += [emul.bce(pred[...,-2:-1],true[...,-2:-1])]
                 los_str += "if_flood: {:.4f} ".format(loss[-1])
-            loss += [emul.mse(emul.normalize(edge_pred,'e'),emul.normalize(edge_true,'e'))]
+            loss += [emul.mse(emul.normalize(edge_pred,'ey'),emul.normalize(edge_true,'ey'))]
             los_str += "Edge: {:.4f})".format(loss[-1])
             print(los_str)
 

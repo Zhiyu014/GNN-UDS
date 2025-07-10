@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Aug  3 11:52:04 2022
-
-@author: MOMO
-"""
-
 from pystorms.environment import environment
 import numpy as np
 from struct import pack
@@ -76,6 +69,7 @@ class env_base(environment):
             'setting':self._getLinkSetting,
             'cumprecip':self._getSystemRainfall,
             'rainfall':self._getGageRainfall,
+            'rainfall_vol':self._getGageRainfallVol,
             'getlinktype':self._getLinkType,
             'cumpumpenergy':self._getPumpEnergy,
             })
@@ -185,20 +179,16 @@ class env_base(environment):
         return state
 
     def ini_log(self,etime):
-        log = {'elapsed_time':[etime]}
+        eles = {}
         for col in ['states','global_state','performance_targets','flood']:
-            for item in self.config.get(col,[]):
-                obj,attr = item[0],item[1]
-                if '_' in attr and attr not in log:
-                    log[attr] = {}
-                    if obj == 'nodes':
-                        objs = self._getNodeIdList()
-                    elif obj == 'links':
-                        objs = self._getLinkIdList()
-                    else:
-                        objs = [obj]
-                    for obj in objs:
-                        log[attr][obj] = []
+            for obj,attr,*_ in self.config.get(col,[]):
+                if '_' in attr:
+                    ele = self._getNodeIdList() if obj == 'nodes' else self._getLinkIdList() if obj == 'links' else [obj]
+                    eles[attr] = ele if attr not in eles else eles[attr] + ele
+        log = {'elapsed_time':[etime]}
+        for attr,ele in eles.items():
+            log[attr] = {e:[] for e in set(ele)}
+        log['elapsed_time'] = [etime]
         return log
     
     def _log(self,etime):
@@ -308,9 +298,13 @@ class env_base(environment):
         return self.sim._model.runoff_routing_stats()['rainfall']
     
     def _getGageRainfall(self,ID):
-        # For Cumrainfall state
+        # For precipitation rate (mm/hr)
         return self.sim._model.getGagePrecip(ID,
             tkai.RainGageResults.rainfall.value)
+
+    def _getGageRainfallVol(self,ID):
+        # For rainfall volume (mm)
+        return sum(self._get_step_value('rainfall_vol',ID))/3600.0
 
     def _getLinkType(self,ID):
         # For control formulation

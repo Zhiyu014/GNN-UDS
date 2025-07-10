@@ -161,7 +161,7 @@ class basescenario(scenario):
     def rainfall(self, seq = False):
         state = self.state(seq)
         rain_ind = [idx for idx,(_,attr) in enumerate(self.config['states'])
-                     if attr in ['rainfall','cumprecip']]
+                     if attr in ['rainfall','rainfall_vol','cumprecip']]
         return state[:,rain_ind] if seq else state[rain_ind]
 
     def performance(self, seq = False, metric = 'recent'):
@@ -284,10 +284,10 @@ class basescenario(scenario):
                                             if sec in inp for _ in getattr(inp,sec,dict()).values()])
             args['is_storage'] = np.array([1 if sec == 'STORAGE' else 0 for sec in NODE_SECTIONS
                                             if sec in inp for _ in getattr(inp,sec,dict()).values()])
-            args['hmax'] = np.array([getattr(node,'MaxDepth',0)+getattr(node,'SurDepth',0) for sec in NODE_SECTIONS
+            args['hmax'] = np.array([getattr(node,'depth_max',0)+getattr(node,'depth_surcharge',0) for sec in NODE_SECTIONS
                                      if sec in inp for node in getattr(inp,sec,dict()).values()])
             if args['global_state'][0][-1] == 'head':
-                args['hmin'] = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
+                args['hmin'] = np.array([getattr(node,'elevation',0) for sec in NODE_SECTIONS
                                          if sec in inp for node in getattr(inp,sec,dict()).values()])
                 args['hmax'] += args['hmin']
             else:
@@ -304,12 +304,15 @@ class basescenario(scenario):
             else:
                 args['hmin'] = np.zeros_like(args['hmax'])
 
-
-        args['edges'] = self.get_edge_list()
-        EX = self.get_edge_graph(args['edges'],directed=directed)
-        args['node_index'] = np.array(EX.edges)
+        edges = self.get_edge_list()
+        EX = self.get_edge_graph(edges,directed=directed)
+        node_index = np.array(EX.edges)
+        node_edge_index = self.get_node_edge_index(edges,node_index)
+        # add self loop
+        args['edges'] = np.concatenate([edges,np.stack([np.arange(edges.max()+1)]*2,axis=-1)],axis=0)
+        args['node_index'] = np.concatenate([node_index,np.stack([np.arange(node_index.max()+1)]*2,axis=-1)],axis=0)
+        args['node_edge_index'] = np.concatenate([node_edge_index,np.stack([np.arange(node_edge_index.max()+1)]*2,axis=-1)],axis=0)
         args['node_edge'] = self.get_node_edge()
-        args['node_edge_index'] = self.get_node_edge_index(args['edges'],args['node_index'])
         # TODO: Heterogeneous Graphs for node/edge based graph
         # TODO: get edge_indices for pyg, adj is for spektral
         # if graph_base == 1:
@@ -329,7 +332,7 @@ class basescenario(scenario):
         args['elements'] = self.elements
         args['attrs'] = {'nodes':[attr for ele,attr in self.config['global_state'] if ele == 'nodes'],
                          'links':[attr for ele,attr in self.config['global_state'] if ele == 'links']}
-        args['edge_state_shape'] = (len(args['edges']),len([k for k,_ in self.config['global_state'] if k == 'links']))            
+        args['edge_state_shape'] = (len(edges),len([k for k,_ in self.config['global_state'] if k == 'links']))            
         return args
     
     # TODO: getters Use pyswmm api
@@ -342,7 +345,7 @@ class basescenario(scenario):
                 continue                
             if no_out and kind == 'links':
                 features += [k for k,v in getattr(inp,label).items()
-                             if getattr(v,'ToNode') not in inp['OUTFALLS']]
+                             if getattr(v,'to_node') not in inp['OUTFALLS']]
             else:
                 features += list(getattr(inp,label))
         return features
@@ -536,8 +539,8 @@ class basescenario(scenario):
         # inp['OPTIONS']['ROUTING_STEP'] = datetime.time(second=30)
         inp['OPTIONS']['START_DATE'] = inp['OPTIONS']['REPORT_START_DATE'] = ct.date()
         inp['OPTIONS']['START_TIME'] = inp['OPTIONS']['REPORT_START_TIME'] = ct.time()
-        # inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).date()
-        # inp['OPTIONS']['END_TIME'] = (ct + datetime.timedelta(minutes=self.config['prediction']['eval_horizon'])).time()
+        # inp['OPTIONS']['END_DATE'] = (ct + datetime.timedelta(minutes=self.config['prediction']['horizon'])).date()
+        # inp['OPTIONS']['END_TIME'] = (ct + datetime.timedelta(minutes=self.config['prediction']['horizon'])).time()
         
         if hsf_file is not None:
             if 'FILES' not in inp:
@@ -547,7 +550,7 @@ class basescenario(scenario):
         # Set the outlet of subcatchments to themselves if no_runoff
         if no_runoff:
             for _,v in inp.SUBCATCHMENTS.items():
-                v.Outlet = v.Name
+                v.outlet = v.name
             if 'DWF' in inp.keys():
                 inp.pop('DWF')
 

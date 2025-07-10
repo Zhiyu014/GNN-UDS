@@ -13,7 +13,7 @@ shunqing:
   # simulate args
   simulate: False
   data_dir: ./envs/data/shunqing/
-  train_event_id: ''
+  train_event_id: train_id.npy
   act: 'False'
   processes: 5
   repeats: 1
@@ -36,6 +36,7 @@ shunqing:
   dim: 128
   nly: 2
   kernel: 3
+  activation: relu
   seq: 6
   seq_out: 1
   if_flood: False
@@ -67,7 +68,7 @@ redchicosur:
   # simulate args
   simulate: False
   data_dir: ./envs/data/redchicosur/
-  train_event_id: ''
+  train_event_id: train_id.npy
   act: 'False'
   processes: 5
   repeats: 1
@@ -90,6 +91,7 @@ redchicosur:
   dim: 128
   nly: 2
   kernel: 3
+  activation: relu
   seq: 6
   seq_out: 1
   if_flood: False
@@ -121,7 +123,7 @@ astlingen:
   # simulate args
   simulate: False
   data_dir: ./envs/data/astlingen/
-  train_event_id: ''
+  train_event_id: train_id.npy
   act: 'False'
   processes: 5
   repeats: 1
@@ -144,6 +146,7 @@ astlingen:
   dim: 128
   nly: 2
   kernel: 3
+  activation: relu
   seq: 6
   seq_out: 1
   if_flood: False
@@ -175,7 +178,7 @@ hague:
   # simulate args
   simulate: False
   data_dir: ./envs/data/hague/
-  train_event_id: ''
+  train_event_id: train_id.npy
   act: 'False'
   processes: 5
   repeats: 1
@@ -198,6 +201,7 @@ hague:
   dim: 128
   nly: 2
   kernel: 3
+  activation: relu
   seq: 6
   seq_out: 1
   if_flood: False
@@ -229,7 +233,7 @@ chaohu:
   # simulate args
   simulate: False
   data_dir: ./envs/data/chaohu/
-  train_event_id: ''
+  train_event_id: train_id.npy
   act: 'False'
   processes: 5
   repeats: 1
@@ -252,6 +256,7 @@ chaohu:
   dim: 128
   nly: 2
   kernel: 3
+  activation: relu
   seq: 6
   seq_out: 1
   if_flood: False

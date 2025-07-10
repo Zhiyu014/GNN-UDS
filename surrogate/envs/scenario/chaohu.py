@@ -200,9 +200,9 @@ class chaohu(basescenario):
         args = super().get_args(directed,length,order,graph_base)
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([inp['CURVES'][node.Curve].points[0][1] if sec == 'STORAGE' else 0.0
+        args['area'] = np.array([inp['CURVES'][node.data].points[0][1] if sec == 'STORAGE' else 0.0
                                   for sec in NODE_SECTIONS if sec in inp for node in getattr(inp,sec,dict()).values()])
-        args['pump'] = np.array([inp['CURVES'][link.Curve].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
+        args['pump'] = np.array([inp['CURVES'][link.curve_name].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
                                   for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])
         args['pump_in'] = (-np.clip(args['node_edge'],-1,0)*args['pump']).sum(axis=1)
         args['pump_out'] = (np.clip(args['node_edge'],0,1)*args['pump']).sum(axis=1)

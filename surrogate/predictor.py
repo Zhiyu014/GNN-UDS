@@ -253,7 +253,7 @@ if __name__ == '__main__':
         # 'act':'conti',
         # 'model_dir':'./model/chaohu/60s_50k_rand_pred_fitone/',
         # 'load_model':False,
-        # 'setting_duration':5,
+        # 'ctrl_step':5,
         # 'batch_size':64,
         # 'epochs':10000,
         # 'n_sp_layer':5,
@@ -314,18 +314,18 @@ if __name__ == '__main__':
     log_dir = "logs/model/"
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for epoch in range(args.epochs):
-        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
-        ex,ey = [dat for dat in train_dats[-2:]]
+        ex,ey = [dat for dat in train_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
             objs = env.norm_obj(objs,[x,ex])
         train_loss = emul.fit_eval(x,ex,b,a,objs)
         train_losses.append(train_loss.numpy())
 
-        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.setting_duration,trim=False)
+        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
-        ex,ey = [dat for dat in test_dats[-2:]]
+        ex,ey = [dat for dat in test_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
             objs = env.norm_obj(objs,[x,ex])

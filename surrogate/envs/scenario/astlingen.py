@@ -1,6 +1,7 @@
 from .base import basescenario
 import os
 import numpy as np
+import torch as th
 from swmm_api import read_inp_file
 from swmm_api.input_file.section_lists import NODE_SECTIONS
 from itertools import product
@@ -40,7 +41,7 @@ class astlingen(basescenario):
             if config_file is None else config_file
         super().__init__(config_file,swmm_file,global_state,initialize)
         
-    def objective(self, seq = False):
+    def objective(self, seq = False, keepdim = False):
         # __object = np.zeros(seq) if seq else 0.0
         __object = []
         perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
@@ -52,7 +53,10 @@ class astlingen(basescenario):
                 # __object += perfs[1:,i] * weight
                 __object += [perfs[1:,i].squeeze() * weight]
         # return __object
-        return np.array(__object).sum(axis=-1) if seq else np.array(__object)
+        if seq:
+            return np.array(__object).sum(axis=-1) if not keepdim else np.array(__object).T
+        else:
+            return np.array(__object)
          
     def objective_pred(self,preds,states,settings,gamma=None,keepdim=False):
         preds,_ = preds
@@ -72,10 +76,28 @@ class astlingen(basescenario):
         obj = (obj*gamma).sum(axis=-1) if not keepdim else np.transpose(obj*gamma,(0,2,1))
         return obj
 
+    def objective_pred_th(self,preds,states,settings,gamma=None,keepdim=False):
+        preds,_ = preds
+        state,_ = states
+        q_w = preds[...,-1]
+        q_in = th.concat([state[:,-1:,:,1],preds[...,1]],dim=1)
+        flood = [q_w[...,self.elements['nodes'].index(idx)] * weight
+                for idx,attr,weight in self.config['performance_targets'] if attr == 'cumflooding']
+        inflow = [th.abs(th.diff(q_in[...,self.elements['nodes'].index(idx)],dim=1)) * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' not in idx]
+        outflow = [q_in[:,1:,self.elements['nodes'].index(idx)] * weight
+                for idx,attr,weight in self.config['performance_targets']
+                    if attr == 'cuminflow' and 'WWTP' in idx]
+        obj = th.stack(flood + outflow + inflow,dim=1)
+        gamma = th.ones(preds.shape[1]).to(device=obj.device) if gamma is None else th.tensor(gamma).to(device=obj.device)
+        obj = (obj*gamma).sum(axis=-1) if not keepdim else (obj*gamma).permute(0,2,1)
+        return obj
+    
     def norm_obj(self,obj,states,inverse=False):
         __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
         while __norm.ndim < obj.ndim:
-            __norm = np.expand_dims(__norm,-1)
+            __norm = np.expand_dims(__norm,-1) if isinstance(__norm,np.ndarray) else th.unsqueeze(__norm,-1)
         return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
 
     def get_obj_norm(self,norm_y,norm_e=None,perfs=None):

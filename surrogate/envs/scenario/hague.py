@@ -110,9 +110,9 @@ class hague(basescenario):
         #     args['rainfall']['training_events'] = os.path.join(HERE,'config',args['rainfall']['training_events']+'.csv')
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([node.Curve[0] if sec == 'STORAGE' else 0.0
+        args['area'] = np.array([inp['CURVES'][node.data].points[0][1] if sec == 'STORAGE' else 0.0
                                   for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
-        args['pump'] = np.array([inp['CURVES'][link.Curve].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
+        args['pump'] = np.array([inp['CURVES'][link.curve_name].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
                                   for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])
         args['offset'] = np.array([getattr(link,'Offset',0)+getattr(link,'InOffset',0)
                    for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])

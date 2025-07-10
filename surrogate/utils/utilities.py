@@ -237,7 +237,7 @@ def generate_split_file(base_inp_file,
           for col in rain.columns if col not in ['date','time','datetime']}
 
         for rg in inp.RAINGAGES.values():
-            ts = rg.Timeseries
+            ts = rg.timeseries
             inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[ts])
 
         if arg.get('tide',False):

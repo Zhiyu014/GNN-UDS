@@ -11,11 +11,12 @@ class DataGenerator:
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
         self.items = ['states','perfs','settings','rains','edge_states','event_id','dones']
         self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval']
-        self.seq_in = self.seq_out = getattr(args,"seq",5)
+        self.seq_in = getattr(args,"seq",5)
+        self.seq_out = getattr(args,"horizon",getattr(args,"seq",5)) * max(getattr(args,"roll",1),1)
         self.if_flood = getattr(args,"if_flood",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
-        self.setting_duration = getattr(args,"setting_duration",5)
+        self.ctrl_step = getattr(args,"ctrl_step",5)
         if self.act:
             self.action_space = self.config['action_space']
         self.limit = 2**getattr(args,"limit",22)
@@ -39,7 +40,7 @@ class DataGenerator:
                 inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
                 inp.write_file(eval_file)
                 _ = swmm5_run(eval_file)
-            setting = env.controller(act,state,setting) if act and i % (self.setting_duration//self.config['interval']) == 0 else setting
+            setting = env.controller(act,state,setting) if act and i % (self.ctrl_step//self.config['interval']) == 0 else setting
             done = env.step(setting)
             state = env.state_full(seq=seq)
             rain = env.rainfall(seq=seq)
@@ -100,16 +101,15 @@ class DataGenerator:
         return event_idxs
         
 
-    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,continuous=False,trim=True,return_idx=False):
+    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,continuous=False,trim=True,weight=False):
         if continuous:
             idxs = np.random.randint(event_idxs.shape[0]//interval-batch_size)
             idxs = interval*np.arange(idxs,idxs+batch_size)
         else:
-            wei = self.get_flood_weight(seq)[event_idxs][np.arange(0,event_idxs.shape[0],interval)]
-            idxs = interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False,
-                                             p=wei/wei.sum(),
-                                             )
-            # idxs = interval*np.random.choice(event_idxs.shape[0]//interval,batch_size,replace=False)
+            wei = self.get_flood_weight(seq)[event_idxs][np.arange(0,event_idxs.shape[0],interval)] if weight else None
+            idxs = np.random.choice(np.arange(0,event_idxs.shape[0],interval),batch_size,replace=False,
+                                    p=wei/wei.sum() if weight else None,
+                                    )
         idxs = event_idxs[idxs]
         if seq > 0:
             ixs = np.apply_along_axis(lambda t:np.arange(t-seq,t),axis=1,arr=np.expand_dims(idxs,axis=-1))
@@ -136,8 +136,7 @@ class DataGenerator:
         else:
             done = np.take(self.dones,iys).sum(axis=-1) if seq > 0 else self.dones[idxs].sum(axis=-1)
         dats.append(done)
-        if return_idx:
-            dats.append(self.event_id[idxs])
+        dats.append(self.event_id[idxs])
         return [dat.astype(np.float32) if dat is not None else dat for dat in dats]
     
     def state_split_batch(self,states,perfs,trim=True):

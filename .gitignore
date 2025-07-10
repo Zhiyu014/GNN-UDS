@@ -152,9 +152,11 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 *.npy
+*.npz
 !train_id_*.npy
 *.h5
 *.pth
+*.pt
 *.inp
 *.out
 *.rpt
@@ -163,6 +165,7 @@ cython_debug/
 *.json
 *.rar
 *.zip
+*.svg
 *.v2
 *.0
 !hague.inp
@@ -170,3 +173,18 @@ cython_debug/
 !astlingen.inp
 !RedChicoSur.inp
 !chaohu.inp
+surrogate/agent/astlingen/**/
+surrogate/agent/hague/**/
+surrogate/agent/chaohu/**/
+!surrogate/agent/**/.gitkeep
+surrogate/model/astlingen/**/
+surrogate/model/hague/**/
+surrogate/model/shunqing/**/
+surrogate/model/chaohu/**/
+!surrogate/model/**/.gitkeep
+surrogate/results/astlingen/**/
+surrogate/results/hague/**/
+surrogate/results/shunqing/**/
+surrogate/results/shunqing/*.csv
+surrogate/results/chaohu/**/
+!surrogate/results/**/.gitkeep

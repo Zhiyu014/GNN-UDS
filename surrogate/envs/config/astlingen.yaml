@@ -6,21 +6,21 @@ act: True
 # time step (min)
 interval: 1
 # control time step (min)
-# control_interval: 5
+# ctrl_step: 5
 # state definitions: Rainfall first!!
 states:
   - !!python/tuple
     - "RG1"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG2"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG3"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "RG4"
-    - rainfall
+    - rainfall_vol
   - !!python/tuple
     - "T1"
     - depthN
@@ -94,9 +94,9 @@ global_state:
     - nodes
     # - lateralinflow
     - cumlateralinflow
-  # - !!python/tuple
-  #   - links
-  #   - depthL
+  - !!python/tuple
+    - links
+    - depthL
   # - !!python/tuple
   #   - links
   #   - volumeL
@@ -299,8 +299,6 @@ tide: False
 
 # Model predictive control parameters
 prediction:
-  control_horizon: 60  # Control horizon (min)
-  eval_horizon: 60 # Evaluation horizon (min)
   no_runoff: False # if excludes runoff module and use external data
   hsf_dir: hsf # file path to save the hotstart file
   eval_dir: eval # file path to save the evaluation file
