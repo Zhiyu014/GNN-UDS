@@ -1,8 +1,0 @@
-act: conti
-pop_size: 128
-processes: 16
-rain_dir: ast_test2007_events2.csv
-result_dir: maxred_conti_500gen
-termination:
-- n_gen
-- 500
