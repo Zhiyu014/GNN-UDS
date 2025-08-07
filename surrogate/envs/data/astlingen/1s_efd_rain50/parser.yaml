@@ -1,0 +1,4 @@
+act: efd
+data_dir: 1s_efd_rain50
+rain_dir: ast_train50_events.csv
+simulate: true

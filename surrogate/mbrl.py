@@ -17,10 +17,9 @@ from mpc import get_runoff
 from envs import get_env
 from utils.utilities import get_inp_files
 import pandas as pd,matplotlib.pyplot as plt
-import argparse,time
+import argparse,time, datetime as dt
 # 5 runs with different seeds
 # seeds = [42, 123, 246, 357, 489]
-# th._dynamo.config.capture_dynamic_output_shape_ops = True
 HERE = os.path.dirname(__file__)
 
 def parser(config=None):
@@ -38,6 +37,10 @@ def parser(config=None):
     parser.add_argument('--mac',action="store_true",help='if use multi-agent action space')
     parser.add_argument('--dec',action="store_true",help='if use dec-pomdp observation space')
 
+    # pretrain args
+    parser.add_argument('--pretrain',action="store_true",help='if pretrain the agent')
+    parser.add_argument('--expert_data_dir',type=str,default='./envs/data/',help='path of the expert data')
+
     # rl args
     parser.add_argument('--train',action="store_true",help='if train')
     parser.add_argument('--seed',type=int,default=42,help='random seed')
@@ -51,7 +54,7 @@ def parser(config=None):
     parser.add_argument('--save_gap',type=int,default=1000,help='save the agent per gap')
 
     # rollout args
-    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the training data')
+    parser.add_argument('--data_dir',type=str,default='./envs/data/',help='path of the initial data')
     parser.add_argument('--model_based',action="store_true",help='if use model-based sampling')
     parser.add_argument('--horizon',type=int,default=60,help='prediction & control horizon')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
@@ -71,17 +74,16 @@ def parser(config=None):
     parser.add_argument('--norm',action="store_true",help='if use reward normalization')
     parser.add_argument('--scale',type=float,default=1.0,help='reward scaling factor')
     parser.add_argument('--gamma',type=float,default=0.98,help='discount factor')
-    parser.add_argument('--en_disc',type=float,default=1.0,help='target entropy discount factor')
     parser.add_argument('--act_lr',type=float,default=1e-4,help='actor learning rate')
     parser.add_argument('--cri_lr',type=float,default=1e-3,help='critic learning rate')
     parser.add_argument('--tau',type=float,default=0.005,help='target update interval')
+    parser.add_argument('--en_disc',type=float,default=1.0,help='target entropy discount factor of SAC')
     # parser.add_argument('--epsilon_decay',type=float,default=0.9996,help='epsilon decay rate in QMIX')
     # parser.add_argument('--noise_std',type=float,default=0.05,help='std of the exploration noise')
     # parser.add_argument('--value_tau',type=float,default=0.0,help='value running average tau')
 
     # testing scenario args: rain and result dir not useful here
     parser.add_argument('--test',action="store_true",help='if test')
-    parser.add_argument('--stochastic',action="store_true",help='if use stochastic policy')
     parser.add_argument('--rain_dir',type=str,default='./envs/config/',help='path of the rainfall events')
     parser.add_argument('--rain_suffix',type=str,default=None,help='suffix of the rainfall names')
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
@@ -104,12 +106,15 @@ def parser(config=None):
     print('MBRL configs: {}'.format(args))
     return args,config
 
-# TODO: cpu-based agent.control is time-consuming. Try a virtual gpu
-def interact_steps(args,event,runoff,train=False):
-    th.cuda.init()
+def interact_steps(args,event,runoff,params=None,train=False):
+    if th.cuda.is_available():
+        th.cuda.init()
     agent = get_agent(args.agent)(args.action_shape,len(args.observ_space),args,act_only=True)
-    agent.load()
-    # trajs = []
+    if params is None:
+        agent.load()
+    else:
+        agent.actor.load_state_dict({k:agent.to_tensor(v) for k,v in params['actor'].items()})
+        agent.set_norm(*params['norm'])
     tss,runoff = runoff
     env = get_env(args.env)(swmm_file=event)
     r_step = args.ctrl_step//args.interval
@@ -162,7 +167,7 @@ def interact_steps(args,event,runoff,train=False):
         perfs.append(env.flood())
         objects.append(env.objective())
         edge_states.append(edge_state[-1])
-        settings.append(setting)        
+        settings.append(setting)
         rains.append(env.rainfall())
         i += 1
     env.initialize_logger()
@@ -246,7 +251,7 @@ class rl_ctrl:
 
     @th.no_grad
     def get_trans(self,train_dats):
-        x,settings,b,y,rx,ry,ex,ey = train_dats[:9]
+        x,settings,b,y,rx,ry,ex,ey = train_dats[:8]
         x_norm,b_norm,y_norm,rx,ry = [self.normalize(dat,item) for dat,item in zip([x,b,y,rx,ry],'xbyrr')]
         ex_norm,ey_norm = [self.normalize(dat,item) for dat,item in zip([ex,ey],['e','ey'])]
         b0,b1 = b_norm[:,:self.r_step,...],b_norm[:,self.r_step:,...]
@@ -273,11 +278,6 @@ class rl_ctrl:
         # get preds,states,settings from trajs
         # obj = self.env.objective_pred_th(preds,states,settings)
         # r = - self.env.norm_obj(obj,states,g=True) * self.args.scale if self.args.norm else - obj * self.args.scale
-        pass
-
-    # TODO: conv graph is hard to train, needs imitation learning or offline RL for hotstart
-    def pretrain(self,train_dats,settings):
-        action = self.agent.convert_setting_to_action(settings)
         pass
 
     def get_edge_action(self,a):
@@ -316,40 +316,42 @@ class rl_ctrl:
         return self.agent.load(epoch)
 
 if __name__ == '__main__':
-    mp.set_start_method('spawn')
+    mp.set_start_method('spawn', force=True)
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
-        # 'agent':'SAC',
+        # 'agent':'PPO',
         # 'train':True,
+        # 'pretrain':False,'expert_data_dir':'./envs/data/astlingen/1s_efd_rain50/','epochs':500,
         # 'env':'astlingen','ctrl_step':5,'ctrl_step':5,
         # 'act':'rand3',
         # 'mac':True,
         # 'dec':False,
         # 'nly':5,
-        # 'model_based':False,'sample_gap':5,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+        # 'model_based':True,'sample_gap':0,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
         # 'model_dir':'./model/astlingen/5s_gat_3ly1tn_gradnorm/retrain',
-        # 'batch_size':64,
+        # 'batch_size':128,
         # 'episodes':10000,
         # 'limit':21,
         # 'tune_gap':0,
         # 'horizon':60,
         # 'norm':True,'scale':1.0,
+        # 'gamma':0.92,
         # 'conv':False,
         # 'eval_gap':10,'start_gap':0,
         # 'agent_dir': './agent/astlingen/test',
         # 'load_agent':False,
         # 'processes':4,
         # 'swmm_step':10,
-        # # 'rain_suffix':'chaohu_test','rain_num':4,
+        # # 'rain_suffix':'chaohu_test',
+        # 'rain_num':6,
         # 'rain_dir':'ast_train50_events.csv',
         # 'test':False,
-        # 'stochastic':False,
         }
     for k,v in train_de.items():
         setattr(args,k,v)
         config[k] = v
-    # th.autograd.set_detect_anomaly(True)
+
     os.environ['PYTHONHASHSEED'] = str(args.seed)
     th.manual_seed(args.seed)
     th.cuda.manual_seed_all(args.seed)
@@ -406,18 +408,16 @@ if __name__ == '__main__':
                    np.load(os.path.join(args.agent_dir,'train_runoff.npz'),allow_pickle=True)]
             res = [(ts,runoff) for ts,runoff in zip(res[0].values(),res[1].values())]
         else:
-            pool = mp.Pool(args.processes)
-            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
-                   for event in events]
-            pool.close()
-            pool.join()
-            res = [r.get() for r in res]
+            with mp.Pool(args.processes) as pool:
+                res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
+                    for event in events]
+                pool.close()
+                pool.join()
+                res = [r.get() for r in res]
             np.savez(os.path.join(args.agent_dir,'train_runoff_ts.npz'),*[np.array(r[0]) for r in res])
             np.savez(os.path.join(args.agent_dir,'train_runoff.npz'),*[np.array(r[1]) for r in res])
         runoffs = []
         for ts,runoff in res:
-            # Use mp to get runoff
-            # ts,runoff = get_runoff(env,event,tide=args.tide)
             tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
             tss.index = pd.to_datetime(tss.index)
             seq = args.ctrl_step//args.interval
@@ -432,20 +432,51 @@ if __name__ == '__main__':
         # Virtual data buffer for model-based rollout trajs
         dGv = Memory(args.limit,args.conv)
         ctrl = rl_ctrl(args,margs=margs if args.model_based else None)
-        ctrl.set_norm(*dG.get_norm())
+        params = {'norm':dG.get_norm(),}
+        ctrl.set_norm(*params['norm'])
         n_events = int(max(dG.event_id))+1
         train_ids = np.load(os.path.join(args.data_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
-        # train_ids = np.arange(n_events)
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
-
-        train_returns,train_losses,train_objss,test_objss,secs = [],[],[],[],[]
+        train_returns,train_losses,train_objss,test_objss,secs,num_trans = [],[],[],[],[],[]
         if args.model_based and args.tune_gap > 0:
             model_losses,test_losses = [],[]
         log_dir = "logs/agent/"
         shutil.rmtree(log_dir, ignore_errors=True)
         os.makedirs(log_dir,exist_ok=True)
         writer = SummaryWriter(log_dir)
+
+        if args.pretrain:
+            # TODO: mix policy & expert data/loss in RL, gradually reduce the IL weight
+            print("Start imitation learning")
+            dGi = DataGenerator(env.config,args.expert_data_dir,args)
+            dGi.load(args.expert_data_dir)
+            train_idxs = dGi.get_data_idxs(train_ids,args.ctrl_step,concat=False)
+            for epoch in range(args.epochs):
+                t = time.time()
+                train_dats = dGi.prepare_batch(np.concatenate(train_idxs,axis=0),
+                                               args.ctrl_step,args.batch_size,args.ctrl_step,continuous=ctrl.agent.on_policy)
+                trans = ctrl.get_trans([ctrl.to_tensor(dat) if dat is not None else dat for dat in train_dats])
+                pretrain_loss = ctrl.agent.update([[ctrl.to_tensor(dat) for dat in tran]
+                                                   if isinstance(tran,list) else ctrl.to_tensor(tran)
+                                                   for tran in trans + (train_dats[-2],)],pretrain=True)
+                print("{}/{} Finish imitation update: {:.2f}s ".format(epoch,args.epochs,time.time()-t) +\
+                       "Mean loss:"+ (len(pretrain_loss)*" {:.2f}").format(*pretrain_loss))
+                writer.add_scalar('Imitation value loss', pretrain_loss[0], epoch)
+                writer.add_scalar('Imitation actor loss', pretrain_loss[1], epoch)
+                writer.add_scalar('Imitation entropy', pretrain_loss[2], epoch)
+            # TODO: retain expert data dGi in memory buffer dGv
+            trajs = [[getattr(dGi,item)[dat]
+                      for item in ['states','perfs','settings','rains','edge_states']]
+                      for dat in train_idxs if len(dat)>0]
+            for traj in zip(*trajs):
+                states,perfs,settings,rx,ry,edge_states = ctrl.state_split_trajs(traj)
+                x,b,y = dG.state_split_batch(states,perfs)
+                ex,ey = dG.edge_state_split_batch(edge_states)
+                trans = ctrl.get_trans([ctrl.to_tensor(dat) for dat in [x,settings,b,y,rx,ry,ex,ey]])
+                dGv.update([[dat.cpu().numpy() for dat in tran] if isinstance(tran,list) else tran.cpu().numpy()
+                            for tran in trans]+[np.eye(x.shape[0])[-1]])
+
         for episode in range(args.episodes):
             setattr(args,"episode",episode)
             sec,t = [],time.time()
@@ -490,17 +521,32 @@ if __name__ == '__main__':
             # Model-free sampling
             if args.sample_gap > 0 and episode % args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free sampling")
-                ctrl.save()
-                pool = mp.Pool(args.processes)
-                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,))
-                    for idx,event in zip(train_ids,train_events)]
-                pool.close()
-                pool.join()
-                res = [r.get() for r in res]
-                # res = [interact_steps(args,event,runoffs[idx],True) for idx,event in zip(train_ids,train_events)]
+                params['actor'] = {k:v.cpu() for k,v in ctrl.agent.actor.state_dict().items()}
+                # TODO: Branched model-free RL
+                # train_idxs = dG.get_data_idxs(train_ids,seq)
+                # wei = dG.get_flood_weight(seq)[train_idxs][np.arange(0,train_idxs.shape[0],args.ctrl_step)]
+                # idxs = np.random.choice(np.arange(0,train_idxs.shape[0],args.ctrl_step),args.batch_size,replace=False,
+                #                         p=wei/wei.sum(),)
+                # idxs = train_idxs[idxs]
+                # identify the hsf file by rain, time and repeat
+                # for idx in idxs:
+                #     runoff = dG.states[idx:idx+args.horizon,:,-1:]
+                #     env.config['swmm_input'] = events[dG.event_id[idx]]
+                #     rep,tsp = dG.rept[idx//args.ctrl_step]
+                #     hsf = '%s-'%rep + '%s.hsf'%dt.datetime.fromtimestamp(tsp).strftime('%Y-%m-%d-%H-%M')
+                #     hsf = os.path.join(args.data_dir,'hsf',hsf)
+                #     eval_file = env.create_eval_file(hsf)
+                train_id = np.random.choice(train_ids,args.rain_num,replace=False)
+                with mp.Pool(args.processes) as pool:
+                    res = [pool.apply_async(func=interact_steps,args=(args,events[idx],runoffs[idx],params,True,))
+                        for idx in train_id]
+                    pool.close()
+                    pool.join()
+                    res = [r.get() for r in res]
                 trajs = [[r[i] if r[i].shape[0] % ctrl.r_step == 0 else \
                           np.concatenate([r[i],np.repeat(r[i][-1:],ctrl.r_step - r[i].shape[0] % ctrl.r_step,axis=0)],axis=0)
                            for r in res] for i in range(5)]
+                returns,n_trans = [],0
                 for traj in zip(*trajs):
                     states,perfs,settings,rx,ry,edge_states = ctrl.state_split_trajs(traj)
                     x,b,y = dG.state_split_batch(states,perfs)
@@ -508,9 +554,12 @@ if __name__ == '__main__':
                     trans = ctrl.get_trans([ctrl.to_tensor(dat) for dat in [x,settings,b,y,rx,ry,ex,ey]])
                     dGv.update([[dat.cpu().numpy() for dat in tran] if isinstance(tran,list) else tran.cpu().numpy()
                                 for tran in trans]+[np.eye(x.shape[0])[-1]])
+                    returns.append(trans[2].cpu().numpy().sum())
+                    n_trans += trans[0].shape[0]
+                num_trans.append(n_trans)
                 if args.model_based:
                     trajs = [np.concatenate(dat,axis=0) for dat in trajs]
-                    trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_ids,res)],axis=-1))
+                    trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(train_id,res)],axis=-1))
                     trajs.append(np.concatenate([np.eye(r[0].shape[0])[-1] for r in res],axis=-1).astype(np.float32))
                     dG.update(trajs)
                 train_objss.append(np.array([np.sum(r[-1]) for r in res]))
@@ -522,8 +571,8 @@ if __name__ == '__main__':
                 t = time.time()
                 print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])))
                 writer.add_scalar('Model-free training objectives', np.mean(train_objss[-1]), episode)
-                writer.add_scalar('Model-free training return', trans[2].cpu().numpy().sum()/len(train_events), episode)
-                train_returns.append(trans[2].cpu().numpy().sum()/len(train_events))
+                writer.add_scalar('Model-free training return', np.mean(returns), episode)
+                train_returns.append(np.mean(returns))
 
             # Model-based sampling
             if args.model_based or args.sample_gap == 0:
@@ -542,12 +591,8 @@ if __name__ == '__main__':
                 trans = ctrl.get_trans([ctrl.to_tensor(dat) if dat is not None else dat for dat in dats])
                 dGv.update([[dat.cpu().numpy() for dat in tran] if isinstance(tran,list) else tran.cpu().numpy()
                             for tran in trans]+[dones])
-                # xs,exs,settings,perfs,rains = [traj.cpu().numpy().reshape((-1,)+tuple(traj.shape[2:])) for traj in trajs_v]
-                # idxs = np.repeat(train_dats[-1],args.horizon+args.seq)
-                # dones = np.tile(np.eye(args.horizon+args.seq)[-1],args.batch_size)
-                # trajs_v = [xs,perfs,settings,rains,exs,idxs,dones]
-                # dGv.update(trajs_v) # data num: batch * (horizon + seq)
                 sec.append(time.time()-t)
+                num_trans.append(trans[0].shape[0])
                 t = time.time()
                 print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
                 writer.add_scalar('Rollout return', trans[2].cpu().numpy().sum()/args.batch_size, episode)
@@ -556,6 +601,7 @@ if __name__ == '__main__':
             # Model-free update
             if episode > args.start_gap and dGv.cur_capa > 0:
                 print(f"{episode}/{args.episodes} Start model-free update")
+                # TODO: according to update-to-data ratio papers, probably need repeats>12 to reuse every data
                 repeats = int((1 + dGv.cur_capa / dGv.limit) * args.repeats)
                 train_loss = []
                 for _ in range(repeats):
@@ -569,14 +615,10 @@ if __name__ == '__main__':
                 if isinstance(train_loss,np.ndarray):
                     print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(train_loss)*" {:.2f}").format(*train_loss))
                     writer.add_scalar('Value loss', train_loss[0], episode)
+                    writer.add_scalar('Policy loss', train_loss[1], episode)
+                    writer.add_scalar('Entropy', train_loss[2], episode)
                     if args.agent.upper() == 'SAC':
-                        writer.add_scalar('Alpha', train_loss[1], episode)
-                        writer.add_scalar('Entropy', train_loss[2], episode)
-                        writer.add_scalar('Policy loss', train_loss[3], episode)
-                        if hasattr(ctrl.agent,'vnet'):
-                            writer.add_scalar('VNet loss', train_loss[4], episode)
-                    else:
-                        writer.add_scalar('Policy loss', train_loss[1], episode)
+                        writer.add_scalar('Alpha', train_loss[-1], episode)
                 else:
                     print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(episode,args.episodes,sec[-1],train_loss))
                     writer.add_scalar('Value loss', train_loss, episode)
@@ -586,13 +628,15 @@ if __name__ == '__main__':
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free interaction")
-                ctrl.save()
+                # ctrl.save()
+                params['actor'] = {k:v.cpu() for k,v in ctrl.agent.actor.state_dict().items()}
                 with mp.Pool(args.processes) as pool:
-                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],args.stochastic,))
+                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],params,False,))
                             for idx,event in zip(test_ids,test_events)]
                     pool.close()
                     pool.join()
-                res = [r.get() for r in res]
+                    res = [r.get() for r in res]
+                # res = [interact_steps(args,event,runoffs[idx],False,) for idx,event in zip(test_ids,test_events)]
                 trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
                 trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(test_ids,res)],axis=-1))
                 if not args.model_based or args.tune_gap > 0:
@@ -623,7 +667,9 @@ if __name__ == '__main__':
         train_losses = np.array(train_losses)
         np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),train_losses)
         fig,((ax1,ax2),(ax3,ax4)) = plt.subplots(2,2,figsize=(12,8))
-        for ax,item,losses in zip([ax1,ax2,ax3,ax4],['value loss','alpha','entropy','policy loss'],train_losses.T):
+        for ax,item,losses in zip([ax1,ax2,ax3,ax4][:train_losses.shape[-1]],
+                                  ['value loss','policy loss','entropy','alpha'][:train_losses.shape[-1]],
+                                  train_losses.T):
             ax.plot(losses,label=item)
             ax.set_xlabel('Episode')
             ax.set_ylabel(item)
@@ -640,6 +686,7 @@ if __name__ == '__main__':
         fig.savefig(os.path.join(ctrl.agent_dir,'objectives.png'),dpi=300)
         plt.clf()
         np.savez(os.path.join(ctrl.agent_dir,'time.npz'),*[np.array(sec) for sec in secs])
+        np.save(os.path.join(ctrl.agent_dir,'num_trans.npy'),np.array(num_trans))
 
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.agent_dir,'parser.yaml'),'r'),yaml.FullLoader)
@@ -692,7 +739,7 @@ if __name__ == '__main__':
 
         # Test the agent
         pool = mp.Pool(args.processes)
-        res = [pool.apply_async(func=ctrl.interact_steps,args=(event,runoffs[idx],args.stochastic,))
+        res = [pool.apply_async(func=ctrl.interact_steps,args=(event,runoffs[idx],False,))
                 for idx,event in enumerate(events)]
         pool.close()
         pool.join()

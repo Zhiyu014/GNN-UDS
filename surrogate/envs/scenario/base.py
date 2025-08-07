@@ -519,15 +519,18 @@ class basescenario(scenario):
         return adj
             
     # predictive functions
-    def save_hotstart(self,hsf_file=None):
+    def save_hotstart(self,hsf_dir=None,suffix=None):
         # Save the current state in a .hsf file.
-        if hsf_file is None:
-            ct = self.env.methods['simulation_time']()
-            hsf_file = '%s.hsf'%ct.strftime('%Y-%m-%d-%H-%M')
-            hsf_file = os.path.join(os.path.dirname(os.path.abspath(self.config['swmm_input'])),
-            self.config['prediction']['hsf_dir'],hsf_file)
-        if os.path.exists(os.path.dirname(hsf_file)) == False:
-            os.mkdir(os.path.dirname(hsf_file))
+        ct = self.env.methods['simulation_time']()
+        if hsf_dir is None:
+            hsf_dir = os.path.join(os.path.dirname(os.path.abspath(self.config['swmm_input'])),
+            self.config['prediction']['hsf_dir'])
+        if not os.path.exists(hsf_dir):
+            os.mkdir(hsf_dir)
+        hsf_file = '%s.hsf'%ct.strftime('%Y-%m-%d-%H-%M')
+        if suffix is not None and isinstance(suffix,str):
+            hsf_file = suffix + hsf_file
+        hsf_file = os.path.join(hsf_dir,hsf_file)
         self.env.save_hotstart(hsf_file)
         return hsf_file
 

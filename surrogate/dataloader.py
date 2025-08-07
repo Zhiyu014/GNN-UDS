@@ -23,23 +23,25 @@ class DataGenerator:
         self.cur_capa = 0
         self.update_num = 0
 
-    def simulate(self, env, event, seq = False, act = False, hotstart = False):
+    def simulate(self, env, event, seq = False, act = False, hotstart = False, repeat = 0):
         state = env.reset(event,global_state=True,seq=seq)
         perf = env.flood(seq=seq)
-        states,perfs,edge_states = [],[],[]
+        states,perfs,edge_states,rains,settings = [],[],[],[],[]
         edge_state = env.state_full(seq,'links')
         setting = [1 for _ in self.action_space] if act else None
-        rains,settings = [],[]
+        rept = []
         done,i = False,0
         while not done:
-            if hotstart:
-                eval_file = env.get_eval_file()
-                ct = env.env.methods['simulation_time']()
-                inp = read_inp_file(eval_file)
-                inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
-                inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
-                inp.write_file(eval_file)
-                _ = swmm5_run(eval_file)
+            if hotstart and i % (self.ctrl_step//self.config['interval']) == 0:
+                hsf_file = env.save_hotstart(os.path.join(self.data_dir,'hsf'),'%s-'%repeat)
+                ct = env.env.methods['simulation_time']().timestamp()
+                rept.append([repeat,ct])
+                # eval_file = env.create_eval_file(hsf_file)
+                # inp = read_inp_file(eval_file)
+                # inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
+                # inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
+                # inp.write_file(eval_file)
+                # _ = swmm5_run(eval_file)
             setting = env.controller(act,state,setting) if act and i % (self.ctrl_step//self.config['interval']) == 0 else setting
             done = env.step(setting)
             state = env.state_full(seq=seq)
@@ -52,28 +54,33 @@ class DataGenerator:
             edge_state = env.state_full(seq,'links')
             edge_states.append(edge_state)
             i += 1
-        return np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(rains),np.array(edge_states)
+        dat = np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(rains),np.array(edge_states)
+        if hotstart:
+            dat += (np.array(rept),)
+        return dat
         
-    def generate(self,events,processes=1,repeats=1,seq=False,act=False):
+    def generate(self,events,processes=1,repeats=1,seq=False,act=False,hotstart=False):
         env = get_env(self.config['env_name'])(initialize=False)
         if processes > 1:
             pool = mp.Pool(processes)
-            res = [pool.apply_async(func=self.simulate,args=(env,event,seq,act,))
-                    for _ in range(repeats) for event in events]
+            res = [pool.apply_async(func=self.simulate,args=(env,event,seq,act,hotstart,repeat))
+                    for repeat in range(repeats) for event in events]
             pool.close()
             pool.join()
             res = [r.get() for r in res]
         else:
-            res = [self.simulate(env,event,seq,act)
-                    for _ in range(repeats) for event in events]
+            res = [self.simulate(env,event,seq,act,hotstart,repeat)
+                    for repeat in range(repeats) for event in events]
         self.states,self.perfs = [np.concatenate([r[i][self.pre_step:] for r in res],axis=0) for i in range(2)]
         self.settings = np.concatenate([r[2][self.pre_step:] for r in res],axis=0) if act else None
         self.rains = np.concatenate([r[3][self.pre_step:] for r in res],axis=0)
-        self.edge_states = np.concatenate([r[-1][self.pre_step:] for r in res],axis=0)
+        self.edge_states = np.concatenate([r[4][self.pre_step:] for r in res],axis=0)
         self.event_id = np.concatenate([np.repeat(i,res[idx][0][self.pre_step:].shape[0])
                                          for idx,i in enumerate([i for _ in range(repeats) for i,_ in enumerate(events)])],axis=0)
         self.dones = np.concatenate([np.eye(r[0][self.pre_step:].shape[0],dtype=np.int32)[-1] for r in res],axis=0)
         self.cur_capa = self.states.shape[0]
+        if hotstart:
+            self.rept = np.concatenate([r[-1][self.pre_step:] for r in res],axis=0)
 
     def get_flood_weight(self,seq=0):
         if not hasattr(self,f"flood_weight_{seq}"):
@@ -92,12 +99,14 @@ class DataGenerator:
         dats = np.stack([np.concatenate([np.tile(np.zeros_like(s) if zeros else np.ones_like(s),(max(seq-idx,0),)+tuple(1 for _ in s.shape)),dats[max(idx-seq,0):idx]],axis=0) for idx,s in enumerate(dats)])
         return dats
 
-    def get_data_idxs(self,event=None,seq=0,seq_out=None):
+    def get_data_idxs(self,event=None,seq=0,seq_out=None, concat = True):
         event = np.arange(int(max(self.event_id))+1) if event is None else event
         event_idxs = [np.argwhere(self.event_id == idx).flatten() for idx in event]
         event_idxs = [np.split(event_idx,np.where(self.dones[event_idx]==1)[0]+1) for event_idx in event_idxs]
         seq_out = seq_out if seq_out is not None else seq
-        event_idxs = np.concatenate([np.concatenate([dat[seq:-seq_out] for dat in data],axis=0) for data in event_idxs],axis=0)
+        event_idxs = [dat[seq:-seq_out] for data in event_idxs for dat in data]
+        if concat:
+            event_idxs = np.concatenate(event_idxs,axis=0)
         return event_idxs
         
 
@@ -198,13 +207,13 @@ class DataGenerator:
         data_dir = data_dir if data_dir is not None else self.data_dir
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
-        for name in self.items:
+        for name in self.items+['rept']:
             if getattr(self,name,None) is not None:
                 np.save(os.path.join(data_dir,name+'.npy'),getattr(self,name))
 
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
-        for name in self.items:
+        for name in self.items+['rept']:
             if os.path.isfile(os.path.join(data_dir,name+'.npy')):
                 dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r').astype(np.float32)
             else:
@@ -213,7 +222,7 @@ class DataGenerator:
         self.cur_capa = self.states.shape[0] if self.states is not None else 0
 
     def clear(self):
-        for name in self.items:
+        for name in self.items+['rept']:
             setattr(self,name,None)
         self.cur_capa = 0
         self.update_num = 0

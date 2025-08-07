@@ -20,7 +20,6 @@ astlingen:
   pop_size: 32
   use_current: False
   sampling: 0.4
-  learning_rate: 0.1
   crossover:
     - 1.0
     - 3.0
@@ -36,7 +35,6 @@ astlingen:
   epsilon: -1.0
   gradient: False
   method: descent
-  cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -65,7 +63,6 @@ hague:
   pop_size: 32
   use_current: False
   sampling: 0.4
-  learning_rate: 0.1
   crossover:
     - 1.0
     - 3.0
@@ -81,7 +78,6 @@ hague:
   epsilon: -1.0
   gradient: False
   method: descent
-  cross_entropy: 0.0
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -109,7 +105,6 @@ chaohu:
   pop_size: 32
   use_current: False
   sampling: 0.4
-  learning_rate: 0.1
   crossover:
     - 1.0
     - 3.0
@@ -126,7 +121,6 @@ chaohu:
   epsilon: -1.0
   gradient: False
   method: descent
-  cross_entropy: 0.0
   stochastic: 0
   error: 0.0
   result_dir: ./results/chaohu/

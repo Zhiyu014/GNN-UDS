@@ -10,6 +10,8 @@ astlingen:
   dec: False
 
   # Arguments for RL process
+  pretrain: False # if pretrain the agent
+  expert_data_dir: ./envs/data/astlingen/ # expert dataset
   train: False
   seed: 42
   episodes: 5000
@@ -52,7 +54,6 @@ astlingen:
 
   # Arguments for the testing
   test: False
-  stochastic: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
@@ -72,6 +73,8 @@ chaohu:
   dec: False
 
   # Arguments for RL process
+  pretrain: False # if pretrain the agent
+  expert_data_dir: ./envs/data/chaohu/ # expert dataset
   train: False
   seed: 42
   episodes: 5000
@@ -114,7 +117,6 @@ chaohu:
 
   # Arguments for the testing
   test: False
-  stochastic: False
   rain_dir: ./envs/config/  # rainfall info dir
   rain_suffix:  # rain_suffix
   rain_num: 50 # exploration events
