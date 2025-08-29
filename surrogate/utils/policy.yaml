@@ -11,7 +11,7 @@ astlingen:
 
   # Arguments for RL process
   pretrain: False # if pretrain the agent
-  expert_data_dir: ./envs/data/astlingen/ # expert dataset
+  expert_dir: ./envs/data/astlingen/ # expert dataset
   train: False
   seed: 42
   episodes: 5000
@@ -25,6 +25,7 @@ astlingen:
 
   # Arguments for the model rollout
   data_dir: ./envs/data/astlingen/
+  branch: False # if use branched model-free sampling
   model_based: False # if use model-based sampling
   horizon: 60 # horizon length
   model_dir: ./model/astlingen/
@@ -44,10 +45,11 @@ astlingen:
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
   gamma: 0.98 # discouted rate
-  en_disc: 1.0 # target entropy discouted factor
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   tau: 0.005 # update the target network per update_interval
+  en_disc: 1.0 # target entropy discouted factor of SAC
+  log_alpha: -1.0 # start log alpha for SAC
   epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
   noise_std: 0.05 # std of the exploration noise
   value_tau: 0.0 # value running average tau
@@ -74,7 +76,7 @@ chaohu:
 
   # Arguments for RL process
   pretrain: False # if pretrain the agent
-  expert_data_dir: ./envs/data/chaohu/ # expert dataset
+  expert_dir: ./envs/data/chaohu/ # expert dataset
   train: False
   seed: 42
   episodes: 5000
@@ -88,6 +90,7 @@ chaohu:
 
   # Arguments for the model rollout
   data_dir: ./envs/data/chaohu/
+  branch: False # if use branched model-free sampling
   model_based: False # if use model-based sampling
   horizon: 60 # horizon length
   model_dir: ./model/chaohu/
@@ -107,10 +110,11 @@ chaohu:
   norm: False # normalize the reward
   scale: 1.0 # scale the reward
   gamma: 0.98 # discouted rate
-  en_disc: 1.0 # target entropy discouted factor
   act_lr: 0.0001 # learning rate for actor
   cri_lr: 0.001 # learning rate for critic
   tau: 0.005 # update the target network per update_interval
+  en_disc: 1.0 # target entropy discouted factor
+  log_alpha: -1.0 # start log alpha for SAC
   epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
   noise_std: 0.05 # std of the exploration noise
   value_tau: 0.0 # value running average tau

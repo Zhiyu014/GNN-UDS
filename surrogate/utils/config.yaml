@@ -17,6 +17,7 @@ shunqing:
   act: 'False'
   processes: 5
   repeats: 1
+  hotstart: False
 
   # train args
   train: False
@@ -50,8 +51,9 @@ shunqing:
 
   # test args
   test: False
+  horizon: 60
+  pop_size: 1
   result_dir: ./results/shunqing/
-  hotstart: False
 
 redchicosur:
   # env args
@@ -72,6 +74,7 @@ redchicosur:
   act: 'False'
   processes: 5
   repeats: 1
+  hotstart: False
 
   # train args
   train: False
@@ -105,8 +108,9 @@ redchicosur:
 
   # test args
   test: False
+  horizon: 60
+  pop_size: 1
   result_dir: ./results/redchicosur/
-  hotstart: False
 
 astlingen:
   # env args
@@ -127,6 +131,7 @@ astlingen:
   act: 'False'
   processes: 5
   repeats: 1
+  hotstart: False
 
   # train args
   train: False
@@ -160,8 +165,9 @@ astlingen:
 
   # test args
   test: False
+  horizon: 60
+  pop_size: 1
   result_dir: ./results/astlingen/
-  hotstart: False
 
 hague:
   # env args
@@ -182,6 +188,7 @@ hague:
   act: 'False'
   processes: 5
   repeats: 1
+  hotstart: False
 
   # train args
   train: False
@@ -215,8 +222,9 @@ hague:
 
   # test args
   test: False
+  horizon: 60
+  pop_size: 1
   result_dir: ./results/hague/
-  hotstart: False
 
 chaohu:
   # env args
@@ -237,6 +245,7 @@ chaohu:
   act: 'False'
   processes: 5
   repeats: 1
+  hotstart: False
 
   # train args
   train: False
@@ -270,5 +279,6 @@ chaohu:
 
   # test args
   test: False
+  horizon: 60
+  pop_size: 1
   result_dir: ./results/chaohu/
-  hotstart: False

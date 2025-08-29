@@ -15,6 +15,7 @@ from pymoo.termination import get_termination
 from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
+from mpc import TerminationCollection
 HERE = os.path.dirname(__file__)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -51,7 +52,8 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    args.termination[-1] = eval(args.termination[-1]) if args.termination[0] not in ['time','soo','moo'] else args.termination[-1]
+    for i in range(len(args.termination)//2):
+        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
 
     print('MaxRed configs: {}'.format(args))
     return args,config
@@ -144,7 +146,7 @@ if __name__ == '__main__':
     ctx = mp.get_context("spawn")
 
     env = get_env(args.env)()
-    env_args = env.get_args(args.directed,args.length,args.order,args.act)
+    env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
     for k,v in env_args.items():
         if k == 'act':
             v = v and args.act
@@ -184,7 +186,23 @@ if __name__ == '__main__':
         sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
         crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
-        termination = get_termination(*args.termination)
+        if len(args.termination) > 2:
+            terms = {}
+            for val in args.termination:
+                if val in ['n_eval','n_gen','fmin','time','soo']:
+                    term = val
+                    terms[term] = {} if val =='soo' else None
+                else:
+                    if isinstance(terms[term],dict):
+                        terms[term][val.split('-')[0]] = eval(val.split('-')[1])
+                    else:
+                        terms[term] = val
+            termination = []
+            for k,v in terms.items():
+                termination.append(get_termination(k,**v) if isinstance(v,dict) else get_termination(k,v))
+            termination = TerminationCollection(*termination)
+        else:
+            termination = get_termination(*args.termination)
 
         method = GA(pop_size = args.pop_size,
                     sampling = sampling,

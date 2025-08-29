@@ -534,8 +534,9 @@ class basescenario(scenario):
         self.env.save_hotstart(hsf_file)
         return hsf_file
 
-    def create_eval_file(self,hsf_file=None,no_runoff=False):
-        ct = self.env.methods['simulation_time']()
+    def create_eval_file(self,hsf_file=None,no_runoff=False,ct=None,eval_file=None):
+        if ct is None:
+            ct = self.env.methods['simulation_time']()
         inp = read_inp_file(self.config['swmm_input'])
 
         # Set the simulation time & hsf options
@@ -558,9 +559,11 @@ class basescenario(scenario):
                 inp.pop('DWF')
 
         # Output the eval file
+        if eval_file is None:
+            eval_file = os.path.basename(self.config['swmm_input'])
         eval_inp_file = os.path.join(os.path.dirname(self.config['swmm_input']),
                                 self.config['prediction']['eval_dir'],
-                                self.config['prediction']['suffix']+os.path.basename(self.config['swmm_input']))
+                                self.config['prediction']['suffix']+eval_file)
         if os.path.exists(os.path.dirname(eval_inp_file)) == False:
             os.mkdir(os.path.dirname(eval_inp_file))
         inp.write_file(eval_inp_file)

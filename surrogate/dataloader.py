@@ -1,4 +1,5 @@
 import numpy as np
+import torch as th
 import multiprocessing as mp
 import os
 from swmm_api import swmm5_run,read_inp_file
@@ -34,8 +35,7 @@ class DataGenerator:
         while not done:
             if hotstart and i % (self.ctrl_step//self.config['interval']) == 0:
                 hsf_file = env.save_hotstart(os.path.join(self.data_dir,'hsf'),'%s-'%repeat)
-                ct = env.env.methods['simulation_time']().timestamp()
-                rept.append([repeat,ct])
+                ct = int(round(env.env.methods['simulation_time']().timestamp(),-1))
                 # eval_file = env.create_eval_file(hsf_file)
                 # inp = read_inp_file(eval_file)
                 # inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
@@ -53,6 +53,8 @@ class DataGenerator:
             rains.append(rain)
             edge_state = env.state_full(seq,'links')
             edge_states.append(edge_state)
+            if hotstart:
+                rept.append([repeat,ct])
             i += 1
         dat = np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(rains),np.array(edge_states)
         if hotstart:
@@ -149,25 +151,21 @@ class DataGenerator:
         return [dat.astype(np.float32) if dat is not None else dat for dat in dats]
     
     def state_split_batch(self,states,perfs,trim=True):
-        h,q_totin,q_ds,r = [states[0][...,i] for i in range(4)]
-        q_us = q_totin - r
-        X = np.stack([h,q_us,q_ds,r],axis=-1)
+        lib = np if isinstance(states[0], np.ndarray) else th
+        X = states[0][...,:4]
+        X[...,1] -= X[...,3]
 
-        h,q_totin,q_ds,r = [states[1][...,i] for i in range(4)]
-        q_us = q_totin - r
-        Y = np.stack([h,q_us,q_ds],axis=-1)
-        B = np.expand_dims(r,axis=-1)
+        Y = states[1][...,:3]
+        Y[...,1] -= states[1][...,3]
+        B = states[1][...,3:4]
         if self.config['tide']:
-            t = h * self.is_outfall
-            B = np.concatenate([B,np.expand_dims(t,axis=-1)],axis=-1)
+            out = th.tensor(self.is_outfall,device=Y.device) if lib == th else self.is_outfall
+            B = lib.concatenate([B, (Y[...,0] * out)[:,None]], -1)
 
         if self.if_flood:
-            f1 = (perfs[0]>0).astype(float)
-            # f1 = np.eye(2)[f1].squeeze(-2)
-            f2 = (perfs[1]>0).astype(float)
-            # f2 = np.eye(2)[f2].squeeze(-2)
-            X,Y = np.concatenate([X[...,:-1],f1,X[...,-1:]],axis=-1),np.concatenate([Y,f2],axis=-1)
-        Y = np.concatenate([Y,perfs[1]],axis=-1)
+            X = lib.concatenate([X[...,:-1], perfs[0]>0, X[...,-1:]], -1)
+            Y = lib.concatenate([Y, perfs[1]>0], -1)
+        Y = lib.concatenate([Y, perfs[1]], -1)
         if trim:
             X = X[:,-self.seq_in:,...]
             B = B[:,:self.seq_out,...]
@@ -215,7 +213,9 @@ class DataGenerator:
         data_dir = data_dir if data_dir is not None else self.data_dir
         for name in self.items+['rept']:
             if os.path.isfile(os.path.join(data_dir,name+'.npy')):
-                dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r').astype(np.float32)
+                dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r')
+                if name not in ['event_id','rept']:
+                    dat = dat.astype(np.float32)
             else:
                 dat = None
             setattr(self,name,dat)

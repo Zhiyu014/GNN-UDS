@@ -27,10 +27,14 @@ class ConvNet(nn.Module):
         # self.conv = GATConv(self.dim, self.dim, add_self_loops=False)
         self.conv = GraphConv(self.dim, self.dim)
         # self.conv = SAGPooling(self.dim,)
-        self.node_edge_index = th.LongTensor(getattr(args,"node_edge_index",None)).T.to(device)
-        self.indice = get_batch_index(self.node_edge_index, getattr(args,"batch_size",128))
         self.out = nn.Linear(self.dim, self.dim//2)
-        self.batch = th.concat([th.zeros(self.n_node,dtype=th.long),th.ones(self.n_edge,dtype=th.long)]).to(device)
+
+        node_edge_index = th.LongTensor(getattr(args,"node_edge_index",None)).T
+        indice = get_batch_index(node_edge_index, getattr(args,"batch_size",128))
+        batch = th.concat([th.zeros(self.n_node,dtype=th.long),th.ones(self.n_edge,dtype=th.long)])
+        self.register_buffer('node_edge_index', node_edge_index)
+        self.register_buffer('indice', indice)
+        self.register_buffer('batch', batch)
 
     def forward(self, inputs, batch = True):
         x,e = inputs
@@ -113,10 +117,11 @@ class Agent:
         self.act = getattr(args,"act","")
         self.conti = self.act.startswith('conti')
         self.mac = getattr(args,"mac",False)
-        self.action_space = [th.tensor(space,dtype=th.float32).to(device)
+        self.device = getattr(args,"device",device)
+        self.action_space = [th.tensor(space,dtype=th.float32).to(self.device)
                              for space in getattr(args,'action_space',{}).values()]
         if not self.conti:
-            self.action_table = th.tensor(list(getattr(args,'action_table',{}).values()),dtype=th.float32).to(device)
+            self.action_table = th.tensor(list(getattr(args,'action_table',{}).values()),dtype=th.float32).to(self.device)
         self.act_only = act_only
         self.agent_dir = getattr(args, "agent_dir")
         if not act_only:
@@ -154,7 +159,7 @@ class Agent:
         
     def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e):
         for item in 'xbyre':
-            setattr(self,'norm_%s'%item, th.Tensor(eval('norm_%s'%item)).to(device))
+            setattr(self,'norm_%s'%item, th.Tensor(eval('norm_%s'%item)).to(self.device))
 
     def normalize(self,dat,item,inverse=False):
         normal = getattr(self,'norm_%s'%item[0])
@@ -167,7 +172,7 @@ class Agent:
             return (dat - mini)/(maxi-mini)
 
     def to_tensor(self,dat):
-        return th.Tensor(dat).to(device)
+        return th.Tensor(dat).to(self.device)
 
 class ActorSAC(Actor):
     def __init__(self, 
@@ -264,23 +269,28 @@ class AgentSAC(Agent):
     def __init__(self, action_shape: int, observ_size: int, args, act_only: bool = False):
         super(AgentSAC, self).__init__(action_shape, args, act_only)
         self.on_policy = False
-        self.actor = ActorSAC(action_shape, observ_size, args).to(device)
+        self.actor = ActorSAC(action_shape, observ_size, args).to(self.device)
 
         if not act_only:
-            self.q1 = CriSAC(action_shape, observ_size, args).to(device)
-            self.q2 = CriSAC(action_shape, observ_size, args).to(device)
+            self.q1 = CriSAC(action_shape, observ_size, args).to(self.device)
+            self.q2 = CriSAC(action_shape, observ_size, args).to(self.device)
             self.act_optim = th.optim.Adam(self.actor.parameters(),lr=getattr(args,"act_lr",1e-4))
             cri_params = [{'params': self.q1.parameters()}, {'params': self.q2.parameters()}]
             self.cri_optim = th.optim.Adam(cri_params,lr=getattr(args,"cri_lr",1e-3))
-            self.q1_target = CriSAC(action_shape, observ_size, args, target=True).to(device)
+            self.q1_target = CriSAC(action_shape, observ_size, args, target=True).to(self.device)
             self.q1_target.load_state_dict(self.q1.state_dict())
-            self.q2_target = CriSAC(action_shape, observ_size, args, target=True).to(device)
+            self.q2_target = CriSAC(action_shape, observ_size, args, target=True).to(self.device)
             self.q2_target.load_state_dict(self.q2.state_dict())
 
             target_entropy = - action_shape if self.conti else np.log(action_shape) if self.mac else np.log(np.prod(action_shape))
-            self.target_entropy = th.tensor(target_entropy*getattr(args,"en_disc",1),requires_grad=False).to(device)
-            self.log_alpha = nn.Parameter(th.tensor(-1.0).to(device), requires_grad=True)
-            self.alpha_optim = th.optim.Adam([self.log_alpha], lr=getattr(args,"act_lr",1e-4))
+            self.target_entropy = th.tensor(target_entropy*getattr(args,"en_disc",1),requires_grad=False).to(self.device)
+            log_alpha = getattr(args,'log_alpha',-1.0)
+            self.auto_alpha = log_alpha <= 0
+            if self.auto_alpha:
+                self.log_alpha = nn.Parameter(th.tensor(log_alpha,dtype=th.float32).to(self.device), requires_grad=True)
+                self.alpha_optim = th.optim.Adam([self.log_alpha], lr=getattr(args,"act_lr",1e-4))
+            else:
+                self.log_alpha = th.tensor(np.log(log_alpha),dtype=th.float32).to(self.device)
         if getattr(args,"load_agent",False):
             self.load()
 
@@ -306,6 +316,7 @@ class AgentSAC(Agent):
         # Critic loss
         q1_loss = F.mse_loss(q1, target_q)
         q2_loss = F.mse_loss(q2, target_q)
+        # Conservative Q learning (CQL): need to calculate logsumexp of concated q values of random and current qs
         # if pretrain:
         #     rand_actions = th.rand_like(actions)
         #     q1_loss += th.logsumexp(self.q1(states, th.rand_like(actions)), dim=1).mean() - q1.mean()
@@ -322,20 +333,22 @@ class AgentSAC(Agent):
             actor_loss = (self.alpha * log_probs - q_pred).mean()
         
         # Alpha loss
-        alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
-        
+        if self.auto_alpha:
+            alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+
         # Optimization
-        self.cri_optim.zero_grad()
-        (q1_loss + q2_loss).backward()
-        self.cri_optim.step()
-        
         self.act_optim.zero_grad()
         actor_loss.backward()
         self.act_optim.step()
 
-        self.alpha_optim.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optim.step()
+        self.cri_optim.zero_grad()
+        (q1_loss + q2_loss).backward()
+        self.cri_optim.step()
+        
+        if self.auto_alpha:
+            self.alpha_optim.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optim.step()
                 
         # Update target networks
         soft_update(self.q1_target, self.q1, self.tau)
@@ -375,6 +388,7 @@ class AgentSAC(Agent):
         # Critic loss
         q1_loss = F.mse_loss(qa1, target_q)
         q2_loss = F.mse_loss(qa2, target_q)
+        # Conservative Q learning (CQL): need to calculate logsumexp of concated q values of random and current qs
         # if pretrain:
         #     q1_loss += th.stack([th.logsumexp(qi, dim=1).mean() - qi.mean() for qi in q1]).mean()
         #     q2_loss += th.stack([th.logsumexp(qi, dim=1).mean() - qi.mean() for qi in q2]).mean()
@@ -397,20 +411,22 @@ class AgentSAC(Agent):
                 actor_loss = ((self.alpha * log_probs - th.min(q1, q2).detach()) * actions_pred).sum(dim=-1).mean()
 
         # Alpha loss
-        if self.mac:
-            entropy = - th.stack([(ai * lpi).sum(dim=-1) for ai, lpi in zip(actions_pred, log_probs)],dim=-1)
-        else: 
-            entropy = - (log_probs * actions_pred).sum(dim=-1)
-        alpha_loss = (self.log_alpha * (entropy - self.target_entropy).detach()).mean()
+        if self.auto_alpha:
+            if self.mac:
+                entropy = - th.stack([(ai * lpi).sum(dim=-1) for ai, lpi in zip(actions_pred, log_probs)],dim=-1)
+            else: 
+                entropy = - (log_probs * actions_pred).sum(dim=-1)
+            alpha_loss = (self.log_alpha * (entropy - self.target_entropy).detach()).mean()
         
         # Optimization
         self.cri_optim.zero_grad()
         (q1_loss + q2_loss).backward()
         self.cri_optim.step()
         
-        self.alpha_optim.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optim.step()
+        if self.auto_alpha:
+            self.alpha_optim.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optim.step()
 
         self.act_optim.zero_grad()
         actor_loss.backward()
@@ -431,6 +447,7 @@ class AgentSAC(Agent):
     def alpha(self):
         return self.log_alpha.exp().detach()
 
+    @th.no_grad()
     def control(self,observ,train=False,batch=False):
         if not batch:
             if isinstance(observ,list):
@@ -466,15 +483,15 @@ class AgentSAC(Agent):
         for item in 'xbyre':
             norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
             if os.path.exists(norm_path):
-                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(device))
+                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(self.device))
         if not self.act_only:
             self.q1.load(agent_dir,'1')
             self.q2.load(agent_dir,'2')
             # else:
-            self.q1_target.load(agent_dir)
-            self.q2_target.load(agent_dir)
+            self.q1_target.load(agent_dir,'1')
+            self.q2_target.load(agent_dir,'2')
             checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True)
-            self.log_alpha = checkpoint['log_alpha'].to(device)
+            self.log_alpha = checkpoint['log_alpha'].to(self.device)
             self.log_alpha.requires_grad = True
             self.act_optim.load_state_dict(checkpoint['act_optim'])
             self.cri_optim.load_state_dict(checkpoint['cri_optim'])
@@ -490,7 +507,7 @@ class ActorPPO(Actor):
         self.net = nn.Sequential(*[nn.Linear(self.observ_size, self.dim),nn.ReLU()]+\
                                  [nn.Linear(self.dim, self.dim),nn.ReLU()]*(self.nly-1))
         if self.conti:
-            self.std_log = nn.Parameter(th.zeros((1,action_shape)).to(device), requires_grad=True)
+            self.std_log = nn.Parameter(th.zeros((1,action_shape)), requires_grad=True)
         
         # distributional parameters
         if self.conti:
@@ -533,7 +550,6 @@ class ActorPPO(Actor):
         elif isinstance(self.action_shape, (list,np.ndarray)) and self.mac:
             log_probs = [th.log(p+1e-6) for p in params]
             entropy = th.stack([-(p*lp).sum(dim=-1) for p,lp in zip(params, log_probs)],dim=-1).sum(-1)
-            # TODO: if need to sum logprobs and entropy of each agent? Try conti first
             log_probs = th.stack([lp.gather(dim=-1, index=ai.unsqueeze(-1)).squeeze(-1)
                          for ai,lp in zip(action.T,log_probs)],dim=-1).sum(-1)
         else:
@@ -560,15 +576,14 @@ class AgentPPO(Agent):
     def __init__(self, action_shape: int, observ_size: int, args, act_only: bool = False):
         super(AgentPPO, self).__init__(action_shape, args, act_only)
         self.on_policy = True
-        self.actor = ActorPPO(action_shape, observ_size, args).to(device)
+        self.actor = ActorPPO(action_shape, observ_size, args).to(self.device)
 
         if not act_only:
-            self.cri = CriPPO(observ_size, args).to(device)
+            self.cri = CriPPO(observ_size, args).to(self.device)
             self.act_optim = th.optim.Adam(self.actor.parameters(), lr=getattr(args,"act_lr",1e-4))
             self.cri_optim = th.optim.Adam(self.cri.parameters(), lr=getattr(args,"cri_lr",1e-3))
-            self.n_step = getattr(args, "horizon", 60)//getattr(args, "ctrl_step", 5)
             self.lambda_gae = getattr(args, "lambda_gae", 0.95)
-            self.lambda_entropy = getattr(args, "lambda_entropy", 0.01)
+            self.lambda_entropy = getattr(args, "lambda_entropy", 0.001)
             self.clip_ratio = getattr(args, "clip_ratio", 0.2)
         if getattr(args,"load_agent",False):
             self.load()
@@ -590,19 +605,45 @@ class AgentPPO(Agent):
                 next_ = value[t]
         return advs
     
-    def update(self, batch: Tuple, pretrain: bool = False) -> list:
+    def get_adv_traj(self,r,d,value,next_value):
+        # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
+        # from ElegantRL
+        # update rewards when truncated
+        bs,advs = r.shape[0],th.zeros_like(r)
+        next_, adv = next_value[-1], 0
+        for t in range(bs-1, -1, -1):
+            next_ = r[t] + self.gamma * ((1-d[t]) * next_ + d[t] * next_value[t])
+            advs[t] = adv = next_ - value[t] + self.gamma * self.lambda_gae * (1-d[t]) * adv
+            next_ = value[t]
+        return advs
+        
+    @th.no_grad()
+    def update_trajs(self, batch: Tuple) -> Tuple[th.Tensor, th.Tensor]:
         states, actions, rewards, next_states, dones = batch
         if not self.conti:
             actions = actions.long()
+        values, next_values = self.cri(states), self.cri(next_states)
+        advs = self.get_adv_traj(rewards, dones, values, next_values)
+        returns = advs + values
+        # Normalize advantages
+        advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+        log_probs, _ = self.actor.get_probs_entropy(states, actions)
+        return states, actions, advs, returns, log_probs
+
+    def update(self, batch: Tuple, pretrain: bool = False) -> list:
+        states, actions, advs, returns, log_probs = batch
+        if not self.conti:
+            actions = actions.long()
         
+        # TODO: calculate advs norm, log_probs for the whole batch
         # Compute advantages
-        with th.no_grad():
-            values, next_values = self.cri(states), self.cri(next_states)
-            advs = self.get_advantages(rewards, dones, values, next_values)
-            returns = advs + values
-            # Normalize advantages
-            advs = (advs - advs.mean()) / (advs.std() + 1e-8)
-            log_probs, _ = self.actor.get_probs_entropy(states, actions)
+        # with th.no_grad():
+        #     values, next_values = self.cri(states), self.cri(next_states)
+        #     advs = self.get_advantages(rewards, dones, values, next_values)
+        #     returns = advs + values
+        #     # Normalize advantages
+        #     advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+        #     log_probs, _ = self.actor.get_probs_entropy(states, actions)
         
         # Update critic
         value_loss = F.mse_loss(self.cri(states), returns)
@@ -615,11 +656,8 @@ class AgentPPO(Agent):
         if pretrain:
             actor_loss = - new_log_probs.mean()
         else:
-            min_adv = th.where(advs > 0, (1 + self.clip_ratio) * advs, (1 - self.clip_ratio) * advs)
             ratio = th.exp(new_log_probs - log_probs)
-            # Sum logprob and entropy of multi discrete
-            # if self.mac:
-            #     advs,min_adv = advs.unsqueeze(-1),min_adv.unsqueeze(-1)
+            min_adv = th.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advs
             actor_loss = - th.min(ratio * advs, min_adv).mean()
         actor_loss -= self.lambda_entropy * entropy.mean()
         self.act_optim.zero_grad()
@@ -632,6 +670,7 @@ class AgentPPO(Agent):
             entropy.mean().item(),
                  ]
 
+    @th.no_grad()
     def control(self,observ,train=False,batch=False):
         if not batch:
             if isinstance(observ,list):
@@ -662,7 +701,7 @@ class AgentPPO(Agent):
         for item in 'xbyre':
             norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
             if os.path.exists(norm_path):
-                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(device))
+                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(self.device))
         if not self.act_only:
             self.cri.load(agent_dir)
             checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True)

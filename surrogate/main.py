@@ -7,7 +7,9 @@ import argparse,yaml
 from envs import get_env
 import numpy as np
 import os,time,shutil
-import matplotlib.pyplot as plt
+import pandas as pd
+import multiprocessing as mp
+from mpc import get_runoff,pred_simu
 # from line_profiler import LineProfiler
 HERE = os.path.dirname(__file__)
 # mixed_float16 causes nan values in log ops (softmax in GAT and bce loss in if_flood)
@@ -35,6 +37,7 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
         self.add_argument('--processes',type=int,default=1,help='number of simulation processes')
         self.add_argument('--repeats',type=int,default=1,help='number of simulation repeats of each event')
+        self.add_argument('--hotstart',action="store_true",help='if save hotstart files')
 
         # train args
         self.add_argument('--train',action="store_true",help='if train the emulator')
@@ -61,8 +64,9 @@ class Argument(argparse.ArgumentParser):
 
         # test args
         self.add_argument('--test',action="store_true",help='if test the emulator')
+        self.add_argument('--horizon',type=int,default=60,help='horizon length')
+        self.add_argument('--pop_size',type=int,default=1,help='number of parallel control options')
         self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
-        self.add_argument('--hotstart',action="store_true",help='if use hotstart to test simulation time')
 
 def parser(config=None):
     parser = Argument(description='surrogate')
@@ -254,14 +258,13 @@ if __name__ == "__main__":
             elif k == 'data_dir':
                 v = os.path.join(args.data_dir,v)
             setattr(args,k,v)
-        env_args = env.get_args(args.directed,args.length,args.order)
+        env_args = env.get_args(args.directed,args.length,args.order,args.graph_base)
         for k,v in env_args.items():
             if k == 'act':
                 v = v and args.act != 'False' and args.act
             setattr(args,k,v)
-        dG = DataGenerator(env.config,args.data_dir,args)
-        emul = Emulator(args)
-        emul.load()
+        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
+        emul.load(args.model_dir)
         if not os.path.exists(args.result_dir):
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
@@ -273,84 +276,115 @@ if __name__ == "__main__":
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
-        if 'train_event_id' in config and os.path.isfile(os.path.join(args.data_dir,config['train_event_id'])):
-            train_ids = np.load(os.path.join(args.data_dir,config['train_event_id']))
-            events = [eve for i,eve in enumerate(events) if i not in train_ids]
+        args.n_step,args.r_step = args.horizon//args.ctrl_step,args.ctrl_step//args.interval
+
+        emu_objss,simu_objss,objss,settingss = [],[],[],[]       
         for event in events:
             name = os.path.basename(event).strip('.inp')
-            if os.path.exists(os.path.join(args.result_dir,name + '_states.npy')):
-                states = np.load(os.path.join(args.result_dir,name + '_states.npy'))
-                perfs = np.load(os.path.join(args.result_dir,name + '_perfs.npy'))
-                if args.act:
-                    settings = np.load(os.path.join(args.result_dir,name + '_settings.npy'))
-                edge_states = np.load(os.path.join(args.result_dir,name + '_edge_states.npy'))
-            else:
-                t0 = time.time()
-                pre_step = rain_arg.get('pre_time',0) // args.interval
-                res = dG.simulate(env,event,act=args.act,hotstart=args.seq*args.hotstart)
-                states,perfs,settings = [r[pre_step:] if r is not None else None for r in res[:3]]
-                print("{} Simulation time: {}".format(name,time.time()-t0))
-                np.save(os.path.join(args.result_dir,name + '_states.npy'),states)
-                np.save(os.path.join(args.result_dir,name + '_perfs.npy'),perfs)
-                if settings is not None:
-                    np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
-                edge_states = res[-1][pre_step:]
-                np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
 
-            states,perfs = [dG.expand_seq(dat,args.seq) for dat in [states,perfs]]
-            edge_states = dG.expand_seq(edge_states,args.seq)
+            ts,runoff = get_runoff(env,event)
+            tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
+            tss.index = pd.to_datetime(tss.index)
+            runoff = np.stack([np.concatenate([runoff[idx:idx+args.horizon],
+                                               np.tile(np.zeros_like(s),(max(idx+args.horizon-runoff.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                                            for idx,s in enumerate(runoff)])
 
-            states[...,1] = states[...,1] - states[...,-1]
-            r,true = states[args.seq:,...,-1:],states[args.seq:,...,:-1]
-            if args.tide:
-                t = states[args.seq:,...,0] * args.is_outfall
-                r = np.concatenate([r,np.expand_dims(t,axis=-1)],axis=-1)
-                
-            # states = states[...,:-1]
-            if args.if_flood:
-                f = (perfs>0).astype(float)
-                # f = np.eye(2)[f].squeeze(-2)
-                states = np.concatenate([states[...,:-1],f,states[...,-1:]],axis=-1)
-                true = np.concatenate([true,f[args.seq:]],axis=-1)
-            states = states[:-args.seq]
+            if args.prediction['no_runoff']:
+                ts2,runoff_rate = get_runoff(env,event,True)
+                tss2 = pd.DataFrame.from_dict({'Time':ts2,'Index':np.arange(len(ts2))}).set_index('Time')
+                tss2.index = pd.to_datetime(tss2.index)
+                runoff_rate = np.stack([np.concatenate([runoff_rate[idx:idx+args.horizon],
+                                                        np.tile(np.zeros_like(s),(max(idx+args.horizon-runoff_rate.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
+                                    for idx,s in enumerate(runoff_rate)])
 
-            edge_true = edge_states[args.seq:,...,:-1]
-            edge_states = edge_states[:-args.seq]
-            edge_states = edge_states[:,-args.seq:,...]
-            edge_true = edge_true[:,:args.seq,...]
+            state = env.reset(event,global_state=True,seq=args.seq_in)
+            perf = env.flood(seq=args.seq_in)
+            edge_state = env.state_full(typ='links',seq=args.seq_in)
+            y = np.array([[env.controller(mode='conti')
+                        for _ in range(runoff.shape[0]//args.ctrl_step+args.n_step+1)]
+                            for _ in range(args.pop_size)])
+            done,i = False,0
+            emu_objs,simu_objs,objs,settings = [],[],[],[]
+            while not done:
+                if i*args.interval % args.ctrl_step == 0:
+                    t = env.env.methods['simulation_time']()
+                    yi = y[:,i//args.ctrl_step:i//args.ctrl_step+args.n_step,:]
+                    setting = np.concatenate([np.repeat(yi[:,idx:idx+1,:],args.r_step,axis=1)
+                                            for idx in range(yi.shape[1])],axis=1)
+                    if setting.shape[1] < args.horizon // args.interval:
+                        setting = np.concatenate([setting,np.repeat(setting[:,-1:,:],args.horizon // args.interval - setting.shape[1],axis=1)],axis=1)
+                    settings.append(setting)
+                    t0 = time.time()
+                    if args.error > 0:
+                        r = runoff[int(tss.asof(t)['Index'])]
+                        std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
+                        r += np.random.uniform(-std,std)
+                        r = np.repeat(np.expand_dims(r,0),args.pop_size,axis=0)
+                    else:
+                        r = np.repeat(np.expand_dims(runoff[int(tss.asof(t)['Index'])],0),args.pop_size,axis=0)
 
-            if args.act:
-                a = dG.expand_seq(settings,args.seq,zeros=False)
-                a = a[args.seq:,:args.seq,...]
-            else:
-                a = None
-            
-            t0 = time.time()
-            # lp = LineProfiler()
-            # lp_wrapper = lp(emul.simulate)
-            # pred = lp_wrapper(states,r,a,edge_states)
-            # lp.print_stats()
-            pred,edge_pred = emul.simulate(states,r,a,edge_states)
-            print("{} Emulation time: {}".format(name,time.time()-t0))
+                    state[...,1] = state[...,1] - state[...,-1]
+                    state = np.repeat(np.expand_dims(state,0),args.pop_size,axis=0)
+                    perf = np.repeat(np.expand_dims(perf,0),args.pop_size,axis=0)
+                    edge_state = np.repeat(np.expand_dims(edge_state,0),args.pop_size,axis=0)
+                    if args.horizon > args.seq_out * args.interval:
+                        predss = []
+                        s0,e0 = state.copy(),edge_state.copy()
+                        for idx in range(args.horizon//args.seq_in):
+                            ri = r[:,idx*args.seq_out:(idx+1)*args.seq_out,...]
+                            sett = setting[:,idx*args.seq_out:(idx+1)*args.seq_out,:]
+                            if args.if_flood:
+                                f = (perf>0).astype(float)
+                                state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                            preds = emul.predict(state,ri,sett,edge_state)
+                            state = np.concatenate([preds[0][...,:-2],ri],axis=-1)
+                            perf = preds[0][...,-1:]
+                            ae = emul.get_edge_action(sett,False)
+                            edge_state = np.concatenate([preds[1],ae],axis=-1)
+                            predss.append(preds)
+                        predss = [np.concatenate([preds[0] for preds in predss],axis=1),
+                                  np.concatenate([preds[1] for preds in predss],axis=1)]
+                        emu_obj = env.objective_pred(predss,[s0,e0],sett)
+                    else:
+                        if args.if_flood:
+                            f = (perf>0).astype(float)
+                            state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
+                        preds = emul.predict(state,r,setting,edge_state)
+                        emu_obj = env.objective_pred(preds,[state,edge_state],setting)
+                    t1 = time.time()
+                    print('emulation time: %s'%(t1-t0))
+                    emu_objs.append(emu_obj.squeeze())
 
-            true = np.concatenate([true,perfs[args.seq:,...]],axis=-1)  # cumflooding in performance
-            true = true[:,:args.seq,...]
+                    eval_file = env.get_eval_file(args.prediction['no_runoff'])
+                    if args.prediction['no_runoff']:
+                        r = np.repeat(np.expand_dims(runoff_rate[int(tss2.asof(t)['Index'])],0),args.pop_size,axis=0)
+                    else:
+                        r = [None for _ in range(len(y))]
+                    args.log = env.data_log.copy()
+                    pool = mp.Pool(args.processes)
+                    res = [pool.apply_async(func=pred_simu,args=(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,))
+                            for sett,ri in zip(setting,r)]
+                    pool.close()
+                    pool.join()
+                    simu_obj = np.stack([r.get() for r in res])
+                    print('hsf simu time: %s'%(time.time()-t1))
+                    simu_objs.append(simu_obj.squeeze())
 
-            los_str = "{} Testing loss: (".format(name)
-            loss = [emul.mse(emul.normalize(pred[...,:3],'y'),emul.normalize(true[...,:3],'y'))]
-            los_str += "Node: {:.4f} ".format(loss[-1])
-            if args.if_flood:
-                loss += [emul.bce(pred[...,-2:-1],true[...,-2:-1])]
-                los_str += "if_flood: {:.4f} ".format(loss[-1])
-            loss += [emul.mse(emul.normalize(edge_pred,'ey'),emul.normalize(edge_true,'ey'))]
-            los_str += "Edge: {:.4f})".format(loss[-1])
-            print(los_str)
-
-            np.save(os.path.join(args.result_dir,name + '_runoff.npy'),r.astype(np.float32))
-            np.save(os.path.join(args.result_dir,name + '_true.npy'),true.astype(np.float32))
-            np.save(os.path.join(args.result_dir,name + '_pred.npy'),pred.astype(np.float32))
-            edge_true = edge_true[:,:args.seq,...]
-            np.save(os.path.join(args.result_dir,name + '_edge_true.npy'),edge_true.astype(np.float32))
-            np.save(os.path.join(args.result_dir,name + '_edge_pred.npy'),edge_pred.astype(np.float32))
-
-
+                    objs.append(env.objective(args.horizon))
+                done = env.step(setting[0,0,:])
+                state = env.state_full(seq=args.seq_in)
+                perf = env.flood(seq=args.seq_in)
+                edge_state = env.state_full(args.seq_in,'links')
+                i += 1
+            emu_objss.append(np.stack(emu_objs,axis=0))
+            simu_objss.append(np.stack(simu_objs,axis=0))
+            objss.append(np.stack(objs))
+            settingss.append(settings)
+        
+        emu_objss = np.concatenate([obj[:-args.n_step] for obj in emu_objss],axis=0)
+        simu_objss = np.concatenate([obj[:-args.n_step] for obj in simu_objss],axis=0)
+        objss = np.concatenate([obj[args.n_step:] for obj in objss],axis=0)
+        np.save(os.path.join(args.result_dir,'emu_objs.npy'),emu_objss)
+        np.save(os.path.join(args.result_dir,'simu_objs.npy'),simu_objss)
+        np.save(os.path.join(args.result_dir,'objs.npy'),objss)
+        np.save(os.path.join(args.result_dir,'settings.npy'),np.array(settingss))
