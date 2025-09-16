@@ -64,13 +64,20 @@ class Memory:
                     np.save(os.path.join(cwd,f'experience_{item}.npy'),getattr(self,item).cpu().numpy())
             print('Save experience %s'%item)
 
-    # def load(self,cwd=None):
-    #     cwd = self.cwd if cwd is None else cwd
-    #     for item in self.items:
-    #         data = np.load(os.path.join(cwd,'experience_%s.npy'%item)).tolist()
-    #         setattr(self,item,deque(data,maxlen=self.limit))
-    #         print('Load experience %s'%item)
-    #     self.cur_capa = len(self.reward)
+    def load(self,cwd=None):
+        cwd = self.cwd if cwd is None else cwd
+        for item in self.items:
+            if self.conv and 'state' in item and not hasattr(self,item):
+                for it in 'xe':
+                    name = f"{item}_{it}"
+                    if os.path.exists(os.path.join(cwd,f'experience_{name}.npy')):
+                        setattr(self,name,th.Tensor(np.load(os.path.join(cwd,f'experience_{name}.npy'))).to(device))
+                        print('Load experience %s'%name)
+            else:
+                if os.path.exists(os.path.join(cwd,f'experience_{item}.npy')):
+                    setattr(self,item,th.Tensor(np.load(os.path.join(cwd,f'experience_{item}.npy'))).to(device))
+                    print('Load experience %s'%item)
+        self.cur_capa = len(getattr(self,item))
 
     # def get_state_norm(self):
     #     state = np.asarray(self.state)

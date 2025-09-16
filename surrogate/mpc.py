@@ -28,7 +28,7 @@ from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
 HERE = os.path.dirname(__file__)
 
-class TerminationCollection(TerminationCollection):
+class TerminationOrCollection(TerminationCollection):
     def __init__(self, *args) -> None:
         super().__init__(*args)
 
@@ -86,9 +86,11 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    for i in range(len(args.termination)//2):
-        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
-
+    n_term = len(args.termination)
+    for i,j in zip(range(n_term-1),range(1,n_term)):
+        args.termination[j] = eval(args.termination[j]) if args.termination[i] in ['n_eval','n_gen','fmin'] else args.termination[j]
+    # for i in range(len(args.termination)//2):
+    #     args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
     print('MPC configs: {}'.format(args))
     return args,config
 
@@ -139,12 +141,14 @@ class mpc_ga(Problem):
             # else:
             self.emul = Emulator(margs)
             self.emul.load()
-            self.emul.set_indices(getattr(args,'batch_size',128))
+            self.emul.set_indices(getattr(args,'pop_size',128))
             self.stochastic = getattr(args,"stochastic",False)
+            self.margs = margs
         self.step = args.interval
         self.horizon = getattr(args,'horizon',60)
         self.n_step = self.horizon//args.ctrl_step
         self.r_step = args.ctrl_step//args.interval
+        self.pop_size = getattr(args,'pop_size',128)
         self.env = get_env(args.env)(initialize=False)
         if args.act.startswith('conti'):
             self.n_act = len(args.action_space)
@@ -193,55 +197,65 @@ class mpc_ga(Problem):
     
     def pre_state(self,y,state,runoff,edge_state):
         y = y.reshape((-1,self.n_step,self.n_act))
-        pop_size = y.shape[0]
         settings = y if self.args.act.startswith('conti') else np.apply_along_axis(lambda x:self.actions.get(tuple(x)),-1,y.astype(int))
         settings = np.repeat(settings,self.r_step,axis=1)
         if self.stochastic:
             settings = np.repeat(settings,self.stochastic,axis=0)
-            runoff = np.tile(self.runoff,(pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)]))
+            runoff = np.tile(self.runoff,(self.pop_size,)+tuple([1 for _ in range(self.runoff.ndim-1)]))
         else:
-            runoff = np.repeat(np.expand_dims(self.runoff,0),pop_size,axis=0)
-        state = np.repeat(np.expand_dims(self.state,0),settings.shape[0],axis=0)
-        edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0)
+            runoff = np.repeat(np.expand_dims(self.runoff,0),self.pop_size,axis=0)
+        state = np.repeat(np.expand_dims(self.state,0),self.pop_size,axis=0)
+        edge_state = np.repeat(np.expand_dims(self.edge_state,0),self.pop_size,axis=0)
         return settings,state,runoff,edge_state
 
+    @th.compile(fullgraph=True)
     def predict(self,settings,state,runoff,edge_state):
         if self.horizon > self.margs.seq * self.args.interval:
-            state,edge_state = state[:,-self.margs.seq:,...],edge_state[:,-self.margs.seq:,...]
-            predss = []
+            x,ex = state[:,-self.margs.seq:,...],edge_state[:,-self.margs.seq:,...]
+            predss,edge_preds = [],[]
             for idx in range(self.horizon//self.margs.seq):
                 ri = runoff[:,idx*self.margs.seq:(idx+1)*self.margs.seq,...]
                 sett = settings[:,idx*self.margs.seq:(idx+1)*self.margs.seq,:]
-                if self.margs.if_flood and idx > 0:
-                    f = (perf>0).astype(np.float32)
-                    state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                preds = self.emul.predict(*[self.emul.to_tensor(dat) for dat in [state,edge_state,ri,sett]])
-                state,perf = np.concatenate([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
-                ae = self.emul.get_edge_action(sett)
-                edge_state = np.concatenate([preds[1],ae],axis=-1)
-                predss.append(preds)
-            return [th.concat([preds[i] for preds in predss],dim=1) for i in range(2)]
+                preds = self.emul.predict(x,ex,ri,sett,constr=False)
+                if self.margs.if_flood:
+                    f = (preds[0][...,-1:]>0).type(th.float32)
+                    x = th.concat([preds[0][...,:-1],f,ri],dim=-1)
+                else:
+                    x = th.concat([preds[0],ri],dim=-1)
+                ae = self.emul.get_edge_action(sett,True)
+                ex = th.concat([preds[1],ae],dim=-1)
+                predss.append(x)
+                edge_preds.append(ex)
+            predss,edge_predss = th.concat(predss,dim=1)[...,:-1],th.concat(edge_preds,dim=1)
+            predss = self.emul.constrain(predss,state[:,-1,:,0])
+            qw = self.emul.get_flood(predss,runoff[...,0])
+            predss = th.concat([predss,qw],dim=-1)
+            return predss,edge_predss
         else:
-            return self.emul.predict(*[self.emul.to_tensor(dat) for dat in [state,edge_state,runoff,settings]])   
-
+            return self.emul.predict(state,edge_state,runoff,settings,constr=True)
+        
     def obj_emu(self,y,state,runoff,edge_state):
+        n_pop = y.shape[0]
+        if n_pop < self.pop_size:
+            y = np.concatenate([y,np.repeat(y[:1,...],self.pop_size-n_pop,axis=0)],axis=0)
         settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
-        preds = self.predict(settings,state,runoff,edge_state)
+        preds = self.predict(*[self.emul.to_tensor(dat) for dat in [settings,state,runoff,edge_state]])
         if self.args.predict:
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
             if not getattr(self.emul,'norm',False):
                 objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
         else:
-            objs = self.env.objective_pred([p.detach().cpu() for p in preds],[state,edge_state],settings).sum(axis=-1)
+            objs = self.env.objective_pred([p.detach().cpu().numpy() for p in preds],
+                                           [state,edge_state],settings).sum(axis=-1)
         if self.stochastic:
-            objs = np.stack([np.reduce_mean(objs[i*self.stochastic:(i+1)*self.stochastic])
-                              for i in range(y.shape[0])])
-        return objs
+            objs = np.stack([np.mean(objs[i*self.stochastic:(i+1)*self.stochastic],axis=0)
+                              for i in range(self.pop_size)])
+        return objs[:n_pop]
 
     def _evaluate(self,x,out,*args,**kwargs):        
         if hasattr(self,'emul'):
             # out['F'] = self.pred_emu(x)+1e-6
-            out['F'] = self.obj_emu(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
+            out['F'] = self.obj_emu(x,self.state,self.runoff,self.edge_state)+1e-6
         else:
             pool = mp.Pool(self.args.processes)
             res = [pool.apply_async(func=self.obj_simu,args=(xi,)) for xi in x]
@@ -253,7 +267,7 @@ class mpc_ga(Problem):
     def pred(self,x):
         if hasattr(self,'emul'):
             # return self.pred_emu(x)+1e-6
-            return self.obj_emu(x,self.runoff,self.state,self.edge_state).numpy()+1e-6
+            return self.obj_emu(x,self.state,self.runoff,self.edge_state)+1e-6
         else:
             pool = mp.Pool(self.args.processes)
             res = [pool.apply_async(func=self.obj_simu,args=(xi,)) for xi in x]
@@ -276,21 +290,15 @@ class BestCallback(Callback):
         self.data["time"].append(time.time()-self.t0)
         self.data["sol"].append(algorithm.pop.get("X")[vals.argmin()])    
 
-def initialize(x0,xl,xu,pop_size,prob,conti=False):
-    x0 = np.reshape(x0,-1)
-    population = [x0]
-    for _ in range(pop_size-1):
-        xi = [np.random.uniform(xl[idx],xu[idx]) if conti else np.random.randint(xl[idx],xu[idx]+1)\
-               if np.random.random()<prob else x for idx,x in enumerate(x0)]
-        population.append(xi)
-    return np.array(population)
-
 def run_ea(prob,args,setting=None):
     print('Running genetic algorithm')
-    if args.use_current and setting is not None:
-        sampling = initialize(setting,prob.xl,prob.xu,args.pop_size,args.sampling,args.act.startswith('conti'))
+    if args.act.startswith('conti'):
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
     else:
-        sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl-0.5,prob.xu+0.5).round(0).astype(int)
+        # sampling = np.random.randint(prob.xl,prob.xu+1,size=(args.pop_size,prob.n_var))
+    if args.use_current and setting is not None:
+        sampling = np.concatenate([np.reshape(setting,(1,-1)), sampling[:args.pop_size-int(args.pop_size>1)]],axis=0)
     if args.act.endswith('bin'):
         crossover = BX(*args.crossover,vtype=bool)
         mutation = BitflipMutation(*args.mutation,vtype=bool)
@@ -299,7 +307,7 @@ def run_ea(prob,args,setting=None):
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
     if len(args.termination) > 2:
         terms = {}
-        for val in args.termination:
+        for val in args.termination[1:]:
             if val in ['n_eval','n_gen','fmin','time','soo']:
                 term = val
                 terms[term] = {} if val =='soo' else None
@@ -311,7 +319,7 @@ def run_ea(prob,args,setting=None):
         termination = []
         for k,v in terms.items():
             termination.append(get_termination(k,**v) if isinstance(v,dict) else get_termination(k,v))
-        termination = TerminationCollection(*termination)
+        termination = TerminationOrCollection(*termination) if 'or' in args.termination[0] else TerminationCollection(*termination)
     else:
         termination = get_termination(*args.termination)
 
@@ -549,24 +557,24 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     de = {
         # 'env':'astlingen',
-        # 'act':'conti',
-        # 'processes':2,
-        # 'pop_size':2,
+        # 'act':'rand3',
+        # 'processes':1,
+        # 'pop_size':128,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
-        # # 'termination':['n_gen',5,'time','00:05:00'],
+        # 'termination':['time','00:05:00','soo'],
         # 'surrogate':True,
-        # 'gradient': True,
+        # 'gradient': False,
         # 'predict':False,
         # 'method':'l-bfgs-b',
         # 'use_current':True,
-        # 'rain_dir':'./envs/config/ast_test2007_events.csv',
+        # 'rain_dir':'./envs/config/ast_test2007_events_test.csv',
         # # 'rain_suffix':'chaohu_testall',
         # # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':120,
-        # 'model_dir':'./model/astlingen/120s_gat_5ly_floodwei_gradnorm',
+        # 'horizon':60,
+        # 'model_dir':'./model/astlingen/60s_gat_5ly_floodwei_gradnorm/50000.pth',
         # 'result_dir':'./results/astlingen/test',
         }
     for k,v in de.items():

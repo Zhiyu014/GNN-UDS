@@ -130,7 +130,7 @@ class Agent:
 
     def convert_action_to_setting(self,action):
         if self.conti:
-            return (action+1)/2
+            return (action + th.tensor(1., device=self.device)) / th.tensor(2., device=self.device)
         elif not self.conti:
             if self.mac:
                 sett = [th.gather(space,-1,ai) for space,ai in zip(self.action_space,action)]
@@ -142,7 +142,7 @@ class Agent:
         
     def convert_setting_to_action(self,setting):
         if self.conti:
-            return th.multiply(setting,2)-1
+            return th.multiply(setting, th.tensor(2., device=self.device)) - th.tensor(1., device=self.device)
         elif isinstance(self.action_shape,(list,np.ndarray)):
             if self.mac:
                 if len(self.action_space[0].shape) > 1:
@@ -291,8 +291,6 @@ class AgentSAC(Agent):
                 self.alpha_optim = th.optim.Adam([self.log_alpha], lr=getattr(args,"act_lr",1e-4))
             else:
                 self.log_alpha = th.tensor(np.log(log_alpha),dtype=th.float32).to(self.device)
-        if getattr(args,"load_agent",False):
-            self.load()
 
     def update(self, batch: Tuple, pretrain: bool = False,) -> list:
         return self._update_conti(batch,pretrain) if self.conti else self._update_disc(batch,pretrain)
@@ -397,11 +395,13 @@ class AgentSAC(Agent):
         actions_pred, log_probs = self.actor.get_action_probs(states)
         if pretrain:
             if self.mac:
-                actor_loss = th.stack([(self.alpha * lpi * p).sum(dim=-1) + F.cross_entropy(p,a,reduction='none')
-                                    for p,lpi,a in zip(actions_pred,log_probs,actions.T)],dim=-1).mean()
+                actor_loss = th.stack([F.cross_entropy(p,a,reduction='none')
+                                    #    (self.alpha * lpi * p).sum(dim=-1)
+                                       for p,lpi,a in zip(actions_pred,log_probs,actions.T)],dim=-1).mean()
             else:
-                actor_loss = ((self.alpha * log_probs * actions_pred).sum(dim=-1) +\
-                              F.cross_entropy(actions_pred, actions, reduction='none')).mean()
+                actor_loss = (F.cross_entropy(actions_pred, actions, reduction='none')
+                            #   (self.alpha * log_probs * actions_pred).sum(dim=-1)
+                              ).mean()
         else:
             if self.mac:
                 q_pred = [th.min(q1_, q2_) for q1_, q2_ in zip(q1, q2)]
@@ -411,11 +411,11 @@ class AgentSAC(Agent):
                 actor_loss = ((self.alpha * log_probs - th.min(q1, q2).detach()) * actions_pred).sum(dim=-1).mean()
 
         # Alpha loss
-        if self.auto_alpha:
-            if self.mac:
-                entropy = - th.stack([(ai * lpi).sum(dim=-1) for ai, lpi in zip(actions_pred, log_probs)],dim=-1)
-            else: 
-                entropy = - (log_probs * actions_pred).sum(dim=-1)
+        if self.mac:
+            entropy = - th.stack([(ai * lpi).sum(dim=-1) for ai, lpi in zip(actions_pred, log_probs)],dim=-1)
+        else: 
+            entropy = - (log_probs * actions_pred).sum(dim=-1)
+        if self.auto_alpha and not pretrain:
             alpha_loss = (self.log_alpha * (entropy - self.target_entropy).detach()).mean()
         
         # Optimization
@@ -423,7 +423,7 @@ class AgentSAC(Agent):
         (q1_loss + q2_loss).backward()
         self.cri_optim.step()
         
-        if self.auto_alpha:
+        if self.auto_alpha and not pretrain:
             self.alpha_optim.zero_grad()
             alpha_loss.backward()
             self.alpha_optim.step()
@@ -585,8 +585,6 @@ class AgentPPO(Agent):
             self.lambda_gae = getattr(args, "lambda_gae", 0.95)
             self.lambda_entropy = getattr(args, "lambda_entropy", 0.001)
             self.clip_ratio = getattr(args, "clip_ratio", 0.2)
-        if getattr(args,"load_agent",False):
-            self.load()
     
     def get_advantages(self,r,d,value,next_value):
         # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates

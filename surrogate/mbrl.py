@@ -81,9 +81,6 @@ def parser(config=None):
     parser.add_argument('--tau',type=float,default=0.005,help='target update interval')
     parser.add_argument('--en_disc',type=float,default=1.0,help='target entropy discount factor of SAC')
     parser.add_argument('--log_alpha',type=float,default=-1.0,help='start log alpha of SAC')
-    # parser.add_argument('--epsilon_decay',type=float,default=0.9996,help='epsilon decay rate in QMIX')
-    # parser.add_argument('--noise_std',type=float,default=0.05,help='std of the exploration noise')
-    # parser.add_argument('--value_tau',type=float,default=0.0,help='value running average tau')
 
     # testing scenario args: rain and result dir not useful here
     parser.add_argument('--test',action="store_true",help='if test')
@@ -109,31 +106,34 @@ def parser(config=None):
     print('MBRL configs: {}'.format(args))
     return args,config
 
-def interact_steps(args,event,runoff,params=None,train=False):
-    args.device = 'cpu' # cpu-based interactions --> 2x speed than gpu
-    agent = get_agent(args.agent)(args.action_shape,len(args.observ_space),args,act_only=True)
-    if params is None:
-        agent.load()
-    else:
-        agent.actor.load_state_dict({k:agent.to_tensor(v) for k,v in params['actor'].items()})
-        agent.set_norm(*params['norm'])
+def interact_steps(args,event,runoff,ctrl=True,params=None,train=False,device='cpu'):
+    if ctrl:
+        args.device = device # cpu-based interactions --> 2x speed than gpu
+        agent = get_agent(args.agent)(args.action_shape,len(args.observ_space),args,act_only=True)
+        if params is None:
+            agent.load()
+        else:
+            agent.actor.load_state_dict({k:agent.to_tensor(v) for k,v in params['actor'].items()})
+            agent.set_norm(*params['norm'])
     tss,runoff = runoff
     env = get_env(args.env)(swmm_file=event)
     r_step = args.ctrl_step//args.interval
-    elements,attrs,states = args.elements,args.attrs,args.states
+    elements,attrs = args.elements,args.attrs
+    observs = [th.LongTensor([(elements[typ].index(idx), attrs[typ].index(attr))
+                            for idx,attr in args.states if attr in attrs[typ]])
+                            for typ in ['nodes','links']]
     state = env.state_full(seq=r_step)
     if getattr(args,"if_flood",False):
         flood = env.flood(seq=r_step)
-    states = [state[-1]]
-    perfs,objects = [env.flood()],[env.objective()]
+    # Fixed the bug of initial state non
     edge_state = env.state_full(r_step,'links')
-    edge_states = [edge_state[-1]]
-    setting = env.controller('default')
-    settings = [setting]
-    rains = [env.rainfall()]
-    done,i = False,0
-    while not done and (i < args.horizon if args.branch and train else True):
-        if i*args.interval % args.ctrl_step == 0:
+    setting = np.array(env.controller('default'))
+    states,perfs,settings,rains,edge_states,objects = [],[],[],[],[],[]
+    done,i,times = False,0,[]
+    # Reminder: args.branch and train
+    while not done and (i < args.horizon + r_step if args.branch and train else True):
+        if ctrl and i*args.interval % args.ctrl_step == 0:
+            t0 = time.time()
             state[...,1] = state[...,1] - state[...,-1]
             if getattr(args,"if_flood",False):
                 f = (flood>0).astype(float)
@@ -142,8 +142,6 @@ def interact_steps(args,event,runoff,params=None,train=False):
             b = runoff[int(tss.asof(t)['Index'])][:r_step]
             x_norm,b_norm,e_norm = [agent.normalize(agent.to_tensor(dat),item) if dat is not None else None
                                     for dat,item in zip([state,b,edge_state],'xbe')]
-            # TODO: conv cause data leakage in mp.
-            # TODO: calculate mean instead of sum for vol or cum to avoid step-accum
             if args.conv:
                 x_norm,e_norm = [th.stack([dat[...,idx].mean(dim=0) if 'cum' in attr or '_vol' in attr else dat[-1,:,idx]
                                         for idx,attr in enumerate(attrs[items])],dim=-1)
@@ -152,15 +150,12 @@ def interact_steps(args,event,runoff,params=None,train=False):
                 observ = [th.concat([x_norm,b_norm],dim=-1),e_norm]
             else:
                 r_norm = agent.normalize(agent.to_tensor(env.rainfall(seq=r_step)),'r')
-                observ = th.stack([x_norm[:,elements['nodes'].index(idx),attrs['nodes'].index(attr)] if attr in attrs['nodes'] 
-                                    else e_norm[:,elements['links'].index(idx),attrs['links'].index(attr)]
-                                        for idx,attr in args.states if attr in attrs['nodes']+attrs['links']],dim=-1)
-                observ = th.concat([r_norm,observ],dim=-1)
+                observ = th.concat([r_norm] + [dat[:,obs[:,0],obs[:,1]] for dat,obs in zip([x_norm,e_norm],observs)],dim=-1)
                 observ = th.stack([observ[:,i].mean(dim=-1) if 'cum' in attr or '_vol' in attr else observ[-1,i]
                                 for i,(_,attr) in enumerate(args.states)],dim=-1)
             action = agent.control(observ,train)
-            setting = agent.convert_action_to_setting(action).squeeze().numpy()
-            # setting = self.env.controller('safe',state[-1],setting)
+            setting = agent.convert_action_to_setting(action).squeeze().cpu().numpy()
+            times.append(time.time()-t0)
         done = env.step([float(sett) for sett in setting.tolist()])
         state = env.state_full(seq=r_step)
         if getattr(args,"if_flood",False):
@@ -174,7 +169,7 @@ def interact_steps(args,event,runoff,params=None,train=False):
         rains.append(env.rainfall())
         i += 1
     env.initialize_logger()
-    return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,objects]]
+    return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,objects,times]]
 
 class rl_ctrl:
     def __init__(self,args,margs=None,act_only=False):
@@ -187,7 +182,11 @@ class rl_ctrl:
         self.r_step = args.ctrl_step//args.interval
         self.agent = get_agent(args.agent)(args.action_shape,len(args.observ_space),args,act_only=act_only)
         self.conv = getattr(args,'conv',False)
-        self.attrs,self.elements,self.states = args.attrs,args.elements,args.states
+        self.attrs,self.states = args.attrs,args.states
+        observs = [[(args.elements[typ].index(idx), args.attrs[typ].index(attr))
+                    for idx,attr in args.states if attr in args.attrs[typ]]
+                    for typ in ['nodes','links']]
+        self.observs = [self.to_tensor(th.LongTensor(observ)) for observ in observs]
         self.env = get_env(args.env)(initialize=False)
         self.agent_dir = getattr(args,"agent_dir",os.path.join(HERE,"agent",args.env))
 
@@ -205,20 +204,23 @@ class rl_ctrl:
         return np.sum([los.detach().cpu().numpy() for los in model_loss])
 
     @th.compile(fullgraph=True)
-    def rollout(self,data,sett=True):
+    def rollout(self,data,ctrl=True,train=True):
         x,_,b,_ = data[:4]
         r = th.concat(data[4:6],dim=1)
         ex = data[6]
         sett0 = th.index_select(ex[...,-1],-1,self.act_edges)
-        xs,exs,settings = [x],[ex],[sett0 if sett else th.zeros_like(sett0,dtype=th.int64)]
+        xs,exs,settings = [x],[ex],[sett0]
         for i in range(self.n_step):
             bi,ri = b[:,i*self.r_step:(i+1)*self.r_step,:],r[:,i*self.r_step:(i+1)*self.r_step,:]
-            x_norm,e_norm,b_norm = [self.agent.normalize(dat,item) if dat is not None else None
-                                    for dat,item in zip([x,ex,bi if self.conv else ri],'xeb' if self.conv else 'xer')]
-            s_norm = self.get_observ(x_norm,e_norm,b_norm)
-            action = self.agent.control(s_norm,train=True,batch=True)
-            setting = self.agent.convert_action_to_setting(action)
-            setting = setting[:,th.newaxis,:].repeat(1,self.r_step,1)
+            if ctrl:
+                x_norm,e_norm,b_norm = [self.agent.normalize(dat,item) if dat is not None else None
+                                        for dat,item in zip([x,ex,bi if self.conv else ri],'xeb' if self.conv else 'xer')]
+                s_norm = self.get_observ(x_norm,e_norm,b_norm)
+                action = self.agent.control(s_norm,train=train,batch=True)
+                setting = self.agent.convert_action_to_setting(action)
+                setting = setting[:,th.newaxis,:].repeat(1,self.r_step,1)
+            else:
+                setting = sett0
             preds = self.emul.predict(x,ex,bi,setting,constr=False)
             if self.emul.if_flood:
                 x = th.concat([preds[0][...,:-1],(preds[0][...,-1:]>0).type(th.float32),bi],dim=-1)
@@ -227,7 +229,7 @@ class rl_ctrl:
             ex = th.concat([preds[1],self.get_edge_action(setting)],dim=-1)
             xs.append(x)
             exs.append(ex)
-            settings.append(setting if sett else action)
+            settings.append(setting)
         xs,exs,settings = [th.concat(dat,dim=1) for dat in [xs,exs,settings]]
         xs,bs = self.emul.constrain(xs[...,:-1],xs[:,0,:,0]),xs[...,-1:]
         perfs = self.emul.get_flood(xs,bs[...,0])
@@ -245,11 +247,15 @@ class rl_ctrl:
             shape = (-1,self.n_step,seq) if rollout else (1,-1,seq)
             trajs = [traj.reshape(shape+tuple(traj.shape[3:])) for traj in trajs]
         xs,perfs,settings,rains,exs = trajs
-        states = (xs[:,:-1,...].reshape((-1,seq)+tuple(xs.shape[-2:])),xs[:,1:,...].reshape((-1,seq)+tuple(xs.shape[-2:])))
-        perfs = (perfs[:,:-1,...].reshape((-1,seq)+tuple(perfs.shape[-2:])),perfs[:,1:,...].reshape((-1,seq)+tuple(perfs.shape[-2:])))
-        edge_states = (exs[:,:-1,...].reshape((-1,seq)+tuple(exs.shape[-2:])),exs[:,1:,...].reshape((-1,seq)+tuple(exs.shape[-2:])))
+        states = (xs[:,:-1,...].reshape((-1,seq)+tuple(xs.shape[-2:])),
+                xs[:,1:,...].reshape((-1,seq)+tuple(xs.shape[-2:])))
+        perfs = (perfs[:,:-1,...].reshape((-1,seq)+tuple(perfs.shape[-2:])),
+                perfs[:,1:,...].reshape((-1,seq)+tuple(perfs.shape[-2:])))
+        edge_states = (exs[:,:-1,...].reshape((-1,seq)+tuple(exs.shape[-2:])),
+                        exs[:,1:,...].reshape((-1,seq)+tuple(exs.shape[-2:])))
         settings = settings[:,1:,...].reshape((-1,seq)+tuple(settings.shape[-1:]))
-        rx,ry = rains[:,:-1,...].reshape((-1,seq)+tuple(rains.shape[-1:])),rains[:,1:,...].reshape((-1,seq)+tuple(rains.shape[-1:]))
+        rx = rains[:,:-1,...].reshape((-1,seq)+tuple(rains.shape[-1:]))
+        ry = rains[:,1:,...].reshape((-1,seq)+tuple(rains.shape[-1:]))
         return states,perfs,settings,rx,ry,edge_states
 
     @th.no_grad()
@@ -296,10 +302,7 @@ class rl_ctrl:
             b = th.concat([b[...,:1].mean(dim=1),b[:,-1,:,1:]],dim=-1)
             s = [th.concat([x,b],dim=-1),e]
         else:
-            s = th.stack([x[...,self.elements['nodes'].index(idx),self.attrs['nodes'].index(attr)] if attr in self.attrs['nodes']
-                            else e[...,self.elements['links'].index(idx),self.attrs['links'].index(attr)]
-                            for idx,attr in self.states if attr in self.attrs['nodes']+self.attrs['links']],dim=-1)
-            s = th.concat([b,s],dim=-1)
+            s = th.concat([b] + [dat[...,obs[:,0],obs[:,1]] for dat,obs in zip([x,e],self.observs)],dim=-1)
             s = th.stack([s[...,i].mean(dim=-1) if 'cum' in attr or '_vol' in attr else s[...,-1,i]
                                 for i,(_,attr) in enumerate(self.states)],dim=-1)
         return s
@@ -324,32 +327,32 @@ if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','policy.yaml'))
 
     train_de = {
-        # 'agent':'PPO',
+        # 'agent':'SAC',
         # 'train':True,
-        # 'pretrain':True,'expert_dir':'./envs/data/astlingen/1s_efd_rain50/','epochs':500,
+        # 'pretrain':False,'expert_dir':'./envs/data/astlingen/1s_efd_rain50/','epochs':500,
         # 'env':'astlingen','ctrl_step':5,'ctrl_step':5,
         # 'act':'rand3',
         # 'mac':True,
         # 'dec':False,
         # 'nly':5,
-        # 'sample_gap':0,'branch':True,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
-        # 'model_based':True,'model_dir':'./model/astlingen/5s_gat_3ly1tn_gradnorm/retrain',
+        # 'sample_gap':1,'branch':True,'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+        # 'model_based':False,'model_dir':'./model/astlingen/5s_gat_3ly1tn_gradnorm/retrain',
         # 'batch_size':64,
-        # 'episodes':10000,
+        # 'episodes':101,
         # 'limit':21,
         # 'tune_gap':0,
         # 'horizon':60,
         # 'norm':True,'scale':1.0,
         # 'gamma':0.92,
         # 'conv':False,
-        # 'eval_gap':10,'start_gap':0,
-        # 'agent_dir': './agent/astlingen/test',
+        # 'eval_gap':10,'start_gap':99,
+        # 'agent_dir': './agent/astlingen/test_mfrl_nopolicy',
         # 'load_agent':False,
-        # 'processes':8,
+        # 'processes':4,
         # 'swmm_step':10,
-        # # 'rain_suffix':'chaohu_test',
+        # 'result_dir':'./results/astlingen/rand3_mbrl_sac',
         # 'rain_num':6,
-        # 'rain_dir':'ast_train50_events.csv',
+        # 'rain_dir':'ast_test2007_events.csv',
         # 'test':False,
         }
     for k,v in train_de.items():
@@ -385,7 +388,8 @@ if __name__ == '__main__':
             assert margs.seq == args.ctrl_step//args.interval
             setattr(args,'if_flood',bool(margs.if_flood))
             setattr(args,'data_dir',margs.data_dir)
-            config['data_dir'] = args.data_dir
+            config['if_flood'] = args.if_flood
+            config['data_dir'] = os.path.basename(args.data_dir)
             if args.if_flood:
                 args.attrs['nodes'] = args.attrs['nodes'][:-1] + ['if_flood'] + args.attrs['nodes'][-1:]
             env_args = env.get_args(margs.directed,margs.length,margs.order,margs.graph_base)
@@ -433,16 +437,20 @@ if __name__ == '__main__':
         # Real data for sampling base points
         dG = DataGenerator(env.config,args.data_dir,args)
         dG.load(args.data_dir)
-        # Virtual data buffer for model-based rollout trajs
-        dGv = Memory(args.limit,args.conv,args.agent_dir)
         ctrl = rl_ctrl(args,margs=margs if args.model_based else None)
+        if args.load_agent:
+            ctrl.load()
         params = {'norm':dG.get_norm(),}
         ctrl.set_norm(*params['norm'])
+        # Virtual data buffer for model-based rollout trajs
+        dGv = Memory(args.limit,args.conv,args.agent_dir)
+        if args.load_agent and not ctrl.agent.on_policy:
+            dGv.load()
         n_events = int(max(dG.event_id))+1
         train_ids = np.load(os.path.join(args.data_dir,'train_id.npy'))
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_events,test_events = [events[ix] for ix in train_ids],[events[ix] for ix in test_ids]
-        train_returns,train_losses,train_objss,test_objss,secs,num_trans = [],[],[],[],[],[]
+        train_returns,train_losses,train_objss,test_objss,secs,num_trans,dmts = [],[],[],[],[],[],[]
         if args.model_based and args.tune_gap > 0:
             model_losses,test_losses = [],[]
         log_dir = "logs/agent/"
@@ -496,7 +504,7 @@ if __name__ == '__main__':
                     print(f"    Model finetuning: model-free sampling first")
                     # ctrl.save()
                     pool = mp.Pool(args.processes)
-                    res = [pool.apply_async(func=interact_steps,args=(event,runoffs[idx],False,))
+                    res = [pool.apply_async(func=interact_steps,args=(event,runoffs[idx],True,params,False,'cpu',))
                         for idx,event in zip(train_ids,train_events)]
                     pool.close()
                     pool.join()
@@ -532,11 +540,11 @@ if __name__ == '__main__':
                 params['actor'] = {k:v.cpu() for k,v in ctrl.agent.actor.state_dict().items()}
                 # TODO: Branched model-free RL
                 if args.branch:
-                    train_idxs = dG.get_data_idxs(train_ids,args.horizon)
+                    train_idxs = dG.get_data_idxs(train_ids,args.ctrl_step*2,args.horizon)
                     wei = dG.get_flood_weight(args.horizon)[train_idxs][np.arange(0,train_idxs.shape[0],args.ctrl_step)]
                     idxs = np.random.choice(np.arange(0,train_idxs.shape[0],args.ctrl_step),args.batch_size,replace=False,
                                             p=wei/wei.sum(),)
-                    train_id = train_idxs[idxs]
+                    train_id = train_idxs[idxs] - args.ctrl_step
                     env.config['prediction']['suffix'] = 'mfrl_eval_'
                     # identify the hsf file by rain, time and repeat
                     mfbr_events,mfbr_runoffs = [],[]
@@ -546,23 +554,25 @@ if __name__ == '__main__':
                         hsf = '%s-'%rep + '%s.hsf' % ts.strftime('%Y-%m-%d-%H-%M')
                         hsf = os.path.join(os.path.abspath(args.data_dir),'hsf/',hsf)
                         mfbr_events.append(env.create_eval_file(hsf,ct=ts,eval_file='%s.inp'%i))
-                        tss = pd.DataFrame.from_dict({'Time':np.arange(ts,ts + dt.timedelta(minutes=args.horizon),dt.timedelta(minutes=args.interval)),
-                                                      'Index':np.arange(args.horizon)}).set_index('Time')
+                        tss = pd.DataFrame.from_dict({'Time':np.arange(ts,ts + dt.timedelta(minutes=args.horizon+args.ctrl_step),
+                                                                       dt.timedelta(minutes=args.interval)),
+                                                      'Index':np.arange(args.horizon+args.ctrl_step)}).set_index('Time')
                         tss.index = pd.to_datetime(tss.index)
-                        r = dG.states.take(idx+np.arange(args.horizon)[:,None]+np.arange(ctrl.r_step),axis=0)
+                        r = dG.states[...,-1:].take(idx+np.arange(args.horizon+args.ctrl_step)[:,None]+np.arange(ctrl.r_step),axis=0)
                         mfbr_runoffs.append((tss,r))
                 else:
                     train_id = np.random.choice(train_ids,args.rain_num,replace=False)
                 with mp.Pool(args.processes) as pool:
                     res = [pool.apply_async(func=interact_steps,
                                             args=(args,mfbr_events[i] if args.branch else events[idx],
-                                                  mfbr_runoffs[i] if args.branch else runoffs[idx], params,True,))
+                                                  mfbr_runoffs[i] if args.branch else runoffs[idx],
+                                                  True, params,True,'cpu',))
                         for i,idx in enumerate(train_id)]
                     pool.close()
                     pool.join()
                     res = [r.get() for r in res]
                 # res = [interact_steps(args,mfbr_events[i] if args.branch else events[idx],
-                #                       mfbr_runoffs[i] if args.branch else runoffs[idx], params,True,)
+                #                       mfbr_runoffs[i] if args.branch else runoffs[idx],True, params,True,'cpu',)
                 #                       for i,idx in enumerate(train_id)]
                 trajs = [[r[i] if r[i].shape[0] % ctrl.r_step == 0 else \
                           np.concatenate([r[i],np.repeat(r[i][-1:],ctrl.r_step - r[i].shape[0] % ctrl.r_step,axis=0)],axis=0)
@@ -575,16 +585,17 @@ if __name__ == '__main__':
                     trans = ctrl.get_trans([ctrl.to_tensor(dat) for dat in [x,settings,b,y,rx,ry,ex,ey]])
                     returns.append(trans[2].cpu().numpy().sum())
                     trans += (ctrl.to_tensor(np.eye(x.shape[0])[-1]),)
-                    if args.agent == 'PPO':
-                        trans = ctrl.agent.update_trajs(trans)
                     dGv.update(trans)
                     n_trans += trans[0].shape[0]
+                if args.agent == 'PPO':
+                    trans = ctrl.agent.update_trajs([getattr(dGv,item) for item in dGv.items])
+                    dGv.clear()
+                    dGv.update(trans)
                 num_trans.append(n_trans)
-                train_objss.append(np.array([np.sum(r[-1]) for r in res]))
+                train_objss.append(np.array([np.sum(r[5]) for r in res]))
                 if np.mean(train_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in train_objss[:-1]]):
-                    if not os.path.exists(os.path.join(args.agent_dir,'train')):
-                        os.mkdir(os.path.join(args.agent_dir,'train'))
-                    ctrl.save('train')
+                    ctrl.save('retrain-train' if args.load_agent else 'train')
+                dmts.append(np.array([np.sum(r[-1]) for r in res]))
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])))
@@ -595,11 +606,10 @@ if __name__ == '__main__':
             # Model-based sampling
             if args.model_based or args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-based sampling")
-                seq = max(args.seq,args.horizon)
-                train_idxs = dG.get_data_idxs(train_ids,seq)
-                train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,args.ctrl_step,weight=True)
+                train_idxs = dG.get_data_idxs(train_ids,args.horizon)
+                train_dats = dG.prepare_batch(train_idxs,args.horizon,args.batch_size,args.ctrl_step,weight=True)
                 with th.no_grad():
-                    trajs_v = ctrl.rollout([ctrl.to_tensor(dat) if dat is not None else dat for dat in train_dats[:-2]])
+                    trajs_v = ctrl.rollout([ctrl.to_tensor(dat) if dat is not None else dat for dat in train_dats[:-2]],ctrl=True)
                 # convert trajectories to dG dats and to transitions
                 states,perfs,settings,rx,ry,edge_states = ctrl.state_split_trajs(trajs_v,True)
                 x,b,y = dG.state_split_batch(states,perfs)
@@ -611,15 +621,15 @@ if __name__ == '__main__':
                 if args.agent == 'PPO':
                     trans = ctrl.agent.update_trajs(trans)
                 dGv.update(trans)
-                sec.append(time.time()-t)
                 num_trans.append(trans[0].shape[0])
+                sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
                 writer.add_scalar('Rollout return', returns/args.batch_size, episode)
                 train_returns.append(returns/args.batch_size)
 
             # Model-free update
-            if episode > args.start_gap and dGv.cur_capa > 0:
+            if (ctrl.agent.on_policy or episode > args.start_gap) and dGv.cur_capa > 0:
                 print(f"{episode}/{args.episodes} Start model-free update")
                 # TODO: according to update-to-data ratio papers, probably need repeats>12 to reuse every data
                 repeats = int((1 + dGv.cur_capa / dGv.limit) * args.repeats)
@@ -650,51 +660,56 @@ if __name__ == '__main__':
                 # ctrl.save()
                 params['actor'] = {k:v.cpu() for k,v in ctrl.agent.actor.state_dict().items()}
                 with mp.Pool(args.processes) as pool:
-                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],params,False,))
+                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,params,False,'cpu',))
                             for idx,event in zip(test_ids,test_events)]
                     pool.close()
                     pool.join()
                     res = [r.get() for r in res]
-                # res = [interact_steps(args,event,runoffs[idx],False,) for idx,event in zip(test_ids,test_events)]
+                # res = [interact_steps(args,event,runoffs[idx],params,False,) for idx,event in zip(test_ids,test_events)]
                 trajs = [np.concatenate([r[i] for r in res],axis=0) for i in range(5)]
                 trajs.append(np.concatenate([[idx]*r[0].shape[0] for idx,r in zip(test_ids,res)],axis=-1))
                 if args.tune_gap > 0:
                     dG.update(trajs)
-                test_objss.append(np.array([np.sum(r[-1]) for r in res]))
+                test_objss.append(np.array([np.sum(r[5]) for r in res]))
                 sec.append(time.time()-t)
                 t = time.time()
                 print("{}/{} Finish model-free interaction: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(test_objss[-1])))
                 writer.add_scalar('Testing objectives', np.mean(test_objss[-1]), episode)
                 if np.mean(test_objss[-1]) < np.min([1e6]+[np.mean(obj) for obj in test_objss[:-1]]):
-                    if not os.path.exists(os.path.join(args.agent_dir,'test')):
-                        os.mkdir(os.path.join(args.agent_dir,'test'))
-                    ctrl.save('test')
+                    ctrl.save('retrain-test' if args.load_agent else 'test')
             secs.append(sec)
 
             if ctrl.agent.on_policy and (args.model_based or (episode+1) % args.sample_gap == 0):
                 dGv.clear()
             # Save the agent
             if episode > args.start_gap and episode % args.save_gap == 0:
+                cwd = os.path.join(ctrl.agent_dir, 'retrain') if args.load_agent else ctrl.agent_dir
+                if not os.path.exists(cwd):
+                    os.mkdir(cwd)
                 ctrl.save('retrain-%s'%episode if args.load_agent else episode)
                 if args.model_based and args.tune_gap > 0:
-                    np.save(os.path.join(ctrl.agent_dir,'model_loss.npy'),np.array(model_losses))
+                    np.save(os.path.join(cwd,'model_loss.npy'),np.array(model_losses))
                 if args.sample_gap > 0:
-                    np.save(os.path.join(ctrl.agent_dir,'train_objs.npy'),np.array(train_objss))
-                np.save(os.path.join(ctrl.agent_dir,'train_returns.npy'),np.array(train_returns))
-                np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),train_losses)
-                np.save(os.path.join(ctrl.agent_dir,'test_objs.npy'),np.array(test_objss))
-                np.savez(os.path.join(ctrl.agent_dir,'time.npz'),*[np.array(sec) for sec in secs])
-                np.save(os.path.join(ctrl.agent_dir,'num_trans.npy'),np.array(num_trans))
+                    np.save(os.path.join(cwd,'train_objs.npy'),np.array(train_objss))
+                np.save(os.path.join(cwd,'train_returns.npy'),np.array(train_returns))
+                np.save(os.path.join(cwd,'train_loss.npy'),train_losses)
+                np.save(os.path.join(cwd,'test_objs.npy'),np.array(test_objss))
+                if len(dmts) > 0: np.savez(os.path.join(cwd,'decision-making_time.npz'),*dmts)
+                np.savez(os.path.join(cwd,'time.npz'),*[np.array(sec) for sec in secs])
+                np.save(os.path.join(cwd,'num_trans.npy'),np.array(num_trans))
                 if not ctrl.agent.on_policy:
-                    dGv.save(args.agent_dir)
-        ctrl.save()
+                    dGv.save(cwd)
+        ctrl.save('retrain' if args.load_agent else None)
+        cwd = os.path.join(ctrl.agent_dir, 'retrain') if args.load_agent else ctrl.agent_dir
+        if not os.path.exists(cwd):
+            os.mkdir(cwd)
         if args.model_based and args.tune_gap > 0:
-            np.save(os.path.join(ctrl.agent_dir,'model_loss.npy'),np.array(model_losses))
+            np.save(os.path.join(cwd,'model_loss.npy'),np.array(model_losses))
             plt.plot(model_losses,label='model_loss',alpha=0.5)
-            plt.savefig(os.path.join(ctrl.agent_dir,'model_loss.png'),dpi=300)
+            plt.savefig(os.path.join(cwd,'model_loss.png'),dpi=300)
             plt.clf()
         train_losses = np.array(train_losses)
-        np.save(os.path.join(ctrl.agent_dir,'train_loss.npy'),train_losses)
+        np.save(os.path.join(cwd,'train_loss.npy'),train_losses)
         fig,((ax1,ax2),(ax3,ax4)) = plt.subplots(2,2,figsize=(12,8))
         for ax,item,losses in zip([ax1,ax2,ax3,ax4][:train_losses.shape[-1]],
                                   ['value loss','policy loss','entropy','alpha'][:train_losses.shape[-1]],
@@ -702,20 +717,23 @@ if __name__ == '__main__':
             ax.plot(losses,label=item)
             ax.set_xlabel('Episode')
             ax.set_ylabel(item)
-        fig.savefig(os.path.join(ctrl.agent_dir,'train_loss.png'),dpi=300)
+        fig.savefig(os.path.join(cwd,'train_loss.png'),dpi=300)
         plt.clf()
         fig,(ax1,ax2,ax3) = plt.subplots(3,1,figsize=(5,12))
         if args.sample_gap > 0:
             ax1.plot(np.mean(train_objss,axis=-1),label='train_objs')
-            np.save(os.path.join(ctrl.agent_dir,'train_objs.npy'),np.array(train_objss))
+            np.save(os.path.join(cwd,'train_objs.npy'),np.array(train_objss))
         ax2.plot(np.mean(test_objss,axis=-1),label='test_objs')
-        np.save(os.path.join(ctrl.agent_dir,'test_objs.npy'),np.array(test_objss))
+        np.save(os.path.join(cwd,'test_objs.npy'),np.array(test_objss))
         ax3.plot(train_returns,label='sample returns')
-        np.save(os.path.join(ctrl.agent_dir,'train_returns.npy'),np.array(train_returns))
-        fig.savefig(os.path.join(ctrl.agent_dir,'objectives.png'),dpi=300)
+        np.save(os.path.join(cwd,'train_returns.npy'),np.array(train_returns))
+        fig.savefig(os.path.join(cwd,'objectives.png'),dpi=300)
         plt.clf()
-        np.savez(os.path.join(ctrl.agent_dir,'time.npz'),*[np.array(sec) for sec in secs])
-        np.save(os.path.join(ctrl.agent_dir,'num_trans.npy'),np.array(num_trans))
+        if len(dmts) > 0: np.savez(os.path.join(cwd,'decision-making_time.npz'),*dmts)
+        np.savez(os.path.join(cwd,'time.npz'),*[np.array(sec) for sec in secs])
+        np.save(os.path.join(cwd,'num_trans.npy'),np.array(num_trans))
+        if not ctrl.agent.on_policy:
+            dGv.save(cwd)
 
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.agent_dir,'parser.yaml'),'r'),yaml.FullLoader)
@@ -738,19 +756,19 @@ if __name__ == '__main__':
         if 'rain_num' in config:
             rain_arg['rain_num'] = config['rain_num']
         events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
-        if os.path.exists(os.path.join(args.result_dir,'test_runoff.npy')):
-            res = [np.load(os.path.join(args.result_dir,'test_runoff_ts.npy'),allow_pickle=True),
-                   np.load(os.path.join(args.result_dir,'test_runoff.npy'),allow_pickle=True)]
-            res = [(ts,runoff) for ts,runoff in zip(res[0],res[1])]
+        if os.path.exists(os.path.join(args.result_dir,'train_runoff.npz')):
+            res = [np.load(os.path.join(args.result_dir,'train_runoff_ts.npz'),allow_pickle=True),
+                   np.load(os.path.join(args.result_dir,'train_runoff.npz'),allow_pickle=True)]
+            res = [(ts,runoff) for ts,runoff in zip(res[0].values(),res[1].values())]
         else:
-            pool = mp.Pool(args.processes)
-            res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
-                   for event in events]
-            pool.close()
-            pool.join()
-            res = [r.get() for r in res]
-            np.save(os.path.join(args.result_dir,'test_runoff_ts.npy'),np.array([r[0] for r in res]))
-            np.save(os.path.join(args.result_dir,'test_runoff.npy'),np.array([r[1] for r in res]))
+            with mp.Pool(args.processes) as pool:
+                res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
+                    for event in events]
+                pool.close()
+                pool.join()
+                res = [r.get() for r in res]
+            np.savez(os.path.join(args.result_dir,'train_runoff_ts.npz'),*[np.array(r[0]) for r in res])
+            np.savez(os.path.join(args.result_dir,'train_runoff.npz'),*[np.array(r[1]) for r in res])
         runoffs = []
         for ts,runoff in res:
             # Use mp to get runoff
@@ -763,20 +781,21 @@ if __name__ == '__main__':
             runoffs.append([tss,runoff])
         print("Finish testing events runoff")
 
-        ctrl = rl_ctrl(args,act_only=True)
-        ctrl.agent.load()
-
         # Test the agent
-        pool = mp.Pool(args.processes)
-        res = [pool.apply_async(func=ctrl.interact_steps,args=(event,runoffs[idx],False,))
-                for idx,event in enumerate(events)]
-        pool.close()
-        pool.join()
-        for event,r in zip(events,res):
+        if args.processes > 1:
+            with mp.Pool(args.processes) as pool:
+                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,None,False,'cpu',))
+                        for idx,event in enumerate(events)]
+                pool.close()
+                pool.join()
+                res = [r.get() for r in res]
+        else:
+            res = [interact_steps(args,event,runoffs[idx],None,False,) for idx,event in enumerate(events)]
+        for event,(states,perfs,settings,rains,edge_states,objects,times) in zip(events,res):
             name = os.path.basename(event).strip('.inp')
-            states,perfs,settings,rains,edge_states,rains,objects = r.get()
             np.save(os.path.join(args.result_dir,name + '_state.npy'),states)
             np.save(os.path.join(args.result_dir,name + '_perf.npy'),perfs)
             np.save(os.path.join(args.result_dir,name + '_object.npy'),objects)
             np.save(os.path.join(args.result_dir,name + '_settings.npy'),settings)
             np.save(os.path.join(args.result_dir,name + '_edge_states.npy'),edge_states)
+            np.save(os.path.join(args.result_dir,name + '_times.npy'),times)

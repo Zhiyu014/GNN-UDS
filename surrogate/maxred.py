@@ -15,7 +15,7 @@ from pymoo.termination import get_termination
 from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
-from mpc import TerminationCollection
+from pymoo.termination.collection import TerminationCollection
 HERE = os.path.dirname(__file__)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -36,6 +36,7 @@ def parser(config=None):
 
     parser.add_argument('--processes',type=int,default=1,help='number of simulation processes')
     parser.add_argument('--pop_size',type=int,default=32,help='number of population')
+    parser.add_argument('--initial_dir',type=str,default='./results/',help='path of the initial control series')
     parser.add_argument('--sampling',type=float,default=0.4,help='sampling rate')
     parser.add_argument('--crossover',nargs='+',type=float,default=[1.0,3.0],help='crossover rate')
     parser.add_argument('--mutation',nargs='+',type=float,default=[1.0,3.0],help='mutation rate')
@@ -92,10 +93,8 @@ class mpc_problem(Problem):
         y = np.repeat(y,self.r_step,axis=0)
 
         env = get_env(self.args.env)(swmm_file = self.file)
-        state = env.reset(self.file,global_state=True)
-        done = False
-        idx = 0
-        # perf = 0
+        # state = env.reset(self.file,global_state=True)
+        done,idx = False,0
         while not done and idx < y.shape[0]:
             if self.args.prediction['no_runoff']:
                 for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
@@ -106,7 +105,7 @@ class mpc_problem(Problem):
                 # sett = np.array(env.controller('safe',state,sett)).astype(float)
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
             done = env.step(sett)
-            state = env.state_full()
+            # state = env.state_full()
             # perf += env.performance().sum()
             idx += 1
         return env.objective(idx).sum()
@@ -141,7 +140,7 @@ def get_runoff(env,event,rate=False,tide=False):
     return ts,runoff
 
 if __name__ == '__main__':
-    args,config = parser(os.path.join(HERE,'utils','config.yaml'))
+    args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     ctx = mp.get_context("spawn")
 
@@ -183,7 +182,17 @@ if __name__ == '__main__':
 
         prob = mpc_problem(args,eval_file=event)
 
-        sampling = LatinHypercubeSampling() if args.act.startswith('conti') else IntegerRandomSampling()
+        if args.act.startswith('conti'):
+            sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
+        else:
+            sampling = np.random.randint(prob.xl,prob.xu+1,size=(args.pop_size,prob.n_var))
+        if os.path.exists(os.path.join(args.initial_dir,name + '_settings.npy')):
+            print('Load initial settings')
+            settings = np.load(os.path.join(args.initial_dir,name + '_settings.npy'))[1::prob.r_step]
+            if not args.act.startswith('conti'):
+                settings = np.stack([np.argmin(np.abs(settings[:,i:i+1] - np.tile(space,(settings.shape[0],1))),axis=-1)
+                            for i,space in enumerate(args.action_space.values())],axis=-1)
+            sampling = np.concatenate([settings.reshape(1,-1),sampling[:args.pop_size-int(args.pop_size>1)]],axis=0)
         crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         if len(args.termination) > 2:

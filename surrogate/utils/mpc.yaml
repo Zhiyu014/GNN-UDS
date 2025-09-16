@@ -19,6 +19,7 @@ astlingen:
   horizon: 60
   pop_size: 32
   use_current: False
+  initial_dir: ./results/astlingen/
   sampling: 0.4
   crossover:
     - 1.0
@@ -62,6 +63,7 @@ hague:
   horizon: 60
   pop_size: 32
   use_current: False
+  initial_dir: ./results/hague/
   sampling: 0.4
   crossover:
     - 1.0
@@ -104,6 +106,7 @@ chaohu:
   horizon: 60
   pop_size: 32
   use_current: False
+  initial_dir: ./results/chaohu/
   sampling: 0.4
   crossover:
     - 1.0
