@@ -1,8 +1,6 @@
 # GNN-UDS
  A hydraulic surrogate model and real-time control methods of urban drainage networks. 
  
-The main branch is based on Tensorflow. See [here](https://github.com/Zhiyu014/GNN-UDS/tree/torch) for the PyTorch version.
-
  Please feel free to read or cite our paper below.
 
 **GNN-based model**: Zhang, Z., Tian, W., Lu, C., Liao, Z. and Yuan, Z. 2024. Graph neural network-based surrogate modelling for real-time hydraulic prediction of urban drainage networks. Water Research, 263, 122142. https://doi.org/10.1016/j.watres.2024.122142

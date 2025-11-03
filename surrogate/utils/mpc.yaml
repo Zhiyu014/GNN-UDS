@@ -10,6 +10,7 @@ astlingen:
   swmm_step: 1
 
   # MPC args
+  sample_interval: 5
   ctrl_step: 5
   act: 'False'
   lag: False
@@ -55,6 +56,7 @@ hague:
   swmm_step: 1
   
   # MPC args
+  sample_interval: 15
   ctrl_step: 15
   act: 'False'
   lag: False
@@ -99,6 +101,7 @@ chaohu:
   swmm_step: 1
 
   # MPC args
+  sample_interval: 10
   ctrl_step: 10
   act: 'False'
   lag: False

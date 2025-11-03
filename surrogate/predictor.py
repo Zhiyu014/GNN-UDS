@@ -294,17 +294,18 @@ if __name__ == '__main__':
 
     train_de = {
         # 'train':True,
-        # 'env':'chaohu',
-        # 'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+        # 'env':'astlingen',
+        # 'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
         # 'act':'conti',
-        # 'model_dir':'./model/chaohu/60s_50k_rand_pred_fitone/',
+        # 'model_dir':'./model/astlingen/120s_100k_conti_pred_full_norm/',
         # 'load_model':False,
+        # 'full':True,'norm':True,
         # 'ctrl_step':5,
         # 'batch_size':64,
         # 'epochs':10000,
         # 'n_sp_layer':5,
         # 'n_tp_layer':5,
-        # 'seq_in':60,'seq_out':60,
+        # 'seq_in':120,'seq_out':120,
         # # 'if_flood':3,
         # 'recurrent':'LSTM',
         }
@@ -362,7 +363,7 @@ if __name__ == '__main__':
     for epoch in range(args.epochs):
         train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
-        ex,ey = [dat for dat in train_dats[-2:]]
+        ex,ey = [dat for dat in train_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
             objs = env.norm_obj(objs,[x,ex])
@@ -371,7 +372,7 @@ if __name__ == '__main__':
 
         test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
-        ex,ey = [dat for dat in test_dats[-2:]]
+        ex,ey = [dat for dat in test_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
             objs = env.norm_obj(objs,[x,ex])

@@ -414,9 +414,9 @@ class Emulator:
                 predss.append(preds)
                 edge_predss.append(edge_preds)
                 if self.if_flood:
-                    x_new = tf.concat([preds[...,:-1],tf.cast(preds[...,-1:]>0.5,tf.float32),b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
+                    x_new = tf.concat([preds[...,:-1],tf.cast(preds[...,-1:]>0.5,tf.float32),b[:,i*self.seq_out:(i+1)*self.seq_out,:,:1]],axis=-1)
                 else:
-                    x_new = tf.concat([preds,b[:,i*self.seq_out:(i+1)*self.seq_out,:]],axis=-1)
+                    x_new = tf.concat([preds,b[:,i*self.seq_out:(i+1)*self.seq_out,:,:1]],axis=-1)
                 x = tf.concat([x[:,-(self.seq_in-self.seq_out):,...],x_new],axis=1) if self.seq_in > self.seq_out else x_new
                 ae_new = self.get_edge_action(a[:,i*self.seq_out:(i+1)*self.seq_out,...],True)
                 ex_new = tf.concat([edge_preds,ae_new],axis=-1)

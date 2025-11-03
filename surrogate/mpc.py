@@ -1,6 +1,7 @@
 import os,time,math
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
+tf.config.list_physical_devices(device_type='GPU')            
 # gpus = tf.config.list_physical_devices(device_type='GPU')
 # tf.config.experimental.set_memory_growth(gpus[0], True)
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -51,6 +52,7 @@ def parser(config=None):
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
     parser.add_argument('--swmm_step',type=int,default=30,help='routing step for swmm inp files')
 
+    parser.add_argument('--sample_interval',type=int,default=5,help='sampling interval of MPC')
     parser.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
     parser.add_argument('--horizon',type=int,default=60,help='control horizon')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
@@ -93,9 +95,10 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    for i in range(len(args.termination)//2):
-        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
-
+    n_term = len(args.termination)
+    conds = ['maxls','ftol','maxcor'] if args.gradient else ['n_eval','n_gen','fmin']
+    for i,j in zip(range(n_term-1),range(1,n_term)):
+        args.termination[j] = eval(args.termination[j]) if args.termination[i] in conds else args.termination[j]
     print('MPC configs: {}'.format(args))
     return args,config
 
@@ -557,7 +560,7 @@ class mpc_problem_gr(tf.Module):
                     f = tf.cast(perf>0,tf.float32)
                     state = tf.concat([state[...,:-1],f,state[...,-1:]],axis=-1)
                 preds = self.emul.predict_tf(state,ri,sett,edge_state)
-                state,perf = tf.concat([preds[0][...,:-2],ri],axis=-1),preds[0][...,-1:]
+                state,perf = tf.concat([preds[0][...,:-2],ri[...,:1]],axis=-1),preds[0][...,-1:]
                 ae = self.emul.get_edge_action(sett,True)
                 edge_state = tf.concat([preds[1],ae],axis=-1)
                 predss.append(preds)
@@ -702,7 +705,7 @@ def run_ntopt(prob,args,setting=None):
                                     hessp=lambda *arg: prob.hessp_fn(*arg).numpy(),
                                     bounds=list(zip(prob.xl,prob.xu)),
                                     callback=mycallback,
-                                    # options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                                    options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
                                     )
         # TODO: if result not success, try to run again with different initial point?
         res.append(results)
@@ -739,11 +742,11 @@ if __name__ == '__main__':
     de = {
         # 'env':'astlingen',
         # 'act':'conti',
-        # 'processes':2,
-        # 'pop_size':16,
+        # 'processes':1,
+        # 'pop_size':1,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
-        # # 'termination':['n_gen',5,'time','00:05:00'],
+        # 'termination':['ftol',1e-6,'maxls','20'],
         # 'surrogate':True,
         # 'gradient': True,
         # 'predict':False,
@@ -755,8 +758,8 @@ if __name__ == '__main__':
         # 'swmm_step':1,
         # 'lag':True,
         # 'horizon':60,
-        # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs',
-        # 'result_dir':'./results/astlingen/60s_conti_lbfgsb16fl_2007',
+        # 'model_dir':'./model/astlingen/60s_50k_conti_1000ledgef_res_norm_flood_gat_5lyrs/retrain/5000',
+        # 'result_dir':'./results/astlingen/60s_conti_5min_ele001_stmga_test20',
         }
     # config['rain_dir'] = de['rain_dir']
     for k,v in de.items():
@@ -845,11 +848,11 @@ if __name__ == '__main__':
         setting = [env.controller('default') for _ in range(args.horizon//args.ctrl_step)]
         settings = [env.controller(args.keep,states[0],setting[0]) if args.keep != 'False' else setting[0]]
 
-        done,i,valss,nfunss,timess,solss = False,0,[],[],[],[]
+        done,i,j,valss,nfunss,timess,solss = False,0,0,[],[],[],[]
         while not done:
-            if i*args.interval % args.ctrl_step == 0:
+            if i*args.interval % args.sample_interval == 0:
                 t2 = time.time()
-                setting = setting[1:] + setting[-1:]
+                setting = setting[j+1:] + setting[-1:] * (j+1)
                 if args.surrogate:
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
@@ -889,16 +892,21 @@ if __name__ == '__main__':
                 valss.append(vals)
                 nfunss.append(nfuns)
                 timess.append(times)
-                solss.append(sols[:,:1,:])
+                solss.append(sols[:,:args.sample_interval//args.ctrl_step,:])
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
+                j = 0
                 lag = (t3-t2)/60/args.interval
                 prev_sett = sett.copy() if i > 0 else settings[0].copy()
                 sett = env.controller('safe',state[-1] if args.surrogate else state,setting[0]) if args.keep == 'False' else settings[0]
-            real_sett = prev_sett if args.lag and i*args.interval % args.ctrl_step < int(lag) else sett
+            elif i*args.interval % args.ctrl_step == 0:
+                j += 1
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
+                # sett = env.controller('safe',state[-1] if args.surrogate else state,setting[0]) if args.keep == 'False' else settings[0]
+            real_sett = prev_sett if args.lag and i*args.interval % args.sample_interval < int(lag) else sett
             done = env.step(real_sett,
-                            lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.ctrl_step == int(lag) else None)
+                            lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.sample_interval == int(lag) else None)
             state = env.state_full(seq=margs.seq_in if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq_in)

@@ -62,22 +62,22 @@ class hague(basescenario):
         preds,edge_preds = preds
         h,q_w,fl = preds[...,0],preds[...,-1],edge_preds[...,-1]
         nodes,links,targets = self.elements['nodes'],self.elements['links'],self.config['performance_targets']
-        flood = [q_w.sum(axis=-1) * weight
-                for idx,attr,_,weight in targets 
-                if attr == 'cumflooding' and idx=='nodes']
+        # flood = [q_w.sum(axis=-1) * weight
+        #         for idx,attr,_,weight in targets 
+        #         if attr == 'cumflooding' and idx=='nodes']
         pondfl = [q_w[...,nodes.index(idx)] * weight
                   for idx,attr,_,weight in targets
                   if attr == 'cumflooding' and idx in nodes]
         outflow = [fl[...,links.index(idx)] * weight
                   for idx,attr,_,weight in targets
                   if attr == 'flow_vol' and idx in links]
-        depth = [np.abs(h[...,nodes.index(idx)]-target) * weight
-                for idx,attr,target,weight in targets
-                if attr == 'head' and weight < 1000]
-        exced = [(h[...,nodes.index(idx)]>target)*weight
-                for idx,attr,target,weight in targets
-                if attr == 'head' and weight == 1000]
-        obj = np.stack(flood + pondfl + outflow + depth + exced,axis=1)
+        # depth = [np.abs(h[...,nodes.index(idx)]-target) * weight
+        #         for idx,attr,target,weight in targets
+        #         if attr == 'head' and weight < 1000]
+        # exced = [(h[...,nodes.index(idx)]>target)*weight
+        #         for idx,attr,target,weight in targets
+        #         if attr == 'head' and weight == 1000]
+        obj = np.stack(pondfl + outflow,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         return obj.sum(axis=-1) if not keepdim else np.transpose(obj,(0,2,1))
