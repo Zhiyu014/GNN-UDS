@@ -100,10 +100,9 @@ class astlingen(basescenario):
             __norm = np.expand_dims(__norm,-1) if isinstance(__norm,np.ndarray) else th.unsqueeze(__norm,-1)
         return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
 
-    def get_obj_norm(self,norm_y,norm_e=None,perfs=None):
+    def get_obj_norm(self,norm_y,flood):
         nodes = self.elements['nodes']
         targets = self.config['performance_targets']
-        flood = np.squeeze(perfs.max(axis=0))
         fl = [np.array([flood[nodes.index(idx)],0]) * weight
               for idx,attr,weight in targets if attr == 'cumflooding']
         infl = [norm_y[...,nodes.index(idx),1] * weight

@@ -154,6 +154,7 @@ cython_debug/
 *.npy
 *.npz
 !train_id_*.npy
+*.ini
 *.h5
 *.pth
 *.pt

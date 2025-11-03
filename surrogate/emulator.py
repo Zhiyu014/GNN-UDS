@@ -164,7 +164,7 @@ class STM(nn.Module):
         return F.hardsigmoid(x),th.stack([F.hardsigmoid(e[...,0]),th.tanh(e[...,-1])],dim=-1)
         
 class Emulator:
-    def __init__(self,args=None):
+    def __init__(self,args=None,act_only=False):
         self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
         self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
         self.tide = getattr(args,'tide',False)
@@ -188,23 +188,26 @@ class Emulator:
         self.set_indices(self.batch_size)
 
         self.model = STM(in_dims,self.node_edge,args,self.graph_base,self.if_flood).to(device)
-        self.optimizer = th.optim.Adam(self.model.parameters(),lr=getattr(args,"learning_rate",1e-3))
-        self.mixed_precision = getattr(args,"mixed_precision",False)
-        self.scaler = th.amp.GradScaler()
-        self.mse = F.mse_loss
-        if self.if_flood:
-            self.bce = F.binary_cross_entropy_with_logits
-            self.poswei = th.Tensor(getattr(args,"poswei",[1.0 for _ in range(self.n_node)])).to(device)
-        # GradNorm for multi-task learning
-        self.gradnorm = getattr(args,"gradnorm",False)
-        if self.gradnorm:
-            self.alpha_reg = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
-            self.alpha_cls = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
-            self.alpha_optimizer = th.optim.Adam([self.alpha_reg,self.alpha_cls],lr=1e-4)
-            self.l1loss = nn.L1Loss()
-            self.alpha = 0.5
-        self.roll = getattr(args,"horizon",getattr(args,"roll",0)*self.seq)//self.seq
         self.model_dir = getattr(args,"model_dir")
+        if not act_only:
+            self.optimizer = th.optim.Adam(self.model.parameters(),lr=getattr(args,"learning_rate",1e-3))
+            self.mixed_precision = getattr(args,"mixed_precision",False)
+            self.scaler = th.amp.GradScaler()
+            self.mse = F.mse_loss
+            if self.if_flood:
+                self.bce = F.binary_cross_entropy_with_logits
+                self.poswei = th.Tensor(getattr(args,"poswei",[1.0 for _ in range(self.n_node)])).to(device)
+            # GradNorm for multi-task learning
+            self.gradnorm = getattr(args,"gradnorm",False)
+            if self.gradnorm:
+                self.alpha_reg = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
+                self.alpha_cls = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
+                self.alpha_optimizer = th.optim.Adam([self.alpha_reg,self.alpha_cls],lr=1e-4)
+                self.l1loss = nn.L1Loss()
+                self.alpha = 0.5
+            self.roll = getattr(args,"horizon",getattr(args,"roll",0)*self.seq)//self.seq
+            self.nwei = th.Tensor(getattr(args,"nwei",[1.0 for _ in range(self.n_node)])).to(device)
+            self.ewei = th.Tensor(getattr(args,"ewei",[1.0 for _ in range(self.n_edge)])).to(device)  
 
         self.act = getattr(args,"act",False)
         self.act = self.act and self.act != 'False'
@@ -217,14 +220,11 @@ class Emulator:
         self.is_outfall = th.Tensor(getattr(args,"is_outfall",[0 for _ in range(self.n_node)])).to(device)
         self.pump = th.Tensor(getattr(args,"pump",[0.0 for _ in range(self.n_edge)])).to(device)
         self.has_pump = self.pump.min().item() > 0
+        if self.has_pump:
+            self.area = th.Tensor(getattr(args,"area",[0.0 for _ in range(self.n_node)])).to(device)
         self.hmax = th.Tensor(getattr(args,"hmax",[1.5 for _ in range(self.n_node)])).to(device)
         self.hmin = th.Tensor(getattr(args,"hmin",[0.0 for _ in range(self.n_node)])).to(device)
         self.use_head = self.hmin.max().item() > 0
-        self.area = th.Tensor(getattr(args,"area",[0.0 for _ in range(self.n_node)])).to(device)
-        self.nwei = th.Tensor(getattr(args,"nwei",[1.0 for _ in range(self.n_node)])).to(device)
-        self.ewei = th.Tensor(getattr(args,"ewei",[1.0 for _ in range(self.n_edge)])).to(device)
-        self.pump_in = th.Tensor(getattr(args,"pump_in",[0.0 for _ in range(self.n_node)])).to(device)
-        self.pump_out = th.Tensor(getattr(args,"pump_out",[0.0 for _ in range(self.n_node)])).to(device)      
         self.offset = th.Tensor(getattr(args,"offset",[0.0 for _ in range(self.n_edge)])).to(device)
         self.has_offset = self.offset.max().item() > 0
 
@@ -261,9 +261,9 @@ class Emulator:
                 predss.append(preds)
                 edge_predss.append(edge_preds)
                 if self.if_flood:
-                    x_new = th.concat([preds[...,:-1],(preds[...,-1:]>0).to(th.float32),bi],dim=-1)
+                    x_new = th.concat([preds[...,:-1],(preds[...,-1:]>0).to(th.float32),bi[...,:1]],dim=-1)
                 else:
-                    x_new = th.concat([preds,bi],dim=-1)
+                    x_new = th.concat([preds,bi[...,:1]],dim=-1)
                 ex_new = th.concat([edge_preds,aei],dim=-1)
                 x,ex = x_new,ex_new
             preds = th.concat(predss,dim=1)

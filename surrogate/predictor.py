@@ -1,16 +1,12 @@
-from tensorflow import reshape,transpose,squeeze,GradientTape,expand_dims,reduce_mean,reduce_sum,concat,sqrt,cumsum,tile
-from keras.layers import Dense,Input,GRU,LSTM,Conv1D,Flatten
-from keras import activations
-from keras.models import Model,Sequential
-from keras.regularizers import l1,l2
-from keras.optimizers import Adam
-from keras.losses import MeanSquaredError,BinaryCrossentropy
-from keras import mixed_precision
+import torch as th
+from torch.utils.tensorboard import SummaryWriter
+from torch import nn
+from torch_geometric.nn import SAGEConv,GraphConv,GATConv,HeteroConv
+import torch.nn.functional as F
 import numpy as np
-import os
-# from line_profiler import LineProfiler
-import tensorflow as tf
-# tf.config.list_physical_devices(device_type='GPU')
+import os,shutil
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
 import yaml,time,matplotlib.pyplot as plt
 from main import Argument,HERE
@@ -20,10 +16,7 @@ from envs import get_env
 class ArgumentPredictor(Argument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--full',action='store_true',help='if use full-scale input')
         self.add_argument('--norm',action='store_true',help='if norm targets individually')
-        self.add_argument('--vol',action='store_true',help='if only fit volume-based objectives')
-        self.add_argument('--cum',action='store_true',help='if fit cumulative values of the horizon')
 
 def parser(config=None):
     parser = ArgumentPredictor(description='prediction')
@@ -39,174 +32,160 @@ def parser(config=None):
     print('Training configs: {}'.format(args))
     return args,config
 
+class BLM(nn.Module):
+    def __init__(self,in_dims,n_outs,args,if_flood=False):
+        super(BLM,self).__init__()
+        nly = getattr(args,"nly",3)
+        dim = getattr(args,'dim',64)
+        kernel = getattr(args,"kernel",3)
+        activation = getattr(args,"activation","relu")
+        Activate = getattr(nn,activation.capitalize().replace('lu','LU'),'ReLU')
+        self.encs = nn.ModuleList([nn.Linear(in_dim,dim//2)
+                      for in_dim in in_dims])
+        self.spsx = nn.Sequential(*[nn.Linear(dim,dim),Activate()]*nly)
+        self.spsb = nn.Sequential(*[nn.Linear(dim,dim),Activate()]*nly)
+        # self.tps0 = nn.ModuleList([nn.Conv1d(dim,dim,kernel,dilation=2**i) for i in range(nly)])
+        # self.tps1 = nn.ModuleList([nn.Conv1d(dim*2 if i==0 else dim,dim,kernel,dilation=2**i) for i in range(nly)])
+        self.tps0 = nn.LSTM(dim,dim,nly,batch_first=True)
+        self.tps1 = nn.LSTM(dim*2,dim,nly,batch_first=True)
+        self.padding = [(kernel-1)*(2**i) for i in range(nly)]
+        self.out = nn.ModuleList([nn.Linear(dim, n_outs[0])])
+        self.activation = getattr(F,activation,F.relu)
+        self.if_flood = if_flood
+        if self.if_flood:
+            self.flood = nn.Sequential(*[nn.Linear(dim,dim),Activate()]*nly+\
+                                       [nn.Linear(dim,n_outs[1])])
+    
+    def forward(self,inps):
+        x,e,b,a = [enc(inp) for enc,inp in zip(self.encs,inps)]
+        x,b = th.concat([x,e],dim=-1),th.concat([b,a],dim=-1)
+        x,b = self.spsx(x),self.spsb(b)
+        x, (h0,c0) = self.tps0(x)
+        x = th.concat([x,b],dim=-1)
+        x, _ = self.tps1(x, (h0,c0))
+        out = self.out[0](x)
+        if self.if_flood:
+            out = th.concat([out,self.flood(x)],dim=-1)
+        return out
+
 class Predictor:
-    def __init__(self,recurrent=None,args=None):
-        self.n_node,self.n_in = getattr(args,'state_shape',(40,4))
-        self.n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
-        self.moni_nodes = [(args.elements['nodes'].index(idx),args.attrs['nodes'].index(attr))
-                           for idx,attr in args.states if attr in args.attrs['nodes']]
-        self.moni_links = [(args.elements['links'].index(idx),args.attrs['links'].index(attr))
-                           for idx,attr in args.states if attr in args.attrs['links']]
-        self.n_moni = len(self.moni_nodes) + len(self.moni_links)
+    def __init__(self,args=None):
+        n_node,self.n_in = getattr(args,'state_shape',(40,4))
+        n_edge,self.e_in = getattr(args,'edge_state_shape',(40,4))
         self.tide = getattr(args,'tide',False)
         self.b_in = 2 if self.tide else 1
+        self.seq = getattr(args,'seq',5)
+        self.if_flood = getattr(args,"if_flood",False)
+        if self.if_flood:
+            self.n_in += 1
         self.act = getattr(args,"act",False)
         self.act = self.act and self.act != 'False'
         if self.act:
             self.n_act = len(getattr(args,"act_edges"))
-            act_edges = [np.where((args.edges==act_edge).all(1))[0] for act_edge in args.act_edges]
-            act_edges = [i for e in act_edges for i in e]
-            self.act_edges = sorted(list(set(act_edges)),key=act_edges.index)
+            self.act_edges = getattr(args,"act_edges",[])
+        in_dims = [n_node*self.n_in, n_edge*self.e_in, n_node*self.b_in, self.n_act]
 
-        self.full = getattr(args,'full',False)
         self.norm = getattr(args,'norm',False)
-        self.vol = getattr(args,'vol',False)
-        self.cum = getattr(args,'cum',False)
         self.targets = getattr(args,"performance_targets")
-        if self.vol:
-            self.n_out = len([i for i,attr,weight in self.targets
-                               if attr in ['cumflooding','cuminflow'] and weight>=0.5])
-        else:
-            self.n_out = len(self.targets)
+        self.n_out = len(self.targets)
         self.flood_nodes = [args.elements['nodes'].index(i)
                              for i,attr,_ in self.targets 
                              if attr == 'cumflooding' and i in args.elements['nodes']]
         self.flood_nodes = list(set(self.flood_nodes + np.where(args.area>0)[0].tolist()))
-        self.if_flood = getattr(args,"if_flood",0)
         self.n_flood = len(self.flood_nodes)
+        n_outs = [self.n_out,self.n_flood]
+
+        self.model = BLM(in_dims,n_outs,args,self.if_flood).to(device)
+        self.optimizer = th.optim.Adam(self.model.parameters(),lr=getattr(args,"learning_rate",1e-3))
+        self.mixed_precision = getattr(args,"mixed_precision",False)
+        self.scaler = th.amp.GradScaler()
+        self.mse = F.mse_loss
         if self.if_flood:
-            self.n_in += 1
-
-        self.seq_in = getattr(args,'seq_in',6)
-        self.seq_out = getattr(args,'seq_out',1)
-
-        self.embed_size = getattr(args,'embed_size',128)
-        self.hidden_dim = getattr(args,"hidden_dim",64)
-        self.kernel_size = getattr(args,"kernel_size",3)
-        self.n_sp_layer = getattr(args,"n_sp_layer",3)
-        self.n_tp_layer = getattr(args,"n_tp_layer",3)
-        self.dropout = getattr(args,'dropout',0.0)
-        self.activation = getattr(args,"activation",'relu')
-
-        self.recurrent = recurrent
-        self.model = self.build_network(self.recurrent)
-        self.optimizer = Adam(learning_rate=getattr(args,"learning_rate",1e-3),clipnorm=1.0)
-        self.mse = MeanSquaredError()
-        self.bce = BinaryCrossentropy()
-
+            self.bce = F.binary_cross_entropy_with_logits
+            self.poswei = th.Tensor([weight for _,attr,weight in self.targets
+                                     if attr=='cumflooding']).to(device)
+        # GradNorm for multi-task learning
+        self.gradnorm = getattr(args,"gradnorm",False)
+        if self.gradnorm:
+            self.alpha_reg = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
+            self.alpha_cls = nn.Parameter(th.tensor(1.0).to(device),requires_grad=True)
+            self.alpha_optimizer = th.optim.Adam([self.alpha_reg,self.alpha_cls],lr=1e-4)
+            self.l1loss = nn.L1Loss()
+            self.alpha = 0.5
         self.model_dir = getattr(args,"model_dir")
 
-    def build_network(self,recurrent):
-        if self.full:
-            x_in = Input(shape=(self.seq_in,self.n_node*self.n_in))
-            e_in = Input(shape=(self.seq_in,self.n_edge*self.e_in))
-            inp = [x_in,e_in]
-            x = Dense(self.embed_size,activation=self.activation)(x_in)
-            e = Dense(self.embed_size,activation=self.activation)(e_in)
-            x = concat([x,e],axis=-1)
-            b_in = Input(shape=(self.seq_out,self.n_node*self.b_in,))
-            inp += [b_in]
-            b = Dense(self.embed_size,activation=self.activation)(b_in)
-        else:
-            x_in = Input(shape=(self.seq_in,self.n_moni,))
-            b_in = Input(shape=(self.seq_in+self.seq_out,self.n_node*self.b_in,))
-            inp = [x_in,b_in]
-            x = Dense(self.embed_size,activation=self.activation)(x_in)
-            b = Dense(self.embed_size,activation=self.activation)(b_in)
-        if self.act:
-            a_in = Input(shape=(self.seq_out if self.full else self.seq_in+self.seq_out,self.n_act,))
-            inp += [a_in]
-            a = Dense(self.embed_size,activation=self.activation)(a_in)
-            b = tf.concat([b,a],axis=-1)
-        for _ in range(self.n_sp_layer):
-            x = Dense(self.embed_size,activation=self.activation)(x)
-            b = Dense(self.embed_size,activation=self.activation)(b)
-        x = self.get_tem_nets(recurrent)(x if self.full else tf.concat([x,b[:,:self.seq_in,:]],axis=-1))
-        x = self.get_tem_nets(recurrent)(tf.concat([x,b if self.full else b[:,-self.seq_out:,:]],axis=-1))
-                    
-        out = Dense(self.n_out,activation='linear')(x)
-        if self.if_flood:
-            for _ in range(self.if_flood):
-                fl = Dense(self.embed_size,activation=self.activation)(x)
-            flood = Dense(self.n_flood,activation='sigmoid')(fl)
-            out = [out,flood]
-        model = Model(inputs=inp,outputs=out)
-        return model
-    
-    def get_tem_nets(self,recurrent):
-        if recurrent == 'Conv1D':
-            return Sequential([Conv1D(self.hidden_dim,self.kernel_size,padding='causal',dilation_rate=2**i,
-                            activation=self.activation) for i in range(self.n_tp_layer)])
-        elif recurrent == 'GRU':
-            return Sequential([GRU(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)])
-        elif recurrent == 'LSTM':
-            return Sequential([LSTM(self.hidden_dim,return_sequences=True) for _ in range(self.n_tp_layer)])
-        else:
-            return Sequential()
-
-    @tf.function
-    def fit_eval(self,x,e,b,a,objs,fit=True):
-        if self.norm:
-            objs = self.normalize(objs,'o')
-        x,b,e = [self.normalize(dat,item) for dat,item in zip([x,b,e],'xbe')]
-        if self.full:
-            inp = [tf.reshape(dat,dat.shape[:2]+(np.prod(dat.shape[2:]),)) for dat in [x,e,b]]
-            inp += [a] if self.act else []
-        else:
-            moni = tf.stack([x[...,i,j] for i,j in self.moni_nodes]+[e[...,i,j] for i,j in self.moni_links],axis=-1)
-            inp = [moni, tf.concat([x[...,-1],tf.squeeze(b)],axis=1)]
-            inp += [tf.concat([tf.gather(e[...,-1],self.act_edges,axis=-1),a],axis=1)] if self.act else []
-        with GradientTape() as tape:
-            tape.watch(self.model.trainable_variables)
-            pred = self.model(inp)
+    @th.compile(dynamic=False)
+    def fit_eval(self,x,e,b,a,objs,ini_loss=None,fit=True):
+        with th.autocast(device_type='cuda',dtype=th.float16 if self.mixed_precision else th.float32):
+            x,b,e = [th.flatten(dat,2) for dat in [x,b,e]]
+            pred = self.model([x,e,b,a])
+            # Loss funtion
             if self.if_flood:
-                pred,flood = pred
-                loss = self.bce(tf.cast(objs[...,:self.n_flood]>0,tf.float32),flood)
-                if not fit:
-                    loss = [loss]
-                pred = tf.concat([pred[...,:self.n_flood] * tf.cast(flood>0.5,tf.float32),
-                                  pred[...,self.n_flood:]],axis=-1)
-                if self.cum:
-                    pred,objs = [tf.reduce_sum(dat,axis=-2) for dat in [pred,objs]]
-                loss += self.mse(objs[...,:self.n_out],pred) if fit else [self.mse(objs[...,:self.n_out],pred)]
-            else:
-                if self.cum:
-                    pred,objs = [tf.reduce_sum(dat,axis=-2) for dat in [pred,objs]]
-                loss = self.mse(objs[...,:self.n_out],pred)
-            if fit:
-                grads = tape.gradient(loss,self.model.trainable_variables)
-                self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
-        return loss
+                flood_loss = self.bce(pred[...,-self.n_flood:],
+                                      (objs[...,:self.n_flood]>0).type(th.float32),
+                                      pos_weight = self.poswei)
+                pred = th.concat([pred[...,:self.n_flood] * (pred[...,-self.n_flood:]>0.5).type(th.float32),
+                                  pred[...,self.n_flood:self.n_out]],dim=-1)
+            reg_loss = self.mse(pred[...,:self.n_out],objs)
+        if fit:
+            # --- GradNorm ---
+            if self.if_flood and self.gradnorm and ini_loss is not None:
+                self._fit_grad_norm(reg_loss,flood_loss,ini_loss)
+            loss = (self.alpha_reg if self.gradnorm else 1) * reg_loss
+            if self.if_flood:
+                loss += (self.alpha_cls if self.gradnorm else 1) * flood_loss
+            self.optimizer.zero_grad()
+            self.scaler.scale(loss).backward() if self.mixed_precision else loss.backward()
+            th.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.scaler.step(self.optimizer) if self.mixed_precision else self.optimizer.step()
+            if self.mixed_precision:
+                self.scaler.update()
+        return [reg_loss,flood_loss] if self.if_flood else [reg_loss]
+
+    def _fit_grad_norm(self,reg_loss,flood_loss,ini_loss):
+        W = self.model.res[0].weight
+        self.optimizer.zero_grad()
+        grad_reg = th.autograd.grad(reg_loss,W,retain_graph=True,create_graph=True)
+        grad_reg_norm = th.norm(self.alpha_reg * grad_reg[0].clone().detach())
+        self.optimizer.zero_grad()
+        grad_cls = th.autograd.grad(flood_loss,W,retain_graph=True,create_graph=True)
+        grad_cls_norm = th.norm(self.alpha_cls * grad_cls[0].clone().detach())
+
+        r_reg,r_cls = reg_loss.detach()/(ini_loss[0]+ini_loss[-1]), flood_loss.detach()/ini_loss[1]
+        r_avg = (r_reg + r_cls) / 2
+        grad_norm = th.stack([grad_reg_norm,grad_cls_norm])
+        target_grad = grad_norm.mean().detach() * (th.stack([r_reg,r_cls])/ r_avg) ** self.alpha
+        alpha_loss = self.l1loss(grad_norm,target_grad)
+
+        # update alpha
+        self.alpha_optimizer.zero_grad()
+        self.scaler.scale(alpha_loss).backward() if self.mixed_precision else alpha_loss.backward()
+        self.scaler.step(self.alpha_optimizer) if self.mixed_precision else self.alpha_optimizer.step()
+        
+        # alpha normalized with the sum as 2
+        alpha_sum = self.alpha_reg + self.alpha_cls
+        self.alpha_reg.data = 2.0 * self.alpha_reg / alpha_sum
+        self.alpha_cls.data = 2.0 * self.alpha_cls / alpha_sum
     
-    def predict(self,state,runoff,settings,edge_state):
+    # @th.compile(fullgraph=True)
+    def predict(self,state,edge_state,runoff,settings):
         x,b,e = [self.normalize(dat,item) for dat,item in zip([state,runoff,edge_state],'xbe')]
-        if self.full:
-            x,b,e = [tf.reshape(dat,dat.shape[:2]+(np.prod(dat.shape[2:]),)) for dat in [x,b,e]]
-            inp = [x,e,b,settings] if self.act else [x,e,b]
-        else:
-            moni = tf.stack([x[...,i,j] for i,j in self.moni_nodes]+[e[...,i,j] for i,j in self.moni_links],axis=-1)
-            inp = [moni, tf.squeeze(tf.concat([x[...,-1:],b],axis=1),axis=-1)]
-            if self.act:
-                inp += [tf.concat([tf.gather(edge_state[...,-1],self.act_edges,axis=-1),settings],axis=1)]
+        x,b,e = [th.flatten(dat,2) for dat in [x,b,e]]
+        inp = [x,e,b,settings] if self.act else [x,e,b]
         preds = self.model(inp)
         if self.if_flood:
-            preds,flood = preds
-            preds = tf.concat([preds[...,:self.n_flood] * tf.cast(flood>0.5,tf.float32),
-                               preds[...,self.n_flood:]],axis=-1)
+            preds = th.concat([preds[...,:self.n_flood] * (preds[...,-self.n_flood:]>0.5).type(th.float32),
+                               preds[...,self.n_flood:self.n_out]],dim=-1)
         if self.norm:
             preds = self.normalize(preds,'o',inverse=True)
         return preds
     
-    @tf.function
-    def predict_tf(self,state,runoff,settings,edge_state):
-        return self.predict(state,runoff,settings,edge_state)
+    def to_tensor(self,dat):
+        return th.Tensor(dat).to(device)
 
     def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e):
-        setattr(self,'norm_x',norm_x)
-        setattr(self,'norm_b',norm_b)
-        setattr(self,'norm_y',norm_y)
-        setattr(self,'norm_r',norm_r)
-        setattr(self,'norm_e',norm_e)
+        for item in 'xbyre':
+            setattr(self,'norm_%s'%item, th.Tensor(eval('norm_%s'%item)).to(device))
 
     def normalize(self,dat,item,inverse=False):
         normal = getattr(self,'norm_%s'%item)
@@ -216,31 +195,37 @@ class Predictor:
         else:
             return (dat - mini)/(maxi-mini)
 
-    def save(self,model_dir=None):
-        model_dir = model_dir if model_dir is not None else self.model_dir
-        if not os.path.exists(model_dir):
-            os.mkdir(model_dir)
-        if model_dir.endswith('.h5'):
-            self.model.save_weights(model_dir)
-            model_dir = os.path.dirname(model_dir)
-        else:
-            self.model.save_weights(os.path.join(model_dir,'model.h5'))
-
+    def save(self,epoch=None):
+        if not os.path.exists(self.model_dir):
+            os.mkdir(self.model_dir)
+        th.save({
+            'optimizer_state': self.optimizer.state_dict(),
+            'alpha_optimizer_state': self.alpha_optimizer.state_dict() if hasattr(self,'alpha_optimizer') else None,
+            'model_state': self.model.state_dict(),
+            'epoch': epoch,
+            }, os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth'))
         for item in 'xbyreo':
-            if hasattr(self,'norm_%s'%item):
-                np.save(os.path.join(model_dir,'norm_%s.npy'%item),getattr(self,'norm_%s'%item))
+            norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
+            if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
+                np.save(norm_path,getattr(self,'norm_%s'%item).cpu())
 
-    def load(self,model_dir=None):
-        model_dir = model_dir if model_dir is not None else self.model_dir
-        if model_dir.endswith('.h5'):
-            self.model.load_weights(model_dir)
-            model_dir = os.path.dirname(model_dir)
+    def load(self,epoch=None,retrain=False):
+        if os.path.isfile(self.model_dir):
+            path = self.model_dir
+            self.model_dir = os.path.dirname(self.model_dir)
         else:
-            self.model.load_weights(os.path.join(model_dir,'model.h5'))
-
+            path = os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth')
+        checkpoint = th.load(path, weights_only=True)
+        self.model.load_state_dict(checkpoint['model_state'])
+        if retrain:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+            if hasattr(self,'alpha_optimizer') and checkpoint.get('alpha_optimizer_state') is not None:
+                self.alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state'])
+            print(f'Load model at {checkpoint['epoch']}')
         for item in 'xbyreo':
-            if os.path.exists(os.path.join(model_dir,'norm_%s.npy'%item)):
-                setattr(self,'norm_%s'%item,np.load(os.path.join(model_dir,'norm_%s.npy'%item)))
+            norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
+            if os.path.exists(norm_path):
+                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(device))
 
 
 if __name__ == '__main__':
@@ -248,19 +233,18 @@ if __name__ == '__main__':
 
     train_de = {
         # 'train':True,
-        # 'env':'chaohu',
-        # 'data_dir':'./envs/data/chaohu/1s_edge_rand64_rain50/',
+        # 'env':'astlingen',
+        # 'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
         # 'act':'conti',
-        # 'model_dir':'./model/chaohu/60s_50k_rand_pred_fitone/',
+        # 'model_dir':'./model/astlingen/test/',
         # 'load_model':False,
         # 'ctrl_step':5,
         # 'batch_size':64,
         # 'epochs':10000,
-        # 'n_sp_layer':5,
-        # 'n_tp_layer':5,
-        # 'seq_in':60,'seq_out':60,
-        # # 'if_flood':3,
-        # 'recurrent':'LSTM',
+        # 'norm':True,
+        # 'nly':5,
+        # 'seq':60,
+        # 'if_flood':True,
         }
     for k,v in train_de.items():
         setattr(args,k,v)
@@ -277,7 +261,6 @@ if __name__ == '__main__':
     if not os.path.exists(args.model_dir):
         os.mkdir(args.model_dir)
 
-    seq = max(args.seq_in,args.seq_out)
     n_events = int(max(dG.event_id))+1
     if os.path.isfile(os.path.join(args.data_dir,args.train_event_id)):
         train_ids = np.load(os.path.join(args.data_dir,args.train_event_id))
@@ -286,8 +269,8 @@ if __name__ == '__main__':
     else:
         train_ids = np.random.choice(np.arange(n_events),int(n_events*args.ratio),replace=False)
     test_ids = [ev for ev in range(n_events) if ev not in train_ids]
-    train_idxs = dG.get_data_idxs(train_ids,seq)
-    test_idxs = dG.get_data_idxs(test_ids,seq)
+    train_idxs = dG.get_data_idxs(train_ids,args.seq)
+    test_idxs = dG.get_data_idxs(test_ids,args.seq)
 
     # Data balance: Only use flooding steps
     # nodes = [args.elements['nodes'].index(node) for node,attr,_ in args.performance_targets if 'flooding' in attr and node != 'T1']
@@ -296,8 +279,7 @@ if __name__ == '__main__':
     # iys = np.apply_along_axis(lambda t:np.arange(t,t+seq),axis=1,arr=np.expand_dims(test_idxs,axis=-1))
     # test_idxs = test_idxs[np.take(dG.perfs[:,nodes,-1].sum(axis=-1),iys,axis=0).sum(axis=-1)>0]
 
-    emul = Predictor(args.recurrent,args)
-    # plot_model(emul.model,os.path.join(args.model_dir,"model.png"),show_shapes=True)
+    emul = Predictor(args)
     if args.load_model:
         emul.load(args.model_dir)
         args.model_dir = os.path.join(args.model_dir,'retrain')
@@ -306,67 +288,74 @@ if __name__ == '__main__':
         if 'model_dir' in config:
             config['model_dir'] += '/retrain'
     emul.set_norm(*dG.get_norm())
-    emul.norm_o = env.get_obj_norm(emul.norm_y,emul.norm_e,dG.perfs)
+    emul.norm_o = emul.to_tensor(env.get_obj_norm(emul.norm_y.cpu().numpy(), dG.perfs.max(axis=0).squeeze()))
     yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
     t0 = time.time()
     train_losses,test_losses,secs = [],[],[0]
     log_dir = "logs/model/"
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+    shutil.rmtree(log_dir, ignore_errors=True)
+    os.makedirs(log_dir,exist_ok=True)
+    writer = SummaryWriter(log_dir)
     for epoch in range(args.epochs):
-        train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
+        train_dats = dG.prepare_batch(train_idxs,args.seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
-            objs = env.norm_obj(objs,[x,ex])
-        train_loss = emul.fit_eval(x,ex,b,a,objs)
-        train_losses.append(train_loss.numpy())
+            objs = emul.to_tensor(env.norm_obj(objs,[x,ex]))
+        else:
+            objs = emul.normalize(emul.to_tensor(objs),'o')
+        x,ex,b,a = [emul.to_tensor(dat) for dat in [x,ex,b,a]]
+        x,ex,b = [emul.normalize(dat,item) for dat,item in zip([x,ex,b],'xeb')]
+        ini_loss = emul.to_tensor(np.array(train_losses[0])) if epoch > 0 else None
+        train_loss = emul.fit_eval(x,ex,b,a,objs,ini_loss)
+        train_loss = [los.detach().cpu().numpy() for los in train_loss]
+        train_losses.append(train_loss)
 
-        test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False)
+        test_dats = dG.prepare_batch(test_idxs,args.seq,args.batch_size,interval=args.ctrl_step,trim=False)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
         if not args.norm:
-            objs = env.norm_obj(objs,[x,ex])
+            objs = emul.to_tensor(env.norm_obj(objs,[x,ex]))
+        else:
+            objs = emul.normalize(emul.to_tensor(objs),'o')
+        x,ex,b,a = [emul.to_tensor(dat) for dat in [x,ex,b,a]]
+        x,ex,b = [emul.normalize(dat,item) for dat,item in zip([x,ex,b],'xeb')]
         test_loss = emul.fit_eval(x,ex,b,a,objs,fit=False)
-        test_losses.append([loss.numpy() for loss in test_loss] if args.if_flood else test_loss.numpy())
+        test_loss = [los.detach().cpu().numpy() for los in test_loss]
+        test_losses.append(test_loss)
 
-        if train_loss < min([1e6]+train_losses[:-1]):
-            emul.save(os.path.join(args.model_dir,'train'))
-        if args.if_flood and sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
-            emul.save(os.path.join(args.model_dir,'test'))
-        if not args.if_flood and test_loss < min([1e6]+ test_losses[:-1]):
-            emul.save(os.path.join(args.model_dir,'test'))
+        if sum(train_loss) < min([1e6]+[sum(los) for los in train_losses[:-1]]):
+            emul.save('train')
+        if sum(test_loss) < min([1e6]+[sum(los) for los in test_losses[:-1]]):
+            emul.save('test')
         if epoch > 0 and epoch % args.save_gap == 0:
-            emul.save(os.path.join(args.model_dir,'%s'%epoch))
+            emul.save('%s'%epoch)
             
         secs.append(time.time()-t0)
 
         # Log output
-        log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} ".format(epoch,args.epochs,secs[-1]-secs[-2],train_loss)
+        log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],sum(train_loss),sum(test_loss))
+        writer.add_scalar('train loss', sum(train_loss), epoch)
+        log += " ("
+        log += "Obj: {:.4f}".format(test_loss[0])
+        writer.add_scalar('Obj loss', test_loss[0], epoch)
         if args.if_flood:
-            log += "Test loss: {:.4f} (flood: {:.4f}, mse: {:.4f})".format(sum(test_loss),test_loss[0],test_loss[1])
-        else:
-            log += "Test loss: {:.4f}".format(test_loss)
+            log += " if_flood: {:.4f}".format(test_loss[1])
+            writer.add_scalar('Flood classification', test_loss[1], epoch)
+        log += " )"
         print(log)
-        with tf.summary.create_file_writer(log_dir).as_default():
-            tf.summary.scalar('Train loss', train_loss, step=epoch)
-            if args.if_flood:
-                tf.summary.scalar('Test loss', sum(test_loss), step=epoch)
-                tf.summary.scalar('Flood loss', test_loss[0], step=epoch)
-                tf.summary.scalar('MSE loss', test_loss[1], step=epoch)
-            else:
-                tf.summary.scalar('Test loss', test_loss, step=epoch)
 
     # save
-    emul.save(args.model_dir)
+    emul.save()
     np.save(os.path.join(args.model_dir,'train_id.npy'),np.array(train_ids))
     np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
     np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
     np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
     np.save(os.path.join(args.model_dir,'time.npy'),np.array(secs[1:]))
-    plt.plot(train_losses,label='train')
-    plt.plot(test_losses,label='test')
-    plt.legend()
-    plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)
+    # plt.plot(train_losses,label='train')
+    # plt.plot(test_losses,label='test')
+    # plt.legend()
+    # plt.savefig(os.path.join(args.model_dir,'train.png'),dpi=300)

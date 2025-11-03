@@ -39,15 +39,11 @@ shunqing:
   kernel: 3
   activation: relu
   seq: 6
-  seq_out: 1
   if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
-  full: False
   norm: False
-  vol: False
-  cum: False
 
   # test args
   test: False
@@ -96,15 +92,11 @@ redchicosur:
   kernel: 3
   activation: relu
   seq: 6
-  seq_out: 1
   if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
-  full: False
   norm: False
-  vol: False
-  cum: False
 
   # test args
   test: False
@@ -153,15 +145,11 @@ astlingen:
   kernel: 3
   activation: relu
   seq: 6
-  seq_out: 1
   if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
-  full: False
   norm: False
-  vol: False
-  cum: False
 
   # test args
   test: False
@@ -210,15 +198,11 @@ hague:
   kernel: 3
   activation: relu
   seq: 6
-  seq_out: 1
   if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
-  full: False
   norm: False
-  vol: False
-  cum: False
 
   # test args
   test: False
@@ -267,15 +251,11 @@ chaohu:
   kernel: 3
   activation: relu
   seq: 6
-  seq_out: 1
   if_flood: False
   epsilon: -1.0
 
   # predictor benchmark
-  full: False
   norm: False
-  vol: False
-  cum: False
 
   # test args
   test: False

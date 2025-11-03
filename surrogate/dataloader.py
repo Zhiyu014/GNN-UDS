@@ -160,7 +160,7 @@ class DataGenerator:
         B = states[1][...,3:4]
         if self.config['tide']:
             out = th.tensor(self.is_outfall,device=Y.device) if lib == th else self.is_outfall
-            B = lib.concatenate([B, (Y[...,0] * out)[:,None]], -1)
+            B = lib.concatenate([B, (Y[...,0] * out)[...,None]], -1)
 
         if self.if_flood:
             X = lib.concatenate([X[...,:-1], perfs[0]>0, X[...,-1:]], -1)

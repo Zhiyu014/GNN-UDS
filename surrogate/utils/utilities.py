@@ -182,7 +182,7 @@ def generate_split_file(base_inp_file,
     if event_file is None:
         event_file = arg.get('rainfall_events',splitext(timeseries_file)[0]+'_events.csv')
         if not exists(event_file):
-            event_file = serapate_events(timeseries_file, MIET)
+            event_file = separate_events(timeseries_file, MIET)
     
     events = pd.read_csv(event_file,index_col=0) if type(event_file) == str else event_file
 
@@ -245,7 +245,7 @@ def generate_split_file(base_inp_file,
             tidedata = {col:[(dt,vol)
             for dt,vol in zip(tide.index,tide[col])]
             for col in tide.columns if col not in ['date','time','datetime']}
-            for td in set(inp.OUTFALLS.frame['Data']):
+            for td in set(inp.OUTFALLS.frame['data']):
                 inp.TIMESERIES[td] = TimeseriesData(td,tidedata[td])
 
         inp.OPTIONS['START_DATE'] = start_time.date()
@@ -261,7 +261,7 @@ def generate_split_file(base_inp_file,
 
 
 
-def serapate_events(timeseries_file,miet=120,event_file=None,replace=False):
+def separate_events(timeseries_file,miet=120,event_file=None,replace=False):
     """
     Separate continous rainfall timeseries file into event-wise records.
     

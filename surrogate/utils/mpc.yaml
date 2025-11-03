@@ -10,6 +10,7 @@ astlingen:
   swmm_step: 30
 
   # MPC args
+  sample_interval: 5
   ctrl_step: 5
   act: 'False'
   lag: False
@@ -33,6 +34,7 @@ astlingen:
   surrogate: False
   predict: False
   model_dir: ./model/astlingen/
+  batch_size: 32
   epsilon: -1.0
   gradient: False
   method: descent
@@ -54,6 +56,7 @@ hague:
   swmm_step: 30
   
   # MPC args
+  sample_interval: 15
   ctrl_step: 15
   act: 'False'
   lag: False
@@ -77,6 +80,7 @@ hague:
   surrogate: False
   predict: False
   model_dir: ./model/hague/
+  batch_size: 32
   epsilon: -1.0
   gradient: False
   method: descent
@@ -97,6 +101,7 @@ chaohu:
   swmm_step: 30
 
   # MPC args
+  sample_interval: 10
   ctrl_step: 10
   act: 'False'
   lag: False
@@ -121,6 +126,7 @@ chaohu:
   surrogate: False
   predict: False
   model_dir: ./model/chaohu/
+  batch_size: 32
   epsilon: -1.0
   gradient: False
   method: descent

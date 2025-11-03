@@ -220,7 +220,7 @@ class rl_ctrl:
                 setting = self.agent.convert_action_to_setting(action)
                 setting = setting[:,th.newaxis,:].repeat(1,self.r_step,1)
             else:
-                setting = sett0
+                setting = data[1][:,i*self.r_step:(i+1)*self.r_step,:]
             preds = self.emul.predict(x,ex,bi,setting,constr=False)
             if self.emul.if_flood:
                 x = th.concat([preds[0][...,:-1],(preds[0][...,-1:]>0).type(th.float32),bi],dim=-1)
@@ -541,16 +541,21 @@ if __name__ == '__main__':
                 # TODO: Branched model-free RL
                 if args.branch:
                     train_idxs = dG.get_data_idxs(train_ids,args.ctrl_step*2,args.horizon)
-                    wei = dG.get_flood_weight(args.horizon)[train_idxs][np.arange(0,train_idxs.shape[0],args.ctrl_step)]
-                    idxs = np.random.choice(np.arange(0,train_idxs.shape[0],args.ctrl_step),args.batch_size,replace=False,
-                                            p=wei/wei.sum(),)
+                    idxs = np.arange(0,train_idxs.shape[0],args.ctrl_step)
+                    wei = dG.get_flood_weight(args.horizon)[train_idxs][idxs]
+                    idxs = np.random.choice(idxs,args.batch_size,replace=False,p=wei/wei.sum(),)
                     train_id = train_idxs[idxs] - args.ctrl_step
                     env.config['prediction']['suffix'] = 'mfrl_eval_'
                     # identify the hsf file by rain, time and repeat
+                    event_id,rept = dG.event_id[train_id].astype(int),dG.rept[train_id]
+                    r = dG.states.take(train_id[:,None,None] +\
+                                        np.arange(args.horizon+args.ctrl_step)[:,None] +\
+                                              np.arange(args.ctrl_step),axis=0)[...,-1:]
                     mfbr_events,mfbr_runoffs = [],[]
-                    for i,idx in enumerate(train_id):
-                        env.config['swmm_input'] = events[int(dG.event_id[idx])]
-                        rep,ts = dG.rept[idx][0],dt.datetime.fromtimestamp(dG.rept[idx][1])
+                    for i,(eid,(rep,ts),ri) in enumerate(zip(event_id,rept,r)):
+                        env.config['swmm_input'] = events[eid]
+                        # rep,ts = dG.rept[idx][0],dt.datetime.fromtimestamp(dG.rept[idx][1])
+                        ts = dt.datetime.fromtimestamp(ts)
                         hsf = '%s-'%rep + '%s.hsf' % ts.strftime('%Y-%m-%d-%H-%M')
                         hsf = os.path.join(os.path.abspath(args.data_dir),'hsf/',hsf)
                         mfbr_events.append(env.create_eval_file(hsf,ct=ts,eval_file='%s.inp'%i))
@@ -558,8 +563,7 @@ if __name__ == '__main__':
                                                                        dt.timedelta(minutes=args.interval)),
                                                       'Index':np.arange(args.horizon+args.ctrl_step)}).set_index('Time')
                         tss.index = pd.to_datetime(tss.index)
-                        r = dG.states[...,-1:].take(idx+np.arange(args.horizon+args.ctrl_step)[:,None]+np.arange(ctrl.r_step),axis=0)
-                        mfbr_runoffs.append((tss,r))
+                        mfbr_runoffs.append((tss,ri))
                 else:
                     train_id = np.random.choice(train_ids,args.rain_num,replace=False)
                 with mp.Pool(args.processes) as pool:

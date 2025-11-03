@@ -1,0 +1,6 @@
+act: conti
+data_dir: 1s_conti_5min_rain50/act1
+processes: 6
+rain_dir: hg_train50_events.csv
+repeats: 8
+simulate: true

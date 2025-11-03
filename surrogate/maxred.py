@@ -1,10 +1,11 @@
 from utils.utilities import get_inp_files
 import pandas as pd
-import os,time,gc
+import os,time,gc,shutil
 import multiprocessing as mp
 import numpy as np
 import argparse,yaml
 from envs import get_env
+from mpc import get_runoff
 from pymoo.optimize import minimize
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.sampling.rnd import IntegerRandomSampling,FloatRandomSampling,random_by_bounds
@@ -69,6 +70,7 @@ class mpc_problem(Problem):
         self.r_step = args.ctrl_step//args.interval
         self.n_var = self.n_act*self.n_step
         self.n_obj = 1
+        self.env = get_env(args.env)(initialize=False)
         if args.act.startswith('conti'):
             super().__init__(n_var=self.n_var, n_obj=self.n_obj,
                             xl = np.array([min(v) for _ in range(self.n_step)
@@ -92,59 +94,41 @@ class mpc_problem(Problem):
         y = y.reshape((self.n_step,self.n_act))
         y = np.repeat(y,self.r_step,axis=0)
 
-        env = get_env(self.args.env)(swmm_file = self.file)
+        _ = self.env.reset(swmm_file = self.file)
         # state = env.reset(self.file,global_state=True)
         done,idx = False,0
         while not done and idx < y.shape[0]:
             if self.args.prediction['no_runoff']:
-                for node,ri in zip(env.elements['nodes'],self.args.runoff_rate[idx]):
-                    env.env._setNodeInflow(node,ri)
+                for node,ri in zip(self.env.elements['nodes'],self.args.runoff_rate[idx]):
+                    self.env.env._setNodeInflow(node,ri)
             if idx % self.args.ctrl_step == 0:
                 yi = y[idx]
                 sett = yi if self.args.act.startswith('conti') else self.actions[tuple(yi)]
                 # sett = np.array(env.controller('safe',state,sett)).astype(float)
             # done = env.step([act if self.args.act.startswith('conti') else self.actions[i][act] for i,act in enumerate(yi)])
-            done = env.step(sett)
+            done = self.env.step(sett)
             # state = env.state_full()
             # perf += env.performance().sum()
             idx += 1
-        return env.objective(idx).sum()
+        return self.env.objective(idx).sum()
  
     def _evaluate(self,x,out,*args,**kwargs):
-        pool = mp.Pool(self.args.processes)
-        res = [pool.apply_async(func=self.pred_simu,args=(xi,)) for xi in x]
-        pool.close()
-        pool.join()
-        F = [r.get() for r in res]
-        out['F'] = np.array(F)
-
-def get_runoff(env,event,rate=False,tide=False):
-    _ = env.reset(event,global_state=True)
-    runoffs = []
-    t0 = env.env.methods['simulation_time']()
-    done = False
-    while not done:
-        done = env.step()
-        if rate:
-            runoff = np.array([[env.env._getNodeLateralinflow(node)
-                        if not env.env._isFinished else 0.0]
-                       for node in env.elements['nodes']])
+        if self.args.processes == 1:
+            F = [self.pred_simu(xi)+1e-6 for xi in x]
         else:
-            runoff = env.state_full()[...,-1:]
-        if tide:
-            ti = env.state_full()[...,:1]
-            runoff = np.concatenate([runoff,ti],axis=-1)
-        runoffs.append(runoff)
-    ts = [t0]+env.data_log['simulation_time'][:-1]
-    runoff = np.array(runoffs)
-    return ts,runoff
+            pool = mp.Pool(self.args.processes)
+            res = [pool.apply_async(func=self.pred_simu,args=(xi,))
+                   for xi in x]
+            pool.close()
+            pool.join()
+            F = [r.get() for r in res]
+        out['F'] = np.array(F)+1e-6
 
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
-    # mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
-    ctx = mp.get_context("spawn")
+    mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
 
-    env = get_env(args.env)()
+    env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
     for k,v in env_args.items():
         if k == 'act':
@@ -171,7 +155,7 @@ if __name__ == '__main__':
         if os.path.exists(os.path.join(args.result_dir,name + '_state.npy')):
             continue
         t0 = time.time()
-        ts,runoff_rate = get_runoff(env,event,True)
+        ts,runoff_rate = get_runoff(env,event,True,tide=args.tide and args.is_outfall)
         tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
         tss.index = pd.to_datetime(tss.index)
         t1 = time.time()

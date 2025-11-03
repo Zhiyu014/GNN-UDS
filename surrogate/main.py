@@ -99,18 +99,18 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'astlingen',
+    #             'env':'hague',
     #             'order':1,
-    #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
+    #             'data_dir':'./envs/data/hague/1s_conti_rain50/',
     #             'act':'conti',
-    #             'model_dir':'./model/astlingen/test/',
+    #             'model_dir':'./model/hague/test/',
     #             'load_model':False,
     #             'roll':0,
-    #             'batch_size':64,
+    #             'batch_size':4,
     #             'epochs':50000,
-    #             'nly':3,
-    #             'seq':5,
-    #             'if_flood':True,
+    #             'nly':5,
+    #             'seq':60,
+    #             'if_flood':False,
     #             'gradnorm':True}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
@@ -327,17 +327,17 @@ if __name__ == "__main__":
                     state = np.repeat(np.expand_dims(state,0),args.pop_size,axis=0)
                     perf = np.repeat(np.expand_dims(perf,0),args.pop_size,axis=0)
                     edge_state = np.repeat(np.expand_dims(edge_state,0),args.pop_size,axis=0)
-                    if args.horizon > args.seq_out * args.interval:
+                    if args.horizon > args.seq * args.interval:
                         predss = []
                         s0,e0 = state.copy(),edge_state.copy()
                         for idx in range(args.horizon//args.seq_in):
-                            ri = r[:,idx*args.seq_out:(idx+1)*args.seq_out,...]
-                            sett = setting[:,idx*args.seq_out:(idx+1)*args.seq_out,:]
+                            ri = r[:,idx*args.seq:(idx+1)*args.seq,...]
+                            sett = setting[:,idx*args.seq:(idx+1)*args.seq,:]
                             if args.if_flood:
                                 f = (perf>0).astype(float)
                                 state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                             preds = emul.predict(state,ri,sett,edge_state)
-                            state = np.concatenate([preds[0][...,:-2],ri],axis=-1)
+                            state = np.concatenate([preds[0][...,:-2],ri[...,:1]],axis=-1)
                             perf = preds[0][...,-1:]
                             ae = emul.get_edge_action(sett,False)
                             edge_state = np.concatenate([preds[1],ae],axis=-1)

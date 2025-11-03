@@ -46,6 +46,7 @@ def parser(config=None):
     parser.add_argument('--rain_num',type=int,default=1,help='number of the rainfall events')
     parser.add_argument('--swmm_step',type=int,default=30,help='routing step for swmm inp files')
 
+    parser.add_argument('--sample_interval',type=int,default=10,help='sampling interval')
     parser.add_argument('--ctrl_step',type=int,default=5,help='setting duration')
     parser.add_argument('--horizon',type=int,default=60,help='control horizon')
     parser.add_argument('--act',type=str,default='rand',help='what control actions')
@@ -62,6 +63,7 @@ def parser(config=None):
     
     parser.add_argument('--surrogate',action='store_true',help='if use surrogate for dynamic emulation')
     parser.add_argument('--predict',action='store_true',help='if use predictor for emulation')
+    parser.add_argument('--batch_size',type=int,default=32,help='number of batch size')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--method',type=str,default='descent',help='optimizer: descent lbfgs trust-constr')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
@@ -87,8 +89,9 @@ def parser(config=None):
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
     n_term = len(args.termination)
+    conds = ['maxls','ftol','maxcor'] if args.gradient else ['n_eval','n_gen','fmin']
     for i,j in zip(range(n_term-1),range(1,n_term)):
-        args.termination[j] = eval(args.termination[j]) if args.termination[i] in ['n_eval','n_gen','fmin'] else args.termination[j]
+        args.termination[j] = eval(args.termination[j]) if args.termination[i] in conds else args.termination[j]
     # for i in range(len(args.termination)//2):
     #     args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
     print('MPC configs: {}'.format(args))
@@ -141,7 +144,9 @@ class mpc_ga(Problem):
             # else:
             self.emul = Emulator(margs)
             self.emul.load()
-            self.emul.set_indices(getattr(args,'pop_size',128))
+            pop_size,batch_size = getattr(args,'pop_size',128),getattr(margs,'batch_size',128)
+            self.batch_size = min(pop_size,batch_size)
+            self.emul.set_indices(self.batch_size)
             self.stochastic = getattr(args,"stochastic",False)
             self.margs = margs
         self.step = args.interval
@@ -239,13 +244,24 @@ class mpc_ga(Problem):
         if n_pop < self.pop_size:
             y = np.concatenate([y,np.repeat(y[:1,...],self.pop_size-n_pop,axis=0)],axis=0)
         settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
-        preds = self.predict(*[self.emul.to_tensor(dat) for dat in [settings,state,runoff,edge_state]])
+        if self.batch_size < self.pop_size:
+            ninfer = self.pop_size//self.batch_size
+            dats = [np.split(dat,ninfer) for dat in [settings,state,runoff,edge_state]]
+            preds = []
+            for dat in zip(*dats):
+                pred = self.predict(*[self.emul.to_tensor(d) for d in dat])
+                pred = [p.detach().cpu().numpy() for p in pred]
+                preds.append(pred)
+            preds = np.concatenate([p[0] for p in preds],axis=0),np.concatenate([p[1] for p in preds],axis=0)
+        else:
+            preds = self.predict(*[self.emul.to_tensor(dat) for dat in [settings,state,runoff,edge_state]])
+            preds = preds.cpu().numpy() if self.args.predict else (preds[0].detach().cpu().numpy(),preds[1].detach().cpu().numpy())
         if self.args.predict:
-            objs = preds.numpy().sum(axis=-1).sum(axis=-1)
+            objs = preds.cpu().numpy().sum(axis=-1).sum(axis=-1)
             if not getattr(self.emul,'norm',False):
                 objs = self.env.norm_obj(objs,[state,edge_state],inverse=True)
         else:
-            objs = self.env.objective_pred([p.detach().cpu().numpy() for p in preds],
+            objs = self.env.objective_pred(preds,
                                            [state,edge_state],settings).sum(axis=-1)
         if self.stochastic:
             objs = np.stack([np.mean(objs[i*self.stochastic:(i+1)*self.stochastic],axis=0)
@@ -437,7 +453,7 @@ class mpc_gr:
         settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
         preds = self.predict(settings,state,runoff,edge_state)
         if self.args.predict:
-            obj = preds.sum(axis=-1).sum(axis=-1)
+            obj = preds.sum(dim=-1).sum(dim=-1)
             if not getattr(self.emul,'norm',False):
                 obj = self.env.norm_obj(obj,[state,edge_state],inverse=True)
         else:
@@ -495,12 +511,12 @@ def run_ntopt(prob,args,setting=None):
     if args.use_current and setting is not None:
         sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1)])
 
-    recs,sols = [[0,prob.calls,time.time(),1e6]],[]
+    recs,sols = [[0,prob.calls,time.time(),1e6]],[sampling[0]]
     print('===============================================')
     print(' n_gen | n_fun |     time      |       f       ')
     print('===============================================')
     def mycallback(intermediate_result):
-        sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
+        # sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
         obj = getattr(intermediate_result,'fun',np.nan)
         nfev = prob.calls
         rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
@@ -544,6 +560,7 @@ def run_ntopt(prob,args,setting=None):
     results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
     ctrls = results.x if prob.bounded else prob.project(results.x).numpy()
+    sols.append(ctrls)
     vals = np.array(recs)[1:,-1]
     nfuns = np.array(recs)[1:,1]-recs[0][1]
     times = np.array(recs)[1:,2]-recs[0][2]
@@ -557,24 +574,26 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     de = {
         # 'env':'astlingen',
-        # 'act':'rand3',
+        # 'act':'conti',
         # 'processes':1,
-        # 'pop_size':128,
+        # 'pop_size':1,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
-        # 'termination':['time','00:05:00','soo'],
+        # # 'termination':['or','time','00:05:00','soo','ftol-0.001'],
+        # 'termination':['ftol',1e-3,'maxls',30],
         # 'surrogate':True,
-        # 'gradient': False,
+        # 'batch_size':1,
+        # 'gradient': True,
         # 'predict':False,
         # 'method':'l-bfgs-b',
         # 'use_current':True,
-        # 'rain_dir':'./envs/config/ast_test2007_events_test.csv',
+        # 'rain_dir':'./envs/config/ast_test2007_events.csv',
         # # 'rain_suffix':'chaohu_testall',
         # # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':60,
-        # 'model_dir':'./model/astlingen/60s_gat_5ly_floodwei_gradnorm/50000.pth',
+        # 'horizon':120,
+        # 'model_dir':'./model/astlingen/120s_gat_5ly_floodwei_gradnorm',
         # 'result_dir':'./results/astlingen/test',
         }
     for k,v in de.items():
@@ -617,6 +636,8 @@ if __name__ == '__main__':
         env_args = env.get_args(margs.directed,margs.length,margs.order)
         for k,v in env_args.items():
             setattr(margs,k,v)
+        if 'batch_size' in config:
+            setattr(margs, 'batch_size', args.batch_size)
 
     if args.surrogate and args.gradient:
         prob = mpc_gr(args,margs,load_model=True)
@@ -663,11 +684,11 @@ if __name__ == '__main__':
         setting = [env.controller('default') for _ in range(args.horizon//args.ctrl_step)]
         settings = [env.controller(args.keep,states[0],setting[0]) if args.keep != 'False' else setting[0]]
 
-        done,i,valss,nfunss,timess,solss = False,0,[],[],[],[]
+        done,i,j,valss,nfunss,timess,solss = False,0,0,[],[],[],[]
         while not done:
-            if i*args.interval % args.ctrl_step == 0:
+            if i*args.interval % args.sample_interval == 0:
                 t2 = time.time()
-                setting = setting[1:] + setting[-1:]
+                setting = setting[j+1:] + setting[-1:] * (j+1)
                 if args.surrogate:
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
@@ -699,16 +720,21 @@ if __name__ == '__main__':
                 valss.append(vals)
                 nfunss.append(nfuns)
                 timess.append(times)
-                solss.append(sols[:,:args.ctrl_step//args.ctrl_step,:])
+                solss.append(sols)
                 t3 = time.time()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
+                j = 0
                 lag = (t3-t2)/60/args.interval
                 prev_sett = sett.copy() if i > 0 else settings[0].copy()
                 sett = env.controller('safe',state[-1] if args.surrogate else state,setting[0]) if args.keep == 'False' else settings[0]
-            real_sett = prev_sett if args.lag and i*args.interval % args.ctrl_step < int(lag) else sett
+            elif i*args.interval % args.ctrl_step == 0:
+                j += 1
+                sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
+                # sett = env.controller('safe',state[-1] if args.surrogate else state,setting[0]) if args.keep == 'False' else settings[0]
+            real_sett = prev_sett if args.lag and i*args.interval % args.sample_interval < int(lag) else sett
             done = env.step(real_sett,
-                            lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.ctrl_step == int(lag) else None)
+                            lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.sample_interval == int(lag) else None)
             state = env.state_full(seq=margs.seq if args.surrogate else False)
             if args.surrogate and margs.if_flood:
                 flood = env.flood(seq=margs.seq)

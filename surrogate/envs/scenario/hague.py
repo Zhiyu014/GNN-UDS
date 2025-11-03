@@ -1,6 +1,7 @@
 from .base import basescenario
 import os
 import numpy as np
+import torch as th
 from swmm_api import read_inp_file
 from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import networkx as nx
@@ -41,57 +42,81 @@ class hague(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
 
         
-    # TODO
     def objective(self, seq = False):
         # __object = np.zeros(seq) if seq else 0.0
         # __object += self.flood(seq).squeeze().sum(axis=-1)
         __object = []
         perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
         for i,(_,attr,target,weight) in enumerate(self.config['performance_targets']):
-            if attr == 'head' and weight == 1000:
-                __object += [(perfs[:,i]>target)*weight]
+            if attr == 'head':
+                if weight == 1000:
+                    __object += [(perfs[1:,i]>target)*weight]
+                else:
+                    __object += [np.abs(perfs[1:,i] - target)*weight]
+            elif attr == 'flow_vol' and weight > 0:
+                __object += [np.abs(np.diff(perfs[:,i],axis=0)) * weight]
             else:
-                __object += [np.abs(perfs[:,i] - target)*weight]
+                __object += [(perfs[1:,i] - target)*weight]
         # return __object
-        return np.array(__object).sum(axis=-1) if seq else np.array(__object)
+        return np.array(__object).sum(axis=-1) if seq else np.array(__object).squeeze()
      
     def objective_pred(self,preds,states,settings,gamma=None,keepdim=False):
-        preds,_ = preds
+        preds,edge_preds = preds
+        _,edge_state = states
         h,q_w = preds[...,0],preds[...,-1]
-        nodes,targets = self.elements['nodes'],self.config['performance_targets']
+        fl = np.concatenate([edge_state[:,-1:,:,-2],edge_preds[...,-1]],axis=1)
+        nodes,links,targets = self.elements['nodes'],self.elements['links'],self.config['performance_targets']
         flood = [q_w.sum(axis=-1) * weight
                 for idx,attr,_,weight in targets 
                 if attr == 'cumflooding' and idx=='nodes']
         pondfl = [q_w[...,nodes.index(idx)] * weight
                   for idx,attr,_,weight in targets
                   if attr == 'cumflooding' and idx in nodes]
-        depth = [np.abs(h[...,nodes.index(idx)]-target) * weight
-                for idx,attr,target,weight in targets
-                if attr == 'head' and weight < 1000]
-        exced = [(h[...,nodes.index(idx)]>target)*weight
-                for idx,attr,target,weight in targets
-                if attr == 'head' and weight == 1000]
-        obj = np.stack(flood + pondfl + depth + exced,axis=1)
+        outflow = [fl[:,1:,links.index(idx)] * weight
+                  for idx,attr,_,weight in targets
+                  if attr == 'flow_vol' and weight<0]
+        # depth = [np.abs(h[...,nodes.index(idx)]-target) * weight
+        #         for idx,attr,target,weight in targets
+        #         if attr == 'head' and weight < 1000]
+        # exced = [(h[...,nodes.index(idx)]>target)*weight
+        #         for idx,attr,target,weight in targets
+        #         if attr == 'head' and weight == 1000]
+        # obj = np.stack(flood + pondfl + depth + exced,axis=1)
+        inflow = [np.abs(np.diff(fl[...,links.index(idx)],axis=1)) * weight
+                for idx,attr,_,weight in self.config['performance_targets']
+                    if attr == 'flow_vol' and weight>0]
+        obj = np.stack(flood + pondfl + outflow + inflow,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
         obj *= gamma
         return obj.sum(axis=-1) if not keepdim else np.transpose(obj,(0,2,1))
     
-    def objective_pred_tf(self,preds,states,settings,gamma=None):
-        import tensorflow as tf
-        preds,_ = preds
+    def objective_pred_th(self,preds,states,settings,gamma=None,keepdim=False):
+        preds,edge_preds = preds
+        _,edge_state = states
         h,q_w = preds[...,0],preds[...,-1]
-        nodes,targets = self.elements['nodes'],self.config['performance_targets']
-        flood = [tf.reduce_sum(q_w,axis=1) * weight
-                for idx,attr,_,weight in targets if attr == 'cumflooding' and idx=='nodes']
-        pondfl = [tf.reduce_sum(q_w[...,nodes.index(idx)],axis=1) * weight
-                for idx,attr,_,weight in targets if attr == 'cumflooding' and idx in nodes]
-        depth = [tf.reduce_sum(tf.abs(h[...,nodes.index(idx)]-target),axis=1) * weight
-                for idx,attr,target,weight in targets if attr == 'head' and weight < 1000]
-        exced = [tf.reduce_sum(tf.cast(h[...,nodes.index(idx)]>target,tf.float32),axis=1) * weight
-                for idx,attr,target,weight in targets if attr == 'head' and weight == 1000]
-        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(pondfl,axis=0) + tf.reduce_sum(depth,axis=0) + tf.reduce_sum(exced,axis=0)
-        gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
-        obj = tf.reduce_sum(obj*gamma,axis=-1)
+        fl = th.concat([edge_state[:,-1:,:,-2],edge_preds[...,-1]],dim=1)
+        nodes,links,targets = self.elements['nodes'],self.elements['links'],self.config['performance_targets']
+        flood = [q_w.sum(dim=-1) * weight
+                for idx,attr,_,weight in targets
+                  if attr == 'cumflooding' and idx=='nodes']
+        pondfl = [q_w[...,nodes.index(idx)] * weight
+                for idx,attr,_,weight in targets
+                  if attr == 'cumflooding' and idx in nodes]
+        outflow = [fl[:,1:,links.index(idx)] * weight
+                   for idx,attr,_,weight in targets
+                     if attr == 'flow_vol' and weight<0]
+        # depth = [tf.abs(h[...,nodes.index(idx)]-target) * weight
+        #         for idx,attr,target,weight in targets
+        #           if attr == 'head' and weight < 1000]
+        # exced = [tf.cast(h[...,nodes.index(idx)]>target,tf.float32) * weight
+        #         for idx,attr,target,weight in targets
+        #           if attr == 'head' and weight == 1000]
+        inflow = [th.abs(th.diff(fl[...,links.index(idx)],dim=1)) * weight
+                for idx,attr,_,weight in self.config['performance_targets']
+                    if attr == 'flow_vol' and weight>0]
+        obj = th.stack(flood + pondfl + outflow + inflow, dim=1)
+        gamma = th.ones((preds.shape[1],)).to(device=obj.device) if gamma is None else th.tensor(gamma).to(device=obj.device)
+        obj = (obj*gamma).sum(axis=-1) if not keepdim else (obj*gamma).permute(0,2,1)
         return obj
 
     def get_action_space(self,act='rand'):
@@ -110,15 +135,19 @@ class hague(basescenario):
         #     args['rainfall']['training_events'] = os.path.join(HERE,'config',args['rainfall']['training_events']+'.csv')
 
         inp = read_inp_file(self.config['swmm_input'])
-        args['area'] = np.array([inp['CURVES'][node.data].points[0][1] if sec == 'STORAGE' else 0.0
+        args['area'] = np.array([node.data[0] if sec == 'STORAGE' else 0.0
                                   for sec in NODE_SECTIONS for node in getattr(inp,sec,dict()).values()])
         args['pump'] = np.array([inp['CURVES'][link.curve_name].points[0][1]*60/1000 if sec == 'PUMPS' else 0.0
                                   for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])
         args['offset'] = np.array([getattr(link,'Offset',0)+getattr(link,'InOffset',0)
                    for sec in LINK_SECTIONS if sec in inp for link in getattr(inp,sec,dict()).values()])
-
-        if self.global_state:
-            args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = [np.where((args['edges']==act_edge).all(1))[0]
+                        for act_edge in act_edges]
+        act_edges = [i for e in act_edges for i in e]
+        args['act_edges'] = sorted(list(set(act_edges)),key=act_edges.index)
+        if act and self.config['act']:
+            args['action_space'] = self.get_action_space(act)
         return args
 
     def controller(self,mode='rand',state=None,setting=None):
