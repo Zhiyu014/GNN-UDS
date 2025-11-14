@@ -224,7 +224,7 @@ class Predictor:
                 self.optimizer.apply_gradients(zip(grads,self.model.trainable_variables))
         return loss
     
-    def predict(self,state,runoff,settings,edge_state):
+    def predict(self,state,runoff,edge_state,settings):
         x,b,e = [self.normalize(dat,item) for dat,item in zip([state,runoff,edge_state],'xbe')]
         if self.full:
             x,b,e = [tf.reshape(dat,dat.shape[:2]+(np.prod(dat.shape[2:]),)) for dat in [x,b,e]]
@@ -244,8 +244,8 @@ class Predictor:
         return preds
     
     @tf.function
-    def predict_tf(self,state,runoff,settings,edge_state):
-        return self.predict(state,runoff,settings,edge_state)
+    def predict_tf(self,state,runoff,edge_state,settings):
+        return self.predict(state,runoff,edge_state,settings)
 
     def set_norm(self,norm_x,norm_b,norm_y,norm_r,norm_e):
         setattr(self,'norm_x',norm_x)

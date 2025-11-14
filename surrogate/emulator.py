@@ -410,7 +410,8 @@ class Emulator:
                 inp += [ae[:,i*self.seq_out:(i+1)*self.seq_out,...]] if self.act else []
                 preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
                 preds = [tf.cast(pred,tf.float32) for pred in preds]
-                preds,edge_preds = self.post_proc_tf(preds,a[:,i*self.seq_out:(i+1)*self.seq_out,...],b[:,i*self.seq_out:(i+1)*self.seq_out,...])
+                preds,edge_preds = self.post_proc_tf(preds,b[:,i*self.seq_out:(i+1)*self.seq_out,...],
+                                                     a[:,i*self.seq_out:(i+1)*self.seq_out,...] if self.act else None)
                 predss.append(preds)
                 edge_predss.append(edge_preds)
                 if self.if_flood:
@@ -418,8 +419,11 @@ class Emulator:
                 else:
                     x_new = tf.concat([preds,b[:,i*self.seq_out:(i+1)*self.seq_out,:,:1]],axis=-1)
                 x = tf.concat([x[:,-(self.seq_in-self.seq_out):,...],x_new],axis=1) if self.seq_in > self.seq_out else x_new
-                ae_new = self.get_edge_action(a[:,i*self.seq_out:(i+1)*self.seq_out,...],True)
-                ex_new = tf.concat([edge_preds,ae_new],axis=-1)
+                if self.act:
+                    ae_new = self.get_edge_action(a[:,i*self.seq_out:(i+1)*self.seq_out,...],True)
+                    ex_new = tf.concat([edge_preds,ae_new],axis=-1)
+                else:
+                    ex_new = edge_preds
                 ex = tf.concat([ex[:,-(self.seq_in-self.seq_out):,...],ex_new],axis=1) if self.seq_in > self.seq_out else ex_new
             preds = concat(predss,axis=1)
             edge_preds = concat(edge_predss,axis=1)
@@ -433,7 +437,7 @@ class Emulator:
             inp += [ae] if self.act else []
             preds = self.model(inp,training=fit) if self.dropout else self.model(inp)
             preds = [tf.cast(pred,tf.float32) for pred in preds]
-            preds,edge_preds = self.post_proc_tf(preds,a,b)
+            preds,edge_preds = self.post_proc_tf(preds,b,a)
         preds = tf.clip_by_value(preds,0,1) # avoid large loss value
         return preds,edge_preds
     
@@ -518,7 +522,7 @@ class Emulator:
         target_grad = tf.stop_gradient(tf.reduce_mean(grad_norm)) * (tf.stack([r_reg,r_cls])/ r_avg) ** self.alpha
         return self.mae(target_grad,grad_norm)
 
-    def simulate(self,states,runoff,a=None,edge_states=None):
+    def simulate(self,states,runoff,edge_states,a=None):
         # runoff shape: T_out, T_in, N
         if self.act:
             ae = self.get_edge_action(a)
@@ -528,9 +532,7 @@ class Emulator:
         for idx,bi in enumerate(runoff):
             x = states[idx,-self.seq_in:,...]
             ex = edge_states[idx,-self.seq_in:,...]
-                
             bi = bi[:self.seq_out]
-
             inp = [self.normalize(x,'x'),self.normalize(bi,'b')]
             inp = [expand_dims(dat,0) for dat in inp]
             if self.conv:
@@ -542,10 +544,10 @@ class Emulator:
             y = self.model(inp,training=False) if self.dropout else self.model(inp)
             y,ey = [tf.cast(pred,tf.float32) for pred in y]
 
-            y,ey = self.post_proc(y.numpy(),ey.numpy(),a[idx:idx+1],self.normalize(bi,'b'))
+            y,ey = self.post_proc(y.numpy(),ey.numpy(),self.normalize(bi,'b'),a[idx:idx+1] if a is not None else a)
+            y = self.normalize(np.squeeze(y,0),'y',True)
             ey = self.normalize(np.squeeze(ey,0),'e',True)
             ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
-            y = self.normalize(np.squeeze(y,0),'y',True)
 
             # Pumped storage depth calculation: boundary condition differs from orifice
             if sum(getattr(self,'pump_in',[0])) + sum(getattr(self,'pump_out',[0])) + sum(getattr(self,'pump',[0])) > 0:
@@ -563,10 +565,9 @@ class Emulator:
             edge_preds.append(ey)
         return np.array(preds),np.array(edge_preds)
 
-    def predict(self,states,b,a=None,edge_state=None):
+    def predict(self,states,b,edge_state,a=None):
         x = states[:,-self.seq_in:,...]
-        if edge_state is not None:
-            ex = edge_state[:,-self.seq_in:,...]
+        ex = edge_state[:,-self.seq_in:,...]
         assert b.shape[1] == self.seq_out
         if self.act:
             ae = self.get_edge_action(a)
@@ -582,7 +583,7 @@ class Emulator:
         y,ey = self.model(inp,training=False) if self.dropout else self.model(inp)
         y,ey = [tf.cast(pred,tf.float32) for pred in (y,ey)]
 
-        y,ey = self.post_proc(y.numpy(),ey.numpy(),a,self.normalize(b,'b'))
+        y,ey = self.post_proc(y.numpy(),ey.numpy(),self.normalize(b,'b'),a)
         y = self.normalize(y,'y',True)
         ey = self.normalize(ey,'e',True)
         ey = np.concatenate([np.expand_dims(np.clip(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
@@ -602,10 +603,9 @@ class Emulator:
         return y,ey
 
     @tf.function
-    def predict_tf(self,states,b,a=None,edge_state=None):
+    def predict_tf(self,states,b,edge_state,a=None):
         x = states[:,-self.seq_in:,...]
-        if edge_state is not None:
-            ex = edge_state[:,-self.seq_in:,...]
+        ex = edge_state[:,-self.seq_in:,...]
         assert b.shape[1] == self.seq_out
         if self.act:
             ae = self.get_edge_action(a,True)
@@ -621,7 +621,7 @@ class Emulator:
         y,ey = self.model(inp,training=False) if self.dropout else self.model(inp)
         y,ey = [tf.cast(pred,tf.float32) for pred in (y,ey)]
 
-        y,ey = self.post_proc_tf((y,ey),a,self.normalize(b,'b'))
+        y,ey = self.post_proc_tf((y,ey),self.normalize(b,'b'),a)
         ey = self.normalize(ey,'e',True)
         ey = tf.concat([tf.expand_dims(tf.clip_by_value(ey[...,0],0,self.ehmax),axis=-1),ey[...,1:]],axis=-1)
         y = self.normalize(y,'y',True)
@@ -640,7 +640,7 @@ class Emulator:
         y = tf.concat([y,tf.expand_dims(q_w,axis=-1)],axis=-1)
         return y,ey
 
-    def post_proc(self,y,ey,a,b):
+    def post_proc(self,y,ey,b,a):
         # tide boundary
         if self.tide:
             h = y[...,0] * (1 - self.is_outfall) + b[...,-1]
@@ -678,7 +678,7 @@ class Emulator:
         return y,ey
 
     @tf.function
-    def post_proc_tf(self,preds,a,b):
+    def post_proc_tf(self,preds,b,a):
         preds,edge_preds = preds
         # tide boundary
         if self.tide:

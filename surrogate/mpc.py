@@ -219,7 +219,7 @@ class mpc_problem(Problem):
             runoff = np.repeat(np.expand_dims(self.runoff,0),pop_size,axis=0)
         state = np.repeat(np.expand_dims(self.state,0),settings.shape[0],axis=0)
         edge_state = np.repeat(np.expand_dims(self.edge_state,0),settings.shape[0],axis=0)
-        preds = self.emul.predict(state,runoff,settings,edge_state)
+        preds = self.emul.predict(state,runoff,edge_state,settings)
         if self.args.predict:
             objs = preds.numpy().sum(axis=-1).sum(axis=-1)
             if not getattr(self.emul,'norm',False):
@@ -240,7 +240,7 @@ class mpc_problem(Problem):
         settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
         if self.stochastic:
             settings = tf.repeat(settings,self.stochastic,axis=0)
-        preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+        preds = self.emul.predict_tf(state,runoff,edge_state,settings)
         if self.args.predict:
             objs = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
             if not getattr(self.emul,'norm',False):
@@ -524,7 +524,7 @@ class mpc_problem_gr(tf.Module):
             settings = tf.cast(tf.repeat(settings,self.r_step,axis=1),tf.float32)
             if self.stochastic:
                 settings = tf.repeat(settings,self.stochastic,axis=0)
-            preds = self.emul.predict_tf(state,runoff,settings,edge_state)
+            preds = self.emul.predict_tf(state,runoff,edge_state,settings)
             if self.args.predict:
                 obj = tf.reduce_sum(tf.reduce_sum(preds,axis=-1),axis=-1)
                 if not getattr(self.emul,'norm',False):
@@ -559,14 +559,14 @@ class mpc_problem_gr(tf.Module):
                 if self.margs.if_flood and idx > 0:
                     f = tf.cast(perf>0,tf.float32)
                     state = tf.concat([state[...,:-1],f,state[...,-1:]],axis=-1)
-                preds = self.emul.predict_tf(state,ri,sett,edge_state)
+                preds = self.emul.predict_tf(state,ri,edge_state,sett)
                 state,perf = tf.concat([preds[0][...,:-2],ri[...,:1]],axis=-1),preds[0][...,-1:]
                 ae = self.emul.get_edge_action(sett,True)
                 edge_state = tf.concat([preds[1],ae],axis=-1)
                 predss.append(preds)
             return [tf.concat([preds[0] for preds in predss],axis=1),tf.concat([preds[1] for preds in predss],axis=1)]
         else:
-            return self.emul.predict_tf(state,runoff,settings,edge_state)
+            return self.emul.predict_tf(state,runoff,edge_state,settings)
 
     @call_counter
     @tf.function

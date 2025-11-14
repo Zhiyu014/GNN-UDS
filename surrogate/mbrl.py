@@ -333,7 +333,7 @@ if __name__ == '__main__':
                 setting = ctrl.control(s_norm,train=True,batch=True)
                 setting = tf.repeat(setting[:,tf.newaxis,:],r_step,axis=1)
                 settings.append(setting)
-                preds = emul.predict_tf(x,bi,setting,ex)
+                preds = emul.predict_tf(x,bi,ex,setting)
                 if emul.if_flood:
                     x = tf.concat([preds[0][...,:-2],tf.cast(preds[0][...,-2:-1]>0.5,tf.float32),bi],axis=-1)
                 else:

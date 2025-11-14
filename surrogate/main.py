@@ -379,7 +379,7 @@ if __name__ == "__main__":
                             if args.if_flood:
                                 f = (perf>0).astype(float)
                                 state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                            preds = emul.predict(state,ri,sett,edge_state)
+                            preds = emul.predict(state,ri,edge_state,sett)
                             state = np.concatenate([preds[0][...,:-2],ri],axis=-1)
                             perf = preds[0][...,-1:]
                             ae = emul.get_edge_action(sett,False)
@@ -392,7 +392,7 @@ if __name__ == "__main__":
                         if args.if_flood:
                             f = (perf>0).astype(float)
                             state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                        preds = emul.predict(state,r,setting,edge_state)
+                        preds = emul.predict(state,r,edge_state,setting)
                         emu_obj = env.objective_pred(preds,[state,edge_state],setting)
                     t1 = time.time()
                     print('emulation time: %s'%(t1-t0))
@@ -517,7 +517,7 @@ if __name__ == "__main__":
             # lp_wrapper = lp(emul.simulate)
             # pred = lp_wrapper(states,r,a,edge_states)
             # lp.print_stats()
-            pred,edge_pred = emul.simulate(states,r,a,edge_states)
+            pred,edge_pred = emul.simulate(states,r,edge_states,a)
             print("{} Emulation time: {}".format(name,time.time()-t0))
 
             true = np.concatenate([true,perfs[args.seq_out:,...]],axis=-1)  # cumflooding in performance
