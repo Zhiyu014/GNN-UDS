@@ -325,7 +325,9 @@ class basescenario(scenario):
 
         # state shape
         args['state_shape'] = (len(nodes),len([k for k,_ in self.config['global_state'] if k == 'nodes'])) if self.global_state else len(args['states'])
-        args['nwei'] = np.array([self.config['loss_weight'].get(node,1.0) if self.config.get('loss_weight') is not None else 1.0 for node in nodes])
+        args['nwei'] = np.array([self.config['loss_weight'].get(node,1.0)
+                                 if self.config.get('loss_weight') is not None else 1.0
+                                 for node in nodes])
         args['ewei'] = np.array([self.config['loss_weight'].get(link,1.0)
                                     if self.config.get('loss_weight') is not None else 1.0
                                     for link in self.get_features('links')])        
@@ -519,14 +521,14 @@ class basescenario(scenario):
         return adj
             
     # predictive functions
-    def save_hotstart(self,hsf_dir=None,suffix=None):
+    def save_hotstart(self,hsf_dir=None,suffix=None,ct=None):
         # Save the current state in a .hsf file.
-        ct = self.env.methods['simulation_time']()
+        ct = self.env.methods['simulation_time']() if ct is None else ct
         if hsf_dir is None:
             hsf_dir = os.path.join(os.path.dirname(os.path.abspath(self.config['swmm_input'])),
             self.config['prediction']['hsf_dir'])
         if not os.path.exists(hsf_dir):
-            os.mkdir(hsf_dir)
+            os.makedirs(hsf_dir,exist_ok=True)
         hsf_file = '%s.hsf'%ct.strftime('%Y-%m-%d-%H-%M')
         if suffix is not None and isinstance(suffix,str):
             hsf_file = suffix + hsf_file

@@ -68,13 +68,13 @@ A hydraulic surrogate model and real-time control methods (mpc & rl) of urban dr
    - Details refer to [swmm_wq_rl](https://github.com/UVAdMIST/swmm_wq_rl).
 
 ## Requirements
-- tensorflow == 2.6.0
-- keras == 2.6.0
-- tensorflow_probability == 0.11.0
-- spektral == 1.2.0
-- protobuf == 3.20.0
+- torch == 2.4.0
+- torch_geometric == 2.6.1
+- einops == 0.8.1
 - pyswmm == 1.5.1
 - pystorms == 1.0.0
-- swmm-api == 0.2.0.18.3
-- matplotlib == 3.5.2
+- swmm-api == 0.4.66
+- scipy == 1.15.0
 - pymoo == 0.6.0
+- matplotlib
+- tensorboard

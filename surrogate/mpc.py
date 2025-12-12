@@ -1,13 +1,14 @@
 import os,time,math
 import torch as th
+import torch.nn.functional as F
 from einops import rearrange,repeat,reduce
 from emulator import Emulator # Emulator should be imported before env
 # from predictor import Predictor
 from utils.utilities import get_inp_files
 import pandas as pd
 import torch.multiprocessing as mp
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from utils.reinmax import reinmax
+# from reinmax import reinmax
 import numpy as np
 from scipy.stats import truncnorm
 from scipy.optimize import minimize as scioptminimize
@@ -89,7 +90,7 @@ def parser(config=None):
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
     n_term = len(args.termination)
-    conds = ['maxls','ftol','maxcor'] if args.gradient else ['n_eval','n_gen','fmin']
+    conds = ['maxls','ftol','gtol','maxcor'] if args.gradient else ['n_eval','n_gen','fmin']
     for i,j in zip(range(n_term-1),range(1,n_term)):
         args.termination[j] = eval(args.termination[j]) if args.termination[i] in conds else args.termination[j]
     # for i in range(len(args.termination)//2):
@@ -297,13 +298,13 @@ class BestCallback(Callback):
         super().__init__()
         self.data["best"] = []
         self.data["time"] = []
-        self.t0 = time.time()
+        self.t0 = time.perf_counter()
         self.data["sol"] = []
 
     def notify(self, algorithm):
         vals = algorithm.pop.get("F")
         self.data["best"].append(vals.min())
-        self.data["time"].append(time.time()-self.t0)
+        self.data["time"].append(time.perf_counter()-self.t0)
         self.data["sol"].append(algorithm.pop.get("X")[vals.argmin()])    
 
 def run_ea(prob,args,setting=None):
@@ -387,19 +388,32 @@ class mpc_gr:
             #         for _ in range(args.processes)])
             self.load_model(margs,args.predict)
         self.stochastic = getattr(args,"stochastic",False)
-        self.asp = list(args.action_space.values())
+        self.asp = [np.array(ap) for ap in args.action_space.values()]
         self.n_act = len(self.asp)
         self.horizon = getattr(args,'horizon',60)
         self.n_step = self.horizon//args.ctrl_step
         self.r_step = args.ctrl_step//args.interval
         self.env = get_env(args.env)(initialize=False)
-        self.pop_size = getattr(args,'pop_size',64)
-        self.n_var = self.n_act*self.n_step
-        self.bounded = args.method in ['l-bfgs-b','trust-constr']
-        self.xl = np.array([min(v) for _ in range(self.n_step)
-                            for v in self.asp])
-        self.xu = np.array([max(v) for _ in range(self.n_step)
-                            for v in self.asp])
+        self.conti = args.act.startswith('conti')
+        if self.conti:
+            self.n_var = self.n_act*self.n_step
+            self.bounded = args.method in ['l-bfgs-b','trust-constr']
+            self.xl = np.array([min(v) for _ in range(self.n_step)
+                                for v in self.asp])
+            self.xu = np.array([max(v) for _ in range(self.n_step)
+                                for v in self.asp])
+        else:
+            '''
+            TODO: gradient optim for discrete. set probs and use softmax to enable gradient when discretized
+            beta: hyperparameter determining the smoothness of discrete-to-continuous transition
+            a large beta lead to sharp landscape with closer value to the one-hot argmax, but may cause gradient diminishing
+            '''
+            self.tau = 0.1
+            self.hard = False
+            self.opts = [len(ap) for ap in self.asp] * self.n_step
+            self.n_var = sum(self.opts)
+            self.asp *= self.n_step
+            self.asp_th = [th.tensor(ap,device=self.device,dtype=th.float32) for ap in self.asp]
 
     def load_model(self,margs,predict=False):
         self.emul = Emulator(margs)
@@ -461,12 +475,13 @@ class mpc_gr:
         if self.stochastic:
             obj = th.stack([obj[i*self.stochastic:(i+1)*self.stochastic].mean()
                               for i in range(y.shape[0])],dim=0)
-        return obj.squeeze()
+        return obj
 
     @th.compile(dynamic=False)
     def gradient_fn(self,y,state,runoff,edge_state):
         self.emul.model.zero_grad()
-        obj = self.objective_fn(y,state,runoff,edge_state)
+        obj = self.objective_fn(y if self.conti else self.ste(y),
+                                state,runoff,edge_state).squeeze()
         grads = th.autograd.grad(obj,y,retain_graph=True)[0]
         return obj,grads
 
@@ -474,7 +489,7 @@ class mpc_gr:
     def gradient(self,y,*args):
         if not isinstance(y,th.Tensor):
             y = th.tensor(y,requires_grad=True,dtype=th.float32,device=self.device)
-        if not self.bounded:
+        if self.conti and not self.bounded:
             y = self.project(y)
         objs,grads = self.gradient_fn(y,*args)
         return objs.detach().cpu().numpy(),grads.detach().cpu().numpy()
@@ -489,6 +504,8 @@ class mpc_gr:
     @call_counter
     def hessp(self,y,p,*args):
         y,p = th.tensor(y).type(th.float32).to(self.device),th.tensor(p).type(th.float32).to(self.device)
+        if self.conti and not self.bounded:
+            y = self.project(y)
         return self.hessp_fn(y,p,*args).detach().cpu().numpy()
 
     def project(self,y,inverse=False):
@@ -498,20 +515,105 @@ class mpc_gr:
         else:
             return th.sigmoid(y)*(self.xu-self.xl)+self.xl
 
+    def ste(self,y):
+        '''
+        Straight through estimator (STE) for discrete variables
+        TODO: need to consider temperature tau for the gradient scale
+        '''
+        if isinstance(y,np.ndarray):
+            y = np.split(y,np.cumsum(self.opts)[:-1])
+            yhard = [np.take(ap,np.argmax(yi,axis=-1),-1)
+                     for yi,ap in zip(y,self.asp)]
+            return np.stack(yhard,axis=-1)
+        else:
+            y = th.split(y,self.opts,dim=-1)
+            yste = [reinmax(yi,self.tau)[0] for yi in y]
+            # yste = [th.softmax(yi/self.tau, dim=-1) for yi in y]
+            # if self.hard:
+            #     yhard = [F.one_hot(yi.argmax(dim=-1),opt)
+            #              for yi,opt in zip(y,self.opts)]
+            #     yste = [ys - ys.detach() + yh # constant
+            #              for ys,yh in zip(yste,yhard)]
+            yste = [(ys * ap).sum(dim=-1)
+                     for ys,ap in zip(yste,self.asp_th)]
+            return th.stack(yste,dim=-1)
+
     @property
     def calls(self):
         return self.gradient.calls + self.hessp.calls
+
+def run_gr(prob,args,setting=None):
+    '''
+    TODO:
+    First-order gradient-based optimization using Pytorch
+    '''
+    if prob.conti:
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
+    else:
+        sampling = np.random.normal(size=(args.pop_size,prob.n_var)).tolist()
+    if args.use_current and setting is not None:
+        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1 or not prob.conti)])
+
+    def if_terminate(item,vm,rec):
+        if item == 'n_gen':
+            return rec[0] >= vm
+        # elif item == 'grad':
+        #     return rec[2] <= vm
+        elif item == 'time':
+            return rec[2] >= vm
+        elif item == 'obj':
+            return rec[3] <= vm # TODO
+
+    fun,recs,sols = 1e6,[[0,prob.calls,time.perf_counter(),1e6]],[sampling[0]]
+    print('===============================================')
+    print(' n_gen | n_fun |     time      |       f       ')
+    print('===============================================')
+    y = prob.project(sampling,True) if prob.conti and not prob.bounded else sampling
+    y = th.tensor(y, requires_grad=True, dtype=th.float32, device = prob.device)
+    optim = th.optim.SGD([y],lr=getattr(args,"learning_rate",1e-3))
+    while not if_terminate(*args.termination,recs[-1]):
+        prob.emul.model.zero_grad()
+        obj = prob.objective_fn(y if prob.conti else prob.ste(y), *prob.get_state())
+        optim.zero_grad()
+        obj.backward()
+        optim.step()
+        # obj,grads = prob.pred_fit()
+        obj = obj.detach().cpu().numpy()
+        rec = [recs[-1][0]+1, recs[-1][1]+1, time.perf_counter()-recs[-1][2], obj.min()]
+        log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
+        print(log)
+        if obj.min() < fun:
+            idx,ini,fun = rec[0],obj.argmin(),obj.min()
+            sol = y[ini].detach().cpu().numpy()
+        rec[2] = time.perf_counter()
+        recs.append(rec)
+    print("Best iter {} initial {} Objective {}".format(idx,ini,fun))
+    if prob.conti:
+        ctrls = prob.project(sol).numpy() if not prob.bounded else sol
+    else:
+        ctrls = prob.ste(sol)
+    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    print('Best solution: ',ctrls)
+    vals = np.array(recs)[1:,-1]
+    nfuns = np.array(recs)[1:,1]-recs[0][1]
+    times = np.array(recs)[1:,2]-recs[0][2]
+    sols.append(sol)
+    sols = np.array(sols,dtype=np.float32).reshape((len(sols),prob.n_step,-1))
+    return ctrls,vals,nfuns,times,sols
 
 def run_ntopt(prob,args,setting=None):
     '''
     l-bfgs-b or trust-constr via scipy.optimize.minimize
     '''
     print(f'Running {args.method} optimization')
-    sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
+    if prob.conti:
+        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
+    else:
+        sampling = np.random.normal(size=(args.pop_size,prob.n_var)).tolist()
     if args.use_current and setting is not None:
-        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1)])
+        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1 or not prob.conti)])
 
-    recs,sols = [[0,prob.calls,time.time(),1e6]],[sampling[0]]
+    recs,sols = [[0,prob.calls,time.perf_counter(),1e6]],[sampling[0]]
     print('===============================================')
     print(' n_gen | n_fun |     time      |       f       ')
     print('===============================================')
@@ -519,10 +621,10 @@ def run_ntopt(prob,args,setting=None):
         # sols.append(intermediate_result.x if prob.bounded else prob.project(intermediate_result.x).numpy())
         obj = getattr(intermediate_result,'fun',np.nan)
         nfev = prob.calls
-        rec = [recs[-1][0]+1, nfev-recs[-1][1], time.time()-recs[-1][2], obj]
+        rec = [recs[-1][0]+1, nfev-recs[-1][1], time.perf_counter()-recs[-1][2], obj]
         log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
         print(log[:-1])
-        rec[1],rec[2] = nfev,time.time()
+        rec[1],rec[2] = nfev,time.perf_counter()
         recs.append(rec)
     if args.processes > 1:
         #TODO: split prob & model into different processes
@@ -544,12 +646,12 @@ def run_ntopt(prob,args,setting=None):
         res = []
         for i,x0 in enumerate(sampling):
             results = scioptminimize(prob.gradient,
-                                     x0=x0 if prob.bounded else prob.project(x0,True),
+                                     x0 = prob.project(x0,True) if prob.conti and not prob.bounded else x0,
                                      args=prob.get_state(),
                                      method=args.method,
                                      jac=True,
                                      hessp=prob.hessp,
-                                     bounds=list(zip(prob.xl,prob.xu)),
+                                     bounds=list(zip(prob.xl,prob.xu)) if prob.conti else None,
                                      callback=mycallback,
                                      options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
                                      )
@@ -559,14 +661,17 @@ def run_ntopt(prob,args,setting=None):
     idx = np.argmin([r.fun for r in res])
     results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
-    ctrls = results.x if prob.bounded else prob.project(results.x).numpy()
-    sols.append(ctrls)
+    if prob.conti:
+        ctrls = prob.project(results.x).numpy() if not prob.bounded else results.x
+    else:
+        ctrls = prob.ste(results.x)
+    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    print('Best solution: ',ctrls)
     vals = np.array(recs)[1:,-1]
     nfuns = np.array(recs)[1:,1]-recs[0][1]
     times = np.array(recs)[1:,2]-recs[0][2]
-    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
-    sols = np.array(sols,dtype=np.float32).reshape((-1,prob.n_step,prob.n_act))
-    print('Best solution: ',ctrls)
+    sols.append(results.x)
+    sols = np.array(sols,dtype=np.float32).reshape((len(sols),prob.n_step,-1))
     return ctrls,vals,nfuns,times,sols
 
 if __name__ == '__main__':
@@ -574,13 +679,14 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
     de = {
         # 'env':'astlingen',
-        # 'act':'conti',
+        # 'act':'rand3',
         # 'processes':1,
         # 'pop_size':1,
         # # 'sampling':0.4,
         # # 'learning_rate':0.1,
         # # 'termination':['or','time','00:05:00','soo','ftol-0.001'],
-        # 'termination':['ftol',1e-3,'maxls',30],
+        # # 'termination':['ftol',1e-3,'maxls',30],
+        # 'termination':['n_gen',100],
         # 'surrogate':True,
         # 'batch_size':1,
         # 'gradient': True,
@@ -592,8 +698,8 @@ if __name__ == '__main__':
         # # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':120,
-        # 'model_dir':'./model/astlingen/120s_gat_5ly_floodwei_gradnorm',
+        # 'horizon':60,
+        # 'model_dir':'./model/astlingen/60s_gat_5ly_floodwei_gradnorm',
         # 'result_dir':'./results/astlingen/test',
         }
     for k,v in de.items():
@@ -653,7 +759,7 @@ if __name__ == '__main__':
         name = os.path.basename(event).strip('.inp')
         if os.path.exists(os.path.join(args.result_dir,name + '_state.npy')):
             continue
-        t0 = time.time()
+        t0 = time.perf_counter()
         if args.surrogate:
             ts,runoff = get_runoff(env,event,tide=args.tide and args.is_outfall)
             tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
@@ -668,7 +774,7 @@ if __name__ == '__main__':
                                 for idx,s in enumerate(runoff_rate)])
 
 
-        t1 = time.time()
+        t1 = time.perf_counter()
         print('Runoff time: {} s'.format(t1-t0))
         opt_times = []
         state = env.reset(event,global_state=True,seq=margs.seq if args.surrogate else False)
@@ -687,7 +793,7 @@ if __name__ == '__main__':
         done,i,j,valss,nfunss,timess,solss = False,0,0,[],[],[],[]
         while not done:
             if i*args.interval % args.sample_interval == 0:
-                t2 = time.time()
+                t2 = time.perf_counter()
                 setting = setting[j+1:] + setting[-1:] * (j+1)
                 if args.surrogate:
                     state[...,1] = state[...,1] - state[...,-1]
@@ -707,7 +813,11 @@ if __name__ == '__main__':
                     # margs.runoff = r
                     prob.load_state(state,r,edge_state)
                     if args.gradient:
-                        setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
+                        if not prob.conti:
+                            setting = np.concatenate([sols[-1][j+1:], sols[-1][-1:]*(j+1)],axis=0) if i>0 else None
+                            setting,vals,nfuns,times,sols = run_gr(prob,args,setting=setting)
+                        else:
+                            setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
                     else:
                         setting,vals,nfuns,times,sols = run_ea(prob,args,setting=setting)
                 else:
@@ -721,7 +831,7 @@ if __name__ == '__main__':
                 nfunss.append(nfuns)
                 timess.append(times)
                 solss.append(sols)
-                t3 = time.time()
+                t3 = time.perf_counter()
                 print('Optimization time: {} s'.format(t3-t2))
                 opt_times.append(t3-t2)
                 j = 0

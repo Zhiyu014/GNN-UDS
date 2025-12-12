@@ -68,13 +68,12 @@ class Argument(argparse.ArgumentParser):
         self.add_argument('--pop_size',type=int,default=1,help='number of parallel control options')
         self.add_argument('--result_dir',type=str,default='./results/',help='the test results')
 
-def parser(config=None):
+def parser(config):
     parser = Argument(description='surrogate')
 
     args = parser.parse_args()
-    if config is not None:
-        hyps = yaml.load(open(config,'r'),yaml.FullLoader)
-        parser.set_defaults(**hyps[args.env])
+    hyps = yaml.load(open(config,'r'),yaml.FullLoader)
+    parser.set_defaults(**hyps[args.env])
     args = parser.parse_args()
 
     config = {k:v for k,v in args.__dict__.items() if v!=hyps[args.env].get(k,v)}
@@ -89,28 +88,32 @@ if __name__ == "__main__":
     args,config = parser(os.path.join(HERE,'utils','config.yaml'))
 
     # simu_de = {'simulate':True,
-    #            'env':'RedChicoSur',
-    #            'data_dir':'./envs/data/RedChicoSur/act_edge/',
-    #            'act':True,
-    #            'processes':1,
+    #            'env':'chaohu',
+    #            'data_dir':'./envs/data/chaohu/1s_rand_rain50/',
+    #            'act':'rand',
+    #            'hotstart': True,
+    #            'ctrl_step':10,
     #            'repeats':1,
+    #            'rain_dir':'./envs/config/sh_train50_events.csv',
+    #            'processes':1,
+    #            'swmm_step':1,
     #            }
     # for k,v in simu_de.items():
     #     setattr(args,k,v)
 
     # train_de = {'train':True,
-    #             'env':'hague',
+    #             'env':'astlingen',
     #             'order':1,
-    #             'data_dir':'./envs/data/hague/1s_conti_rain50/',
+    #             'data_dir':'./envs/data/astlingen/1s_edge_conti128_rain50/',
     #             'act':'conti',
-    #             'model_dir':'./model/hague/test/',
+    #             'model_dir':'./model/astlingen/test/',
     #             'load_model':False,
     #             'roll':0,
-    #             'batch_size':4,
+    #             'batch_size':64,
     #             'epochs':50000,
     #             'nly':5,
-    #             'seq':60,
-    #             'if_flood':False,
+    #             'seq':5,
+    #             'if_flood':True,
     #             'gradnorm':True}
     # for k,v in train_de.items():
     #     setattr(args,k,v)
@@ -156,7 +159,7 @@ if __name__ == "__main__":
         if 'rain_num' in config:
             rain_arg['rain_num'] = args.rain_num
         events = get_inp_files(env.config['swmm_input'],rain_arg,swmm_step=args.swmm_step)
-        dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act)
+        dG.generate(events,processes=args.processes,repeats=args.repeats,act=args.act,hotstart=args.hotstart)
         dG.save(args.data_dir)
 
     if args.train:
@@ -175,6 +178,8 @@ if __name__ == "__main__":
         test_ids = [ev for ev in range(n_events) if ev not in train_ids]
         train_idxs = dG.get_data_idxs(train_ids,seq)
         test_idxs = dG.get_data_idxs(test_ids,seq)
+        np.save(os.path.join(args.model_dir,'train_id.npy'),np.array(train_ids))
+        np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
         # if args.if_flood:
         #     args.poswei = dG.get_flood_poswei()
 
@@ -187,17 +192,17 @@ if __name__ == "__main__":
                 os.mkdir(args.model_dir)
             if 'model_dir' in config:
                 config['model_dir'] += '/retrain'
-        emul.set_norm(*dG.get_norm())
+        emul.set_norm(**dG.get_norm())
         yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
-        t0 = time.time()
+        t0 = time.perf_counter()
         train_losses,test_losses,secs = [],[],[0]
         log_dir = "logs/model/"
         shutil.rmtree(log_dir, ignore_errors=True)
         os.makedirs(log_dir,exist_ok=True)
         writer = SummaryWriter(log_dir)
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False,weight=True)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=True)
             x,a,b,y = [emul.to_tensor(dat) for dat in train_dats[:4]]
             ex,ey = [emul.to_tensor(dat) for dat in train_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
@@ -206,7 +211,7 @@ if __name__ == "__main__":
             train_loss = [los.detach().cpu().numpy() for los in train_loss]
             train_losses.append(train_loss)
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,trim=False,weight=True)
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=True)
             x,a,b,y = [emul.to_tensor(dat) for dat in test_dats[:4]]
             ex,ey = [emul.to_tensor(dat) for dat in test_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
@@ -221,7 +226,7 @@ if __name__ == "__main__":
             if epoch > 0 and epoch % args.save_gap == 0:
                 emul.save('%s'%epoch)
                 
-            secs.append(time.time()-t0)
+            secs.append(time.perf_counter()-t0)
 
             # Log output
             log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],sum(train_loss),sum(test_loss))
@@ -240,8 +245,6 @@ if __name__ == "__main__":
 
         # save
         emul.save()
-        np.save(os.path.join(args.model_dir,'train_id.npy'),np.array(train_ids))
-        np.save(os.path.join(args.model_dir,'test_id.npy'),np.array(test_ids))
         np.save(os.path.join(args.model_dir,'train_loss.npy'),np.array(train_losses))
         np.save(os.path.join(args.model_dir,'test_loss.npy'),np.array(test_losses))
         np.save(os.path.join(args.model_dir,'time.npy'),np.array(secs[1:]))
@@ -314,7 +317,7 @@ if __name__ == "__main__":
                     if setting.shape[1] < args.horizon // args.interval:
                         setting = np.concatenate([setting,np.repeat(setting[:,-1:,:],args.horizon // args.interval - setting.shape[1],axis=1)],axis=1)
                     settings.append(setting)
-                    t0 = time.time()
+                    t0 = time.perf_counter()
                     if args.error > 0:
                         r = runoff[int(tss.asof(t)['Index'])]
                         std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
@@ -327,31 +330,36 @@ if __name__ == "__main__":
                     state = np.repeat(np.expand_dims(state,0),args.pop_size,axis=0)
                     perf = np.repeat(np.expand_dims(perf,0),args.pop_size,axis=0)
                     edge_state = np.repeat(np.expand_dims(edge_state,0),args.pop_size,axis=0)
+                    if args.if_flood:
+                        f = (perf>0).astype(float)
+                        state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
                     if args.horizon > args.seq * args.interval:
-                        predss = []
+                        predss,edge_predss = [],[]
                         s0,e0 = state.copy(),edge_state.copy()
                         for idx in range(args.horizon//args.seq_in):
                             ri = r[:,idx*args.seq:(idx+1)*args.seq,...]
                             sett = setting[:,idx*args.seq:(idx+1)*args.seq,:]
+                            preds = emul.predict(*[emul.to_tensor(dat)
+                                                for dat in [state,edge_state,ri,sett]],constr=False)
+                            preds = [p.detach().cpu().numpy() for p in preds]
                             if args.if_flood:
-                                f = (perf>0).astype(float)
-                                state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                            preds = emul.predict(state,ri,sett,edge_state)
-                            state = np.concatenate([preds[0][...,:-2],ri[...,:1]],axis=-1)
-                            perf = preds[0][...,-1:]
+                                state = np.concatenate([preds[0][...,:-1],(preds[0][...,-1:]>0).astype(float),ri],axis=-1)
+                            else:
+                                state = np.concatenate([preds[0],ri],axis=-1)
                             ae = emul.get_edge_action(sett,False)
                             edge_state = np.concatenate([preds[1],ae],axis=-1)
-                            predss.append(preds)
-                        predss = [np.concatenate([preds[0] for preds in predss],axis=1),
-                                  np.concatenate([preds[1] for preds in predss],axis=1)]
-                        emu_obj = env.objective_pred(predss,[s0,e0],sett)
+                            predss.append(preds[0])
+                            edge_predss.append(preds[1])
+                        predss = np.concatenate(predss,axis=1)[...,:-1]
+                        edge_predss = np.concatenate(edge_predss,axis=1)
+                        predss = emul.constrain(emul.to_tensor(predss),emul.to_tensor(s0[:,-1,:,0]))
+                        qw = emul.get_flood(predss,emul.to_tensor(r[...,0])).detach().cpu().numpy()
+                        predss = np.concatenate([predss.detach().cpu().numpy(),qw],axis=-1)
+                        emu_obj = env.objective_pred([predss,edge_predss],[s0,e0],sett)
                     else:
-                        if args.if_flood:
-                            f = (perf>0).astype(float)
-                            state = np.concatenate([state[...,:-1],f,state[...,-1:]],axis=-1)
-                        preds = emul.predict(state,r,setting,edge_state)
-                        emu_obj = env.objective_pred(preds,[state,edge_state],setting)
-                    t1 = time.time()
+                        preds = emul.predict(*[emul.to_tensor(dat) for dat in [state,edge_state,r,setting]])
+                        emu_obj = env.objective_pred([p.detach().cpu() for p in preds],[state,edge_state],setting,keepdim=True)
+                    t1 = time.perf_counter()
                     print('emulation time: %s'%(t1-t0))
                     emu_objs.append(emu_obj.squeeze())
 
@@ -367,7 +375,7 @@ if __name__ == "__main__":
                     pool.close()
                     pool.join()
                     simu_obj = np.stack([r.get() for r in res])
-                    print('hsf simu time: %s'%(time.time()-t1))
+                    print('hsf simu time: %s'%(time.perf_counter()-t1))
                     simu_objs.append(simu_obj.squeeze())
 
                     objs.append(env.objective(args.horizon))

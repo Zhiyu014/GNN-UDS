@@ -12,6 +12,9 @@ states:
   - !!python/tuple
     - "system"
     - cumprecip
+    # TODO: check if the same. probably both ok
+    # - "RG"
+    # - rainfall_vol
   - !!python/tuple
     - "CC-storage"
     - depthN
@@ -187,6 +190,7 @@ safe_thresholds:
     - 5
     
 # Performance Targets
+# TODO: 2 flood 1 cso -0.1 wwtp no energy
 performance_targets:
   # rainfall indicator
   # - !!python/tuple
@@ -197,7 +201,7 @@ performance_targets:
   - !!python/tuple
     - "nodes"
     - cumflooding
-    - 1
+    - 2
   # tank flooding penalty
   # - !!python/tuple
   #   - "CC-storage"
@@ -211,53 +215,53 @@ performance_targets:
   - !!python/tuple
     - "CC-1"
     - cuminflow
-    - 0.5
+    - 1
   - !!python/tuple
     - "CC-2"
     - cuminflow
-    - 0.5
+    - 1
   - !!python/tuple
     - "JK-1"
     - cuminflow
-    - 0.5
+    - 1
   - !!python/tuple
     - "JK-2"
     - cuminflow
-    - 0.5
+    - 1
   # WWTP
   - !!python/tuple
     - "WSC"
     - cuminflow
     - -0.1
   # Pumping energy
-  - !!python/tuple
-    - "CC-S1"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "CC-S2"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "CC-R1"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "CC-R2"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "JK-S"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "JK-R1"
-    - cumpumpenergy
-    - 1
-  - !!python/tuple
-    - "JK-R2"
-    - cumpumpenergy
-    - 1
+  # - !!python/tuple
+  #   - "CC-S1"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "CC-S2"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "CC-R1"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "CC-R2"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "JK-S"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "JK-R1"
+  #   - cumpumpenergy
+  #   - 1
+  # - !!python/tuple
+  #   - "JK-R2"
+  #   - cumpumpenergy
+  #   - 1
   # Control Roughness
   # - !!python/tuple
   #   - "CC-S1"
@@ -335,47 +339,68 @@ site:
         - "JK-R1"
         - "JK-R2"
 
-# TODO: Chicago Rainfall scenario parameters
+# Rainfall scenario parameters
 rainfall:
-  func: generate_file
-  filedir: ./envs/network/chaohu/
-  suffix: chaohu_train
-  # Rainfall pattern
-  rainfall_pattern: "Chicago (Keifer & Chu, 1957)"
-  # Events
-  rain_num: 50
-  # Rainfall duration (min)
-  dura: 120
-  # Time resolution (min)
-  delta: 5
-  # Simulation duration (min)
-  simu_dura: 300
-  # Set rainfall parameters
-  P:
-    !!python/tuple
-    - 1
-    - 5    
-  params:
-    A:
-      !!python/tuple
-      - 21.9682
-      - 38.8565
-    C:
-      !!python/tuple
-      - 0.8057
-      - 2.201
-    n:
-      !!python/tuple
-      - 0.8301
-      - 1.0792
-    b:
-      !!python/tuple
-      - 16.41
-      - 26.5
-    r:
-      !!python/tuple
-      - 0.3
-      - 0.8
+  func: generate_split_file
+  filedir: ./envs/network/chaohu/chaohu
+  rainfall_timeseries: ./envs/config/sh_rain.csv # rainfall timeseries data
+  rainfall_events: ./envs/config/sh_rain_events.csv # rainfall timeseries data
+  pre_time: 0 # preliminary time (min) to exclude
+  MIET: 120 # minimum interevent time (min)
+  duration_range:  # rainfall duration sampling range (hr)
+    - 300
+    - 1440
+  precipitation_range: # rainfall precipitation sampling range (mm)
+    - 15
+    - 50
+  date_range: # rainfall precipitation sampling range (mm)
+    - 01/01/2016
+    - 09/09/2021
+  replace_rain: False
+  duplicate_rain: True
+  tide: False
+
+# Chicago Rainfall pattern parameters
+# rainfall:
+#   func: generate_file
+#   filedir: ./envs/network/chaohu/
+#   suffix: chaohu_train
+#   # Rainfall pattern
+#   rainfall_pattern: "Chicago (Keifer & Chu, 1957)"
+#   # Events
+#   rain_num: 50
+#   # Rainfall duration (min)
+#   dura: 120
+#   # Time resolution (min)
+#   delta: 5
+#   # Simulation duration (min)
+#   simu_dura: 300
+#   # Set rainfall parameters
+#   P:
+#     !!python/tuple
+#     - 1
+#     - 5    
+#   params:
+#     A:
+#       !!python/tuple
+#       - 21.9682
+#       - 38.8565
+#     C:
+#       !!python/tuple
+#       - 0.8057
+#       - 2.201
+#     n:
+#       !!python/tuple
+#       - 0.8301
+#       - 1.0792
+#     b:
+#       !!python/tuple
+#       - 16.41
+#       - 26.5
+#     r:
+#       !!python/tuple
+#       - 0.3
+#       - 0.8
 
 # if time-variant outlet boundary
 tide: False

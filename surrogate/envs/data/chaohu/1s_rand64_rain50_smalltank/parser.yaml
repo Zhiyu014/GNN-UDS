@@ -1,0 +1,7 @@
+act: rand
+data_dir: 1s_rand_rain50_r4/act1
+hotstart: true
+processes: 16
+rain_dir: sh_train50_events.csv
+repeats: 8
+simulate: true

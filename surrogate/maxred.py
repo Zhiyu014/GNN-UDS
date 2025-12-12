@@ -17,6 +17,7 @@ from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.problem import Problem
 from pymoo.core.callback import Callback
 from pymoo.termination.collection import TerminationCollection
+from mpc import TerminationOrCollection
 HERE = os.path.dirname(__file__)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -54,8 +55,10 @@ def parser(config=None):
     for k,v in config.items():
         if '_dir' in k:
             setattr(args,k,os.path.join(hyp[k],v))
-    for i in range(len(args.termination)//2):
-        args.termination[2*i+1] = eval(args.termination[2*i+1]) if args.termination[2*i] not in ['time','soo'] else args.termination[2*i+1]
+    n_term = len(args.termination)
+    conds = ['n_eval','n_gen','fmin']
+    for i,j in zip(range(n_term-1),range(1,n_term)):
+        args.termination[j] = eval(args.termination[j]) if args.termination[i] in conds else args.termination[j]
 
     print('MaxRed configs: {}'.format(args))
     return args,config
@@ -154,11 +157,11 @@ if __name__ == '__main__':
         name = os.path.basename(event).strip('.inp')
         if os.path.exists(os.path.join(args.result_dir,name + '_state.npy')):
             continue
-        t0 = time.time()
+        t0 = time.perf_counter()
         ts,runoff_rate = get_runoff(env,event,True,tide=args.tide and args.is_outfall)
         tss = pd.DataFrame.from_dict({'Time':ts,'Index':np.arange(len(ts))}).set_index('Time')
         tss.index = pd.to_datetime(tss.index)
-        t1 = time.time()
+        t1 = time.perf_counter()
         print('Runoff time: {} s'.format(t1-t0))
 
         args.horizon = runoff_rate.shape[0] * args.interval
@@ -181,7 +184,7 @@ if __name__ == '__main__':
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         if len(args.termination) > 2:
             terms = {}
-            for val in args.termination:
+            for val in args.termination[1:]:
                 if val in ['n_eval','n_gen','fmin','time','soo']:
                     term = val
                     terms[term] = {} if val =='soo' else None
@@ -193,7 +196,7 @@ if __name__ == '__main__':
             termination = []
             for k,v in terms.items():
                 termination.append(get_termination(k,**v) if isinstance(v,dict) else get_termination(k,v))
-            termination = TerminationCollection(*termination)
+            termination = TerminationOrCollection(*termination) if 'or' in args.termination[0] else TerminationCollection(*termination)
         else:
             termination = get_termination(*args.termination)
 
@@ -223,14 +226,14 @@ if __name__ == '__main__':
         perfs,objects = [env.flood()],[env.objective()]
         edge_state = env.state_full(False,typ='links')
         edge_states = [edge_state]
-        setting = [1 for _ in args.action_space]
+        setting = env.controller('default')
         settings = [setting]
         done,idx = False,0
         while not done:
             if idx % args.ctrl_step == 0:
                 setting = ctrls[idx] if idx<ctrls.shape[0] else ctrls[-1]
-                setting = np.array(env.controller('safe',state,setting)).astype(float)
-            done = env.step(setting)
+                # setting = np.array(env.controller('safe',state,setting)).astype(float)
+            done = env.step(setting.astype(float))
             state = env.state_full()
             edge_state = env.state_full(False,'links')
             states.append(state)

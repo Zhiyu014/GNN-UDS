@@ -198,12 +198,13 @@ class Predictor:
     def save(self,epoch=None):
         if not os.path.exists(self.model_dir):
             os.mkdir(self.model_dir)
+        name = epoch if epoch is not None else 'model'
         th.save({
             'optimizer_state': self.optimizer.state_dict(),
             'alpha_optimizer_state': self.alpha_optimizer.state_dict() if hasattr(self,'alpha_optimizer') else None,
             'model_state': self.model.state_dict(),
             'epoch': epoch,
-            }, os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth'))
+            }, os.path.join(self.model_dir,f'{name}.pth'))
         for item in 'xbyreo':
             norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
             if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
@@ -214,14 +215,16 @@ class Predictor:
             path = self.model_dir
             self.model_dir = os.path.dirname(self.model_dir)
         else:
-            path = os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth')
+            name = epoch if epoch is not None else 'model'
+            path = os.path.join(self.model_dir,f'{name}.pth')
         checkpoint = th.load(path, weights_only=True)
         self.model.load_state_dict(checkpoint['model_state'])
         if retrain:
             self.optimizer.load_state_dict(checkpoint['optimizer_state'])
             if hasattr(self,'alpha_optimizer') and checkpoint.get('alpha_optimizer_state') is not None:
                 self.alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state'])
-            print(f'Load model at {checkpoint['epoch']}')
+            epoch = checkpoint['epoch']
+            print(f'Load model at {epoch}')
         for item in 'xbyreo':
             norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
             if os.path.exists(norm_path):
@@ -287,18 +290,18 @@ if __name__ == '__main__':
             os.mkdir(args.model_dir)
         if 'model_dir' in config:
             config['model_dir'] += '/retrain'
-    emul.set_norm(*dG.get_norm())
+    emul.set_norm(**dG.get_norm())
     emul.norm_o = emul.to_tensor(env.get_obj_norm(emul.norm_y.cpu().numpy(), dG.perfs.max(axis=0).squeeze()))
     yaml.dump(data=config,stream=open(os.path.join(args.model_dir,'parser.yaml'),'w'))
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     train_losses,test_losses,secs = [],[],[0]
     log_dir = "logs/model/"
     shutil.rmtree(log_dir, ignore_errors=True)
     os.makedirs(log_dir,exist_ok=True)
     writer = SummaryWriter(log_dir)
     for epoch in range(args.epochs):
-        train_dats = dG.prepare_batch(train_idxs,args.seq,args.batch_size,interval=args.ctrl_step,trim=False)
+        train_dats = dG.prepare_batch(train_idxs,args.seq,args.batch_size,interval=args.ctrl_step)
         x,a,b,y = [dat if dat is not None else dat for dat in train_dats[:4]]
         ex,ey = [dat for dat in train_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
@@ -313,7 +316,7 @@ if __name__ == '__main__':
         train_loss = [los.detach().cpu().numpy() for los in train_loss]
         train_losses.append(train_loss)
 
-        test_dats = dG.prepare_batch(test_idxs,args.seq,args.batch_size,interval=args.ctrl_step,trim=False)
+        test_dats = dG.prepare_batch(test_idxs,args.seq,args.batch_size,interval=args.ctrl_step)
         x,a,b,y = [dat if dat is not None else dat for dat in test_dats[:4]]
         ex,ey = [dat for dat in test_dats[6:8]]
         objs = env.objective_pred([y,ey],[x,ex],a,keepdim=True)
@@ -334,7 +337,7 @@ if __name__ == '__main__':
         if epoch > 0 and epoch % args.save_gap == 0:
             emul.save('%s'%epoch)
             
-        secs.append(time.time()-t0)
+        secs.append(time.perf_counter()-t0)
 
         # Log output
         log = "Epoch {}/{}  {:.4f}s Train loss: {:.4f} Test loss: {:.4f}".format(epoch,args.epochs,secs[-1]-secs[-2],sum(train_loss),sum(test_loss))

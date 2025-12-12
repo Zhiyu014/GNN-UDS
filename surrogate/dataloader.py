@@ -10,10 +10,10 @@ class DataGenerator:
     def __init__(self,env_config,data_dir=None,args=None):
         self.config = env_config
         self.data_dir = data_dir if data_dir is not None else './envs/data/{}/'.format(self.config['env_name'])
-        self.items = ['states','perfs','settings','rains','edge_states','event_id','dones']
+        self.items = ['states','perfs','settings','rains','edge_states','event_id','dones','rept']
         self.pre_step = args.rainfall.get('pre_time',0) // self.config['interval']
-        self.seq_in = getattr(args,"seq",5)
-        self.seq_out = getattr(args,"horizon",getattr(args,"seq",5)) * max(getattr(args,"roll",1),1)
+        self.seq_in = getattr(args,"seq",getattr(args,"ctrl_step",5))
+        # self.seq_out = getattr(args,"horizon",getattr(args,"seq",5)) * max(getattr(args,"roll",1),1)
         self.if_flood = getattr(args,"if_flood",False)
         self.is_outfall = getattr(args,"is_outfall",np.array([0]))
         self.act = getattr(args,"act",False)
@@ -30,19 +30,23 @@ class DataGenerator:
         states,perfs,edge_states,rains,settings = [],[],[],[],[]
         edge_state = env.state_full(seq,'links')
         setting = [1 for _ in self.action_space] if act else None
-        rept = []
+        rept,suffix = [], '%s-' % repeat
+        if env.config['rainfall'].get('duplicate_rain',False):
+            suffix += '%s-' % event.split('_')[-1].strip('.inp')
         done,i = False,0
         while not done:
-            if hotstart and i % (self.ctrl_step//self.config['interval']) == 0:
-                hsf_file = env.save_hotstart(os.path.join(self.data_dir,'hsf'),'%s-'%repeat)
-                ct = int(round(env.env.methods['simulation_time']().timestamp(),-1))
-                # eval_file = env.create_eval_file(hsf_file)
-                # inp = read_inp_file(eval_file)
-                # inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
-                # inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
-                # inp.write_file(eval_file)
-                # _ = swmm5_run(eval_file)
-            setting = env.controller(act,state,setting) if act and i % (self.ctrl_step//self.config['interval']) == 0 else setting
+            if i % (self.ctrl_step//self.config['interval']) == 0:
+                if act:
+                    setting = env.controller(act,state,setting)
+                if hotstart:
+                    ct = env.env.methods['simulation_time']().replace(second=0, microsecond=0)
+                    hsf_file = env.save_hotstart(os.path.join(self.data_dir,'hsf'),suffix,ct=ct)
+                    # eval_file = env.create_eval_file(hsf_file)
+                    # inp = read_inp_file(eval_file)
+                    # inp['OPTIONS']['END_DATE'] = (ct + timedelta(minutes=hotstart)).date()
+                    # inp['OPTIONS']['END_TIME'] = (ct + timedelta(minutes=hotstart)).time()
+                    # inp.write_file(eval_file)
+                    # _ = swmm5_run(eval_file)
             done = env.step(setting)
             state = env.state_full(seq=seq)
             rain = env.rainfall(seq=seq)
@@ -54,7 +58,7 @@ class DataGenerator:
             edge_state = env.state_full(seq,'links')
             edge_states.append(edge_state)
             if hotstart:
-                rept.append([repeat,ct])
+                rept.append([repeat,int(ct.timestamp())])
             i += 1
         dat = np.array(states),np.array(perfs),np.array(settings) if act else None,np.array(rains),np.array(edge_states)
         if hotstart:
@@ -83,6 +87,7 @@ class DataGenerator:
         self.cur_capa = self.states.shape[0]
         if hotstart:
             self.rept = np.concatenate([r[-1][self.pre_step:] for r in res],axis=0)
+        self.norm = self.calc_norm()
 
     def get_flood_weight(self,seq=0):
         if not hasattr(self,f"flood_weight_{seq}"):
@@ -112,7 +117,7 @@ class DataGenerator:
         return event_idxs
         
 
-    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,continuous=False,trim=True,weight=False):
+    def prepare_batch(self,event_idxs,seq=0,batch_size=32,interval=1,continuous=False,trim=False,weight=False):
         if continuous:
             idxs = np.random.randint(event_idxs.shape[0]//interval-batch_size)
             idxs = interval*np.arange(idxs,idxs+batch_size)
@@ -138,9 +143,9 @@ class DataGenerator:
         x,b,y = self.state_split_batch(states,perfs,trim)
         ex,ey = self.edge_state_split_batch(edge_states,trim)
         if trim:
-            rx,ry = rx[:,-self.seq_in:,...],ry[:,:self.seq_out,...]
-        if self.settings is not None and trim:
-            settings = settings[:,:self.seq_out,...]
+            rx = rx[:,-self.seq_in:,...]
+        # if self.settings is not None and trim:
+        #     settings = settings[:,:self.seq_out,...]
         dats = [x,settings,b,y,rx,ry,ex,ey]
         if continuous:
             done = np.eye(batch_size)[np.where(np.diff(idxs) != interval)[0]].sum(axis=0)
@@ -150,7 +155,7 @@ class DataGenerator:
         dats.append(self.event_id[idxs])
         return [dat.astype(np.float32) if dat is not None else dat for dat in dats]
     
-    def state_split_batch(self,states,perfs,trim=True):
+    def state_split_batch(self,states,perfs,trim=False):
         lib = np if isinstance(states[0], np.ndarray) else th
         X = states[0][...,:4]
         X[...,1] -= X[...,3]
@@ -168,30 +173,30 @@ class DataGenerator:
         Y = lib.concatenate([Y, perfs[1]], -1)
         if trim:
             X = X[:,-self.seq_in:,...]
-            B = B[:,:self.seq_out,...]
-            Y = Y[:,:self.seq_out,...]
+            # B = B[:,:self.seq_out,...]
+            # Y = Y[:,:self.seq_out,...]
         return X,B,Y
 
-    def edge_state_split_batch(self,edge_states,trim=True):
+    def edge_state_split_batch(self,edge_states,trim=False):
         ex = edge_states[0]
         ey = edge_states[1][...,:-1]
         if trim:
-            ex,ey = ex[:,-self.seq_in:,...],ey[:,:self.seq_out,...]
+            ex = ex[:,-self.seq_in:,...]
         return ex,ey
     
     def get_flood_poswei(self):
-        if self.if_flood:
-            n_flood = np.bincount(np.where(self.perfs>0)[1])
-            flood_wei = self.perfs.shape[0]/n_flood - 1
-            flood_wei[np.isinf(flood_wei)] = 1
-            return flood_wei
-        else:
-            return np.ones(self.perfs.shape[1])
+        n_flood = np.bincount(np.where(self.perfs>0)[1])
+        # flood_wei = self.perfs.shape[0]/n_flood - 1
+        # flood_wei[np.isinf(flood_wei)] = 1
+        flood_wei = 1 - n_flood / self.perfs.shape[0]
+        flood_wei[flood_wei==1] = 0.5
+        return flood_wei
 
+    # TODO: deprecated for mbrl model finetuning
     def update(self,trajs,test_id=None):
         for traj,item in zip(trajs,self.items):
             if getattr(self,item,None) is None:
-                setattr(self,item,np.zeros((0,)+traj.shape[1:],np.float32))
+                setattr(self,item,np.zeros((0,)+traj.shape[1:]))
             if test_id is not None:
                 test_idxs = np.concatenate([np.argwhere(self.event_id == idx).flatten() for idx in test_id],axis=0)
                 train_idxs = np.setdiff1d(np.arange(self.event_id.shape[0]),test_idxs)
@@ -205,29 +210,42 @@ class DataGenerator:
         data_dir = data_dir if data_dir is not None else self.data_dir
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
-        for name in self.items+['rept']:
+        for name in self.items:
             if getattr(self,name,None) is not None:
                 np.save(os.path.join(data_dir,name+'.npy'),getattr(self,name))
+        np.savez(os.path.join(data_dir,'norm.npz'), **self.norm)
 
     def load(self,data_dir=None):
         data_dir = data_dir if data_dir is not None else self.data_dir
-        for name in self.items+['rept']:
-            if os.path.isfile(os.path.join(data_dir,name+'.npy')):
-                dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r')
-                if name not in ['event_id','rept']:
-                    dat = dat.astype(np.float32)
-            else:
-                dat = None
-            setattr(self,name,dat)
+        for name in self.items:
+            # if os.path.isfile(os.path.join(data_dir,name+'.npy')):
+            #     dat = np.load(os.path.join(data_dir,name+'.npy'),mmap_mode='r')
+            #     if name not in ['event_id','rept']:
+            #         dat = dat.astype(np.float32) # TODO: this copies data in memory
+            # else:
+            #     dat = None
+            filedir = os.path.join(data_dir,name+'.npy')
+            setattr(self,name,np.load(filedir,mmap_mode='r') if os.path.isfile(filedir) else None)
         self.cur_capa = self.states.shape[0] if self.states is not None else 0
 
     def clear(self):
-        for name in self.items+['rept']:
+        for name in self.items:
             setattr(self,name,None)
         self.cur_capa = 0
         self.update_num = 0
 
     def get_norm(self):
+        if os.path.isfile(os.path.join(self.data_dir,'norm.npz')):
+            norm = dict(np.load(os.path.join(self.data_dir,'norm.npz'),allow_pickle=True))
+        else:
+            norm = self.calc_norm()
+        if self.if_flood:
+            nfl = np.array([[1,0]]*norm['norm_x'].shape[1],dtype=np.float32).T[...,None]
+            norm['norm_x'] = np.concatenate([norm['norm_x'][...,:-1],nfl,norm['norm_x'][...,-1:]],axis=-1)
+            norm['norm_y'] = np.concatenate([norm['norm_y'][...,:-1],nfl,norm['norm_y'][...,-1:]],axis=-1)
+        return norm
+
+    def calc_norm(self):
         norm = np.concatenate([self.states,self.perfs],axis=-1)
         norm[...,1] = norm[...,1] - norm[...,3]
         while len(norm.shape) > 2:
@@ -239,12 +257,12 @@ class DataGenerator:
         norm_b = (norm[...,-2:-1] + 1e-6)
         if self.config['tide']:
             norm_b = np.concatenate([norm_b,norm_h*np.expand_dims(self.is_outfall,axis=-1)+1e-6],axis=-1)
-        if self.if_flood:
-            norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,)),norm[...,-2:-1] + 1e-6],axis=-1)
-            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,)),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
-        else:
-            norm_x = np.concatenate([norm_h,norm[...,1:-1]+1e-6],axis=-1)
-            norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+        # if if_flood:
+        #     norm_x = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,)),norm[...,-2:-1] + 1e-6],axis=-1)
+        #     norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.ones(norm.shape[:-1]+(1,)),np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
+        # else:
+        norm_x = np.concatenate([norm_h,norm[...,1:-1] + 1e-6],axis=-1)
+        norm_y = np.concatenate([norm_h,norm[...,1:-2] + 1e-6,np.tile(np.float32(norm[...,-1].max())+1e-6,(norm.shape[0],1))],axis=-1)
         if self.config['global_state'][0][-1] == 'head':
             norm_hmin = np.tile(np.float32(self.states[...,0].min()),(norm.shape[0],1))
             if self.config['tide']:
@@ -260,13 +278,14 @@ class DataGenerator:
         norm_r = self.rains.max(axis=0)
         norm_r = np.stack([norm_r,np.zeros_like(norm_r)])
 
-        norm_e = np.abs(self.edge_states.copy())
-        while len(norm_e.shape) > 2:
-            norm_e = norm_e.max(axis=0)
-        norm_e = np.concatenate([norm_e[:,:-1]+1e-6,norm_e[:,-1:]],axis=-1) if self.act else norm_e+1e-6
+        norm_e = np.abs(self.edge_states).max(axis=0)
+        # while len(norm_e.shape) > 2:
+        #     norm_e = norm_e.max(axis=0)
+        norm_e = np.concatenate([norm_e[:,:-1]+1e-6,
+                                 np.ones_like(norm_e[:,-1:],np.float32)],axis=-1) if self.act else norm_e+1e-6
         norm_e = np.stack([norm_e,np.zeros_like(norm_e)])
         # norm_e_min = self.edge_states.copy()
         # while len(norm_e_min.shape) > 2:
         #     norm_e_min = norm_e_min.min(axis=0)
         # norm_e = np.stack([norm_e,norm_e_min],axis=-1)
-        return [norm.astype(np.float32) for norm in [norm_x,norm_b,norm_y,norm_r,norm_e]]
+        return {'norm_%s'%it: eval('norm_%s'%it).astype(np.float32) for it in 'xbyre'}

@@ -1,6 +1,7 @@
 from .base import basescenario
 import os
 import numpy as np
+import torch as th
 from swmm_api import read_inp_file
 from swmm_api.input_file.section_lists import NODE_SECTIONS,LINK_SECTIONS
 import networkx as nx
@@ -9,6 +10,8 @@ HERE = os.path.dirname(__file__)
 KWperHP = 0.7457
 ft_m = 0.3048
 cfs_cms = 0.0283168
+ene_conv = 8.814
+secs_per_hour = 3600.0
 
 class chaohu(basescenario):
     r"""Chaohu Scenario
@@ -46,14 +49,14 @@ class chaohu(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
 
         inp = read_inp_file(self.config['swmm_input'])
-        self.hmin = np.array([getattr(node,'Elevation',0) for sec in NODE_SECTIONS
+        self.hmin = np.array([getattr(node,'elevation',0) for sec in NODE_SECTIONS
                               for node in getattr(inp,sec,dict()).values()])
-        self.hmax = np.array([getattr(node,'MaxDepth',0)+getattr(node,'SurDepth',0) for sec in NODE_SECTIONS
+        self.hmax = np.array([getattr(node,'depth_max',0)+getattr(node,'depth_surcharge',0) for sec in NODE_SECTIONS
                               for node in getattr(inp,sec,dict()).values()]) + self.hmin
-        self.pumps = {k:(inp.PUMPS[k].FromNode,inp.PUMPS[k].ToNode) for k in self.config['action_space']}
+        self.pumps = {k:(inp.PUMPS[k].from_node,inp.PUMPS[k].to_node) for k in self.config['action_space']}
         
     # TODO
-    def objective(self, seq = False):
+    def objective(self, seq = False, keepdim = False):
         __object = []
         # __object += [self.flood(seq).squeeze().sum(axis=-1)]  # move sum flood in performance
         perfs = self.performance(seq = max(seq,1) + 1 if seq else 2)
@@ -74,13 +77,16 @@ class chaohu(basescenario):
                 # __object += __value * target
                 __object += [__value.squeeze() * target]
         # return __object
-        return np.array(__object).sum(axis=-1) if seq else np.array(__object)
+        if seq:
+            return np.array(__object).sum(axis=-1) if not keepdim else np.array(__object).T
+        else:
+            return np.array(__object)
      
      
     def objective_pred(self,preds,states,settings,gamma=None,keepdim=False):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        nodes,links = self.elements['nodes'],self.elements['links']
+        nodes = self.elements['nodes']
         targets = self.config['performance_targets']
         flood = [q_w.sum(axis=-1) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding' and idx=='nodes']
@@ -90,12 +96,7 @@ class chaohu(basescenario):
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
         wwtp = [q_in[...,nodes.index(idx)] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
-        # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
-        if self.config['global_state'][0][-1] == 'head':
-            energy = [(np.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)/ 8.814 * KWperHP/3600.0 * weight
-                for idx,attr,weight in targets if attr == 'cumpumpenergy']
-        else:
-            energy = [(np.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * np.abs(q[...,links.index(idx)])/cfs_cms)/ 8.814 * KWperHP/3600.0 * weight
+        energy = [self.get_energy(h,q,idx) * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         # Control Roughness
         # asp = list(self.config['action_space'])
@@ -106,31 +107,24 @@ class chaohu(basescenario):
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
         obj = np.stack(flood + penal + outflow + wwtp + energy,axis=1)
         gamma = np.ones(preds.shape[1]) if gamma is None else np.array(gamma,dtype=np.float32)
-        obj *= gamma
-        return obj.sum(axis=-1) if not keepdim else np.transpose(obj,(0,2,1))
-        # return np.array([flood] + penal + outflow + wwtp + energy + rough).T
+        obj = (obj*gamma).sum(axis=-1) if not keepdim else np.transpose(obj*gamma,(0,2,1))
+        return obj
     
-    def objective_pred_tf(self,preds,states,settings,gamma=None):
-        import tensorflow as tf
+    def objective_pred_th(self,preds,states,settings,gamma=None,keepdim=False):
         preds,edge_preds = preds
         h,q_in,q_w,q = preds[...,0],preds[...,1],preds[...,-1],edge_preds[...,-1]
-        gamma = tf.ones((preds.shape[1],)) if gamma is None else tf.convert_to_tensor(gamma,dtype=tf.float32)
-        nodes,links = self.elements['nodes'],self.elements['links']
+        nodes = self.elements['nodes']
         targets = self.config['performance_targets']
-        flood = [tf.reduce_sum(tf.reduce_sum(q_w,axis=-1)*gamma,axis=1) * weight
+        flood = [q_w.sum(dim=-1) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding' and idx=='nodes']
-        penal = [tf.reduce_sum(tf.cast(q_w[...,nodes.index(idx)]>0,tf.float32)*gamma,axis=1) * weight
+        penal = [(q_w[...,nodes.index(idx)]>0).type(th.float32) * weight
                 for idx,attr,weight in targets if attr == 'cumflooding' and idx.endswith('storage')]
-        outflow = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
+        outflow = [q_in[...,nodes.index(idx)] * weight
                    for idx,attr,weight in targets if attr == 'cuminflow' and weight>0]
-        wwtp = [tf.reduce_sum(q_in[...,nodes.index(idx)]*gamma,axis=1) * weight
+        wwtp = [q_in[...,nodes.index(idx)] * weight
                 for idx,attr,weight in targets if attr == 'cuminflow' and weight<0]
         # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
-        if self.config['global_state'][0][-1] == 'head':
-            energy = [tf.reduce_sum((tf.abs(h[...,nodes.index(self.pumps[idx][0])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms)*gamma,axis=1)/ 8.814 * KWperHP/3600.0 * weight
-                for idx,attr,weight in targets if attr == 'cumpumpenergy']
-        else:
-            energy = [tf.reduce_sum((tf.abs(self.hmin[nodes.index(self.pumps[idx][0])]+h[...,nodes.index(self.pumps[idx][0])]-self.hmin[nodes.index(self.pumps[idx][1])]-h[...,nodes.index(self.pumps[idx][1])])/ft_m * tf.abs(q[...,links.index(idx)])/cfs_cms)*gamma,axis=1)/ 8.814 * KWperHP/3600.0 * weight
+        energy = [self.get_energy(h,q,idx) * weight
                 for idx,attr,weight in targets if attr == 'cumpumpenergy']
         # Control Roughness
         # asp = list(self.config['action_space'])
@@ -139,21 +133,35 @@ class chaohu(basescenario):
         #                   settings[...,[asp.index(idx) for idx,attr,_  in targets if attr == 'setting']]],axis=1)
         # rough = [tf.reduce_sum(tf.abs(tf.experimental.numpy.diff(sett[...,i],axis=1))*gamma,axis=1) * weight
         #          for i,weight in enumerate([weight for _,attr,weight in targets if attr == 'setting'])]
-        obj = tf.reduce_sum(flood,axis=0) + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0)
+        obj = th.stack(flood + penal + outflow + wwtp + energy,dim=1)
+        gamma = th.ones(preds.shape[1]).to(device=obj.device) if gamma is None else th.tensor(gamma).to(device=obj.device)
+        obj = (obj*gamma).sum(axis=-1) if not keepdim else (obj*gamma).permute(0,2,1)
         return obj
-        # return flood + tf.reduce_sum(penal,axis=0) + tf.reduce_sum(outflow,axis=0) + tf.reduce_sum(wwtp,axis=0) + tf.reduce_sum(energy,axis=0) + tf.reduce_sum(rough,axis=0)
-
-    def norm_obj(self,obj,states,g=False,inverse=False):
-        # q_in,nodes = states[0][...,1],self.elements['nodes']
-        if g:
-            import tensorflow as tf
-            # __norm = tf.reduce_sum(tf.reduce_sum(q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]],axis=-1),axis=-1)
-            __norm = tf.reduce_sum(tf.reduce_sum(states[0][...,-1],axis=-1),axis=-1)
+    
+    def get_energy(self,h,q,idx):
+        # Energy consumption (kWh): refer from swmm engine link_getPower in link.c
+        nidx0 = self.elements['nodes'].index(self.pumps[idx][0])
+        nidx1 = self.elements['nodes'].index(self.pumps[idx][1])
+        lidx = self.elements['links'].index(idx)
+        lib = th if isinstance(h,th.Tensor) else np
+        # Head difference between pump nodes
+        if self.config['global_state'][0][-1] == 'head':
+            head_diff = lib.abs(h[..., nidx0] - h[..., nidx1]) / ft_m
         else:
-            # __norm = q_in[...,[nodes.index(idx+'-storage') for idx in ['CC','JK']]].sum(axis=-1).sum(axis=-1)
-            __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
-            while __norm.ndim < obj.ndim:
-                __norm = np.expand_dims(__norm,-1)
+            head_diff = lib.abs(
+                self.hmin[nidx0] + h[..., nidx0] -
+                self.hmin[nidx1] - h[..., nidx1]
+            ) / ft_m
+        # Discharge flow
+        discharge = lib.abs(q[..., lidx]) / cfs_cms
+        # Power calculation
+        power_kwh = (head_diff * discharge) / ene_conv * KWperHP / secs_per_hour
+        return power_kwh
+    
+    def norm_obj(self,obj,states,inverse=False):
+        __norm = states[0][...,-1].sum(axis=-1).sum(axis=-1)
+        while __norm.ndim < obj.ndim:
+            __norm = np.expand_dims(__norm,-1) if isinstance(__norm,np.ndarray) else th.unsqueeze(__norm,-1)
         return obj*(__norm+1e-5) if inverse else obj/(__norm+1e-5)
 
     def get_obj_norm(self,norm_y,norm_e,perfs):
@@ -171,7 +179,7 @@ class chaohu(basescenario):
         ene = [norm_e[...,links.index(idx),-2]/cfs_cms *\
                 max(np.abs(self.hmin[nodes.index(self.pumps[idx][0])] - self.hmax[nodes.index(self.pumps[idx][1])]),
                     np.abs(self.hmax[nodes.index(self.pumps[idx][0])] - self.hmin[nodes.index(self.pumps[idx][1])]))\
-                    /ft_m/8.814 * KWperHP/3600.0 * weight
+                    /ft_m/ene_conv * KWperHP/secs_per_hour * weight
                for idx,attr,weight in targets if attr == 'cumpumpenergy']
         return np.stack(fl + pen + outfl + wwtp + ene,axis=-1)
 
@@ -189,12 +197,15 @@ class chaohu(basescenario):
         return actions
     
     def get_action_space(self,act='rand'):
-        asp = self.config['action_space'].copy()
-        asps = {k:list(product(*[asp[p] for p in v]))
-                 for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
-        asps = {k:[va for va in v if va[0]>=va[1]] if len(v[0])==2 else v
-                for k,v in asps.items()}
-        return asps
+        if 'rand' in act:
+            asp = self.config['action_space'].copy()
+            asps = {k:list(product(*[asp[p] for p in v]))
+                    for k,v in groupby(asp.keys(),key=lambda x:x[:4])}
+            asps = {k:[va for va in v if va[0]>=va[1]] if len(v[0])==2 else v
+                    for k,v in asps.items()}
+            return asps
+        else:
+            return self.config['action_space']
 
     def get_args(self,directed=False,length=0,order=1,graph_base=0,act=False,dec=False):
         args = super().get_args(directed,length,order,graph_base)
@@ -207,13 +218,16 @@ class chaohu(basescenario):
         args['pump_in'] = (-np.clip(args['node_edge'],-1,0)*args['pump']).sum(axis=1)
         args['pump_out'] = (np.clip(args['node_edge'],0,1)*args['pump']).sum(axis=1)
 
-        if self.global_state:
-            args['act_edges'] = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = self.get_edge_list(list(self.config['action_space'].keys()))
+        act_edges = [np.where((args['edges']==act_edge).all(1))[0]
+                        for act_edge in act_edges]
+        act_edges = [i for e in act_edges for i in e]
+        args['act_edges'] = sorted(list(set(act_edges)),key=act_edges.index)
         if act and self.config['act'] and not act.startswith('conti'):
+            args['action_space'] = self.get_action_space(act)
             args['action_table'] = self.get_action_table(act)
             # For multi-agent
             args['action_shape'] = np.array(list(args['action_table'].keys())).max(axis=0)+1
-            args['action_space'] = self.get_action_space(act)
             if dec:
                 args['n_agents'] = len(self.config['site'])
                 state = [s[0] for s in self.config['states']]
@@ -226,9 +240,9 @@ class chaohu(basescenario):
         return args
     
     def controller(self,mode='rand',state=None,setting=None):
-        asp = self.config['action_space']
+        asp = self.get_action_space(mode)
         if mode.lower().startswith('rand'):
-            return [table[np.random.randint(0,len(table))] for table in asp.values()]
+            return [t for table in asp.values() for t in table[np.random.randint(0,len(table))]]
         elif mode.lower().startswith('conti'):
             return [np.random.uniform(min(table),max(table)) for table in asp.values()]
         elif mode.lower() == 'off' or mode.lower() == 'default':

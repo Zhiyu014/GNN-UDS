@@ -15,6 +15,7 @@ shunqing:
   data_dir: ./envs/data/shunqing/
   train_event_id: train_id.npy
   act: 'False'
+  ctrl_step: 5
   processes: 5
   repeats: 1
   hotstart: False
@@ -68,6 +69,7 @@ redchicosur:
   data_dir: ./envs/data/redchicosur/
   train_event_id: train_id.npy
   act: 'False'
+  ctrl_step: 5
   processes: 5
   repeats: 1
   hotstart: False
@@ -121,6 +123,7 @@ astlingen:
   data_dir: ./envs/data/astlingen/
   train_event_id: train_id.npy
   act: 'False'
+  ctrl_step: 5
   processes: 5
   repeats: 1
   hotstart: False
@@ -174,6 +177,7 @@ hague:
   data_dir: ./envs/data/hague/
   train_event_id: train_id.npy
   act: 'False'
+  ctrl_step: 15
   processes: 5
   repeats: 1
   hotstart: False
@@ -227,6 +231,7 @@ chaohu:
   data_dir: ./envs/data/chaohu/
   train_event_id: train_id.npy
   act: 'False'
+  ctrl_step: 10
   processes: 5
   repeats: 1
   hotstart: False

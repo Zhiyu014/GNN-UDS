@@ -30,7 +30,7 @@ RULE_STEP            00:00:00
 INERTIAL_DAMPING     PARTIAL
 NORMAL_FLOW_LIMITED  BOTH
 FORCE_MAIN_EQUATION  H-W
-VARIABLE_STEP        0.75
+VARIABLE_STEP        0.00
 LENGTHENING_STEP     0
 MIN_SURFAREA         1.14
 MAX_TRIALS           8
@@ -50,7 +50,7 @@ DRY_ONLY         NO
 
 ;;____________________________________________________________________________________________________
 [RAINGAGES]
-RG INTENSITY 00:05 1 TIMESERIES 3y
+RG VOLUME 00:05 1 TIMESERIES 3y
 
 ;;____________________________________________________________________________________________________
 [SUBCATCHMENTS]
@@ -672,21 +672,14 @@ JKLYSBQX         2.0000 500.0000
 JKLYSBQX         3.0000 500.0000
 JKLYSBQX         5.8000 500.0000
 
-XECSBQX  PUMP2  0.0000 95.0000
-XECSBQX        12.0000 95.0000
-
-CCTXC  STORAGE  0.0000 2787.0000
-CCTXC           1.0000 2787.0000
-CCTXC           2.0000 2787.0000
+CCTXC  STORAGE  0.0000 278.7000
+CCTXC           1.0000 278.7000
+CCTXC           2.0000 278.7000
 
 JKLQC  STORAGE  0.0000 50.2400
 JKLQC           2.0000 50.2400
 JKLQC           4.0000 50.2400
 JKLQC           5.8000 50.2400
-
-XECQC  STORAGE  0.0000 120.0000
-XECQC          10.0000 120.0000
-XECQC          12.0000 120.0000
 
 ;;____________________________________________________________________________________________________
 [TIMESERIES]
@@ -727,9 +720,10 @@ HOURLY                      1     1     1     1     1     1
 ;;____________________________________________________________________________________________________
 [REPORT]
 ;;Reporting Options
-SUBCATCHMENTS ALL
-NODES ALL
-LINKS ALL
+SUBCATCHMENTS  None
+NODES          None
+LINKS          None
+
 
 ;;____________________________________________________________________________________________________
 [TAGS]

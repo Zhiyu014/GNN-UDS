@@ -102,12 +102,12 @@ class env_base(environment):
             routing_step = self.sim._model.getSimAnalysisSetting(tkai.SimulationParameters.RouteStep)
             if self.sim._model.getSimAnalysisSetting(routing_step) > 1:
                 # use swmm-stride in dll in pyswmm==2.0, avoid time lag when step==30/60s (still has lag)
+                # time lag because of variable time step in swmm (set 0 to use fixed step, but need a small step)
                 self.log = self.ini_log(self.sim._model.curSimTime)
                 elapsed_time = self.sim._model.swmm_stride(self._advance_seconds)
                 self._log(elapsed_time)
             else:
-                # src from the func swmm_stride in pyswmm==1.5.1, no time lag when step==1s
-                # Try swmm_stride(routestep), works similar
+                # src from the func swmm_stride in pyswmm==1.5.1
                 ctime = self.sim._model.curSimTime
                 self.log = self.ini_log(ctime)
                 advanceDays = self._advance_seconds / self.sec_per_day

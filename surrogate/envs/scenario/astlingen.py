@@ -112,6 +112,8 @@ class astlingen(basescenario):
         return np.stack(fl + outfl + infl,axis=-1)
 
     def get_action_space(self,act='rand'):
+        if 'bin' in act:
+            return {k:(0.0,1.0) for k in self.config['action_space']}
         asp = self.config['action_space'].copy()
         if '3' in act:
             asp = {k:tuple([v[ac] for ac in ac3]) 
@@ -167,7 +169,9 @@ class astlingen(basescenario):
         asp = self.config['action_space']
         asp3 = {k:[v[ac] for ac in ac3]
                  for (k,v),ac3 in zip(asp.items(),[[0,1,-1],[0,3,-1],[0,1,-1],[0,2,-1]])}
-        if mode.lower() == 'rand3':
+        if mode.lower() == 'bin':
+            return [float(np.random.randint(0,2)) for k in asp3]
+        elif mode.lower() == 'rand3':
             return [table[np.random.randint(0,3)] for table in asp3.values()]
         elif mode.lower().startswith('rand'):
             return [table[np.random.randint(0,len(table))] for table in asp.values()]

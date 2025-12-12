@@ -5,6 +5,6 @@ pystorms == 1.0.0
 pyswmm == 1.5.1
 swmm-api == 0.4.66
 scipy == 1.15.0
-sklearn == 1.6.1
 pymoo == 0.6.0
+tensorboard
 matplotlib

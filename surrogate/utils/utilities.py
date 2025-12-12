@@ -171,7 +171,8 @@ def generate_split_file(base_inp_file,
     if timeseries_file is None:
         timeseries_file = arg['rainfall_timeseries']
     tsf = pd.read_csv(timeseries_file,index_col=0)
-    tsf['datetime'] = tsf['date']+' '+tsf['time']
+    if 'datetime' not in tsf.columns:
+        tsf['datetime'] = tsf['date']+' '+tsf['time']
     # tsf['datetime'] = tsf['datetime'].apply(lambda dti:datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
     tsf.index = pd.to_datetime(tsf['datetime'])
     if arg.get('tide',False):
@@ -216,13 +217,15 @@ def generate_split_file(base_inp_file,
     files = list()
     events['Start'] = pd.to_datetime(events['Start'])
     events['End'] = pd.to_datetime(events['End'])
-    for start_time,end_time in zip(events['Start'],events['End']):
+    gages = events['Gage'] if 'Gage' in events.columns else ['']*len(events)
+    for start_time,end_time,gage in zip(events['Start'],events['End'],gages):
         # Formulate the simulation periods
         # start_time = dt.datetime.strptime(start,'%m/%d/%Y %H:%M:%S')
         # end_time = dt.datetime.strptime(end,'%m/%d/%Y %H:%M:%S') + dt.timedelta(minutes = MIET)   
         end_time += dt.timedelta(minutes=MIET)
 
-        file = filedir%start_time.strftime('%m_%d_%Y_%H')
+        rain_name = start_time.strftime('%m_%d_%Y_%H')
+        file = filedir % (rain_name + '_' + gage if gage != '' else rain_name)
         files.append(file)
         if exists(file):
             step = read_inp_file(file)['OPTIONS']['ROUTING_STEP']
@@ -236,8 +239,9 @@ def generate_split_file(base_inp_file,
          for dt,vol in zip(rain.index,rain[col])]
           for col in rain.columns if col not in ['date','time','datetime']}
 
+        inp['TIMESERIES'] = Timeseries.create_section()
         for rg in inp.RAINGAGES.values():
-            ts = rg.timeseries
+            ts = rg.timeseries = gage if gage != '' else rg.timeseries
             inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[ts])
 
         if arg.get('tide',False):
@@ -285,11 +289,13 @@ def separate_events(timeseries_file,miet=120,event_file=None,replace=False):
         if exists(event_file) and not replace:
             return event_file
 
-    tsf = pd.read_csv(timeseries_file,index_col=0)
+    tsf = timeseries_file if isinstance(timeseries_file, pd.DataFrame) else pd.read_csv(timeseries_file,index_col=0)
     tsf = tsf.drop(tsf[tsf.sum(axis=1,numeric_only=True)==0].index)
-    tsf['datetime'] = tsf['date']+' '+tsf['time']
-    tsf['datetime'] = tsf['datetime'].apply(lambda dti:dt.datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
-    
+    if 'datetime' not in tsf.columns:
+        tsf['datetime'] = tsf['date']+' '+tsf['time']
+    # tsf['datetime'] = tsf['datetime'].apply(lambda dti:dt.datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
+    tsf['datetime'] = pd.to_datetime(tsf['datetime'])
+
     rain = tsf.reset_index(drop=True,level=None)
     start = [0] + rain[rain['datetime'].diff() > dt.timedelta(minutes = miet)].index.tolist()
     end = [ti-1 for ti in start[1:]] + [len(rain)-1]

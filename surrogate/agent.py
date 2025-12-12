@@ -69,13 +69,15 @@ class Actor(nn.Module):
         agent_dir = agent_dir if agent_dir is not None else self.agent_dir
         if not os.path.exists(agent_dir):
             os.mkdir(agent_dir)
+        name = name if name is not None else ''
         th.save(self.state_dict(),
-                os.path.join(agent_dir,f'actor{name if name is not None else ''}.pt'))
+                os.path.join(agent_dir,f'actor{name}.pt'))
 
     def load(self,agent_dir=None,name=None):
         agent_dir = agent_dir if agent_dir is not None else self.agent_dir
-        path = os.path.join(agent_dir,f'actor{name if name is not None else ''}.pt')
-        self.load_state_dict(th.load(path, weights_only=True))
+        name = name if name is not None else ''
+        path = os.path.join(agent_dir,f'actor{name}.pt')
+        self.load_state_dict(th.load(path, weights_only=True, map_location=device))
  
 class Qnet(nn.Module):
     def __init__(self, 
@@ -103,12 +105,16 @@ class Qnet(nn.Module):
         agent_dir = agent_dir if agent_dir is not None else self.agent_dir
         if not os.path.exists(agent_dir):
             os.mkdir(agent_dir)
+        name = name if name is not None else ''
+        target = '_target' if self.target else ''
         th.save(self.state_dict(),
-                os.path.join(agent_dir,f'qnet{name if name is not None else ''}{'_target' if self.target else ''}.pt'))
+                os.path.join(agent_dir,f'qnet{name}{target}.pt'))
             
     def load(self,agent_dir=None,name=None):
-        path = os.path.join(agent_dir,f'qnet{name if name is not None else ''}{'_target' if self.target else ''}.pt')
-        self.load_state_dict(th.load(path, weights_only=True))
+        name = name if name is not None else ''
+        target = '_target' if self.target else ''
+        path = os.path.join(agent_dir,f'qnet{name}{target}.pt')
+        self.load_state_dict(th.load(path, weights_only=True, map_location=device))
 
 class Agent:
     def __init__(self, action_shape: int, args, act_only: bool = False):
@@ -131,23 +137,25 @@ class Agent:
     def convert_action_to_setting(self,action):
         if self.conti:
             return (action + th.tensor(1., device=self.device)) / th.tensor(2., device=self.device)
-        elif not self.conti:
+        elif isinstance(self.action_shape,(list,np.ndarray)):
             if self.mac:
-                sett = [th.gather(space,-1,ai) for space,ai in zip(self.action_space,action)]
-                return th.stack(sett,dim=-1)
+                sett = [th.gather(space,0, ai if space.ndim == 1 else ai.unsqueeze(1).tile(space.shape[1]))
+                        for space,ai in zip(self.action_space,action)]
+                return th.stack(sett,dim=-1) if sett[0].ndim == 1 else th.concat(sett,dim=-1)
             else:
-                return th.gather(self.action_table,-1,action)
+                return th.gather(self.action_table,0,action)
         else:
-            return th.gather(self.action_space,-1,action)
+            return th.gather(self.action_space,0,action)
         
     def convert_setting_to_action(self,setting):
         if self.conti:
             return th.multiply(setting, th.tensor(2., device=self.device)) - th.tensor(1., device=self.device)
         elif isinstance(self.action_shape,(list,np.ndarray)):
             if self.mac:
-                if len(self.action_space[0].shape) > 1:
+                if self.action_space[0].ndim > 1:
                     spdim = [space.shape[-1] for space in self.action_space]
-                    return th.stack([th.argmin([th.abs(setting[...,sum(spdim[:i]):sum(spdim[:i+1])]-sp).sum(dim=-1) for sp in space],dim=0)
+                    return th.stack([(setting[...,sum(spdim[:i]):sum(spdim[:i+1])].unsqueeze(1) -\
+                                       space.unsqueeze(0)).abs().sum(dim=-1).argmin(dim=-1)
                             for i,space in enumerate(self.action_space)],dim=-1)
                 else:
                     return th.stack([th.argmin(th.abs(setting[...,i:i+1]-space.repeat(setting.shape[0],1)),dim=-1)
@@ -173,6 +181,20 @@ class Agent:
 
     def to_tensor(self,dat):
         return th.Tensor(dat).to(self.device)
+
+    def save_norm(self,agent_dir=None):
+        agent_dir = agent_dir if agent_dir is not None else self.agent_dir
+        for item in 'xbyre':
+            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
+            if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
+                np.save(norm_path,getattr(self,'norm_%s'%item).cpu())
+
+    def load_norm(self,agent_dir=None):
+        agent_dir = agent_dir if agent_dir is not None else self.agent_dir
+        for item in 'xbyre':
+            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
+            if os.path.exists(norm_path):
+                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(self.device))
 
 class ActorSAC(Actor):
     def __init__(self, 
@@ -461,10 +483,7 @@ class AgentSAC(Agent):
         if not os.path.exists(agent_dir):
             os.mkdir(agent_dir)
         self.actor.save(agent_dir)
-        for item in 'xbyre':
-            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
-            if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
-                np.save(norm_path,getattr(self,'norm_%s'%item).cpu())
+        self.save_norm(agent_dir)
         if not self.act_only:
             self.q1.save(agent_dir,'1')
             self.q2.save(agent_dir,'2')
@@ -478,19 +497,23 @@ class AgentSAC(Agent):
                 }, os.path.join(agent_dir, 'optim.pth'))
                
     def load(self,epoch=None):
-        agent_dir = self.agent_dir if epoch is None else os.path.join(self.agent_dir, f'{epoch}')
-        self.actor.load(agent_dir)
-        for item in 'xbyre':
-            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
-            if os.path.exists(norm_path):
-                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(self.device))
+        agent_dir = os.path.join(self.agent_dir, f'{epoch}')
+        if epoch is None or not os.path.exists(agent_dir):
+            agent_dir = self.agent_dir
+        if os.path.exists(os.path.join(agent_dir,'actor.pth')):
+            self.actor.load(agent_dir)
+        elif epoch is not None:
+            self.actor.load(name=epoch)
+        else:
+            raise AssertionError('No saved actor found')
+        self.load_norm(agent_dir)
         if not self.act_only:
             self.q1.load(agent_dir,'1')
             self.q2.load(agent_dir,'2')
             # else:
             self.q1_target.load(agent_dir,'1')
             self.q2_target.load(agent_dir,'2')
-            checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True)
+            checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True, map_location=device)
             self.log_alpha = checkpoint['log_alpha'].to(self.device)
             self.log_alpha.requires_grad = True
             self.act_optim.load_state_dict(checkpoint['act_optim'])
@@ -682,10 +705,7 @@ class AgentPPO(Agent):
         if not os.path.exists(agent_dir):
             os.mkdir(agent_dir)
         self.actor.save(agent_dir)
-        for item in 'xbyre':
-            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
-            if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
-                np.save(norm_path,getattr(self,'norm_%s'%item).cpu())
+        self.save_norm(agent_dir)
         if not self.act_only:
             self.cri.save(agent_dir)
             th.save({
@@ -696,13 +716,10 @@ class AgentPPO(Agent):
     def load(self,epoch=None):
         agent_dir = self.agent_dir if epoch is None else os.path.join(self.agent_dir, f'{epoch}')
         self.actor.load(agent_dir)
-        for item in 'xbyre':
-            norm_path = os.path.join(agent_dir,'norm_%s.npy'%item)
-            if os.path.exists(norm_path):
-                setattr(self,'norm_%s'%item,th.Tensor(np.load(norm_path)).to(self.device))
+        self.load_norm(agent_dir)
         if not self.act_only:
             self.cri.load(agent_dir)
-            checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True)
+            checkpoint = th.load(os.path.join(agent_dir, 'optim.pth'), weights_only=True, map_location=device)
             self.act_optim.load_state_dict(checkpoint['act_optim'])
             self.cri_optim.load_state_dict(checkpoint['cri_optim'])
     

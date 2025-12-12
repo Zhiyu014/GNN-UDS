@@ -205,7 +205,7 @@ class Emulator:
                 self.alpha_optimizer = th.optim.Adam([self.alpha_reg,self.alpha_cls],lr=1e-4)
                 self.l1loss = nn.L1Loss()
                 self.alpha = 0.5
-            self.roll = getattr(args,"horizon",getattr(args,"roll",0)*self.seq)//self.seq
+            self.roll = getattr(args,"roll",0)
             self.nwei = th.Tensor(getattr(args,"nwei",[1.0 for _ in range(self.n_node)])).to(device)
             self.ewei = th.Tensor(getattr(args,"ewei",[1.0 for _ in range(self.n_edge)])).to(device)  
 
@@ -407,7 +407,7 @@ class Emulator:
                 ey * (self.offset == 0).type(th.float32).unsqueeze(dim=-1).tile(1,2)
         if self.act:
             # regulate pumping flow (rated value if there is volume in inlet tank)
-            if self.has_pump>0:
+            if self.has_pump:
                 fl = self.pump * th.einsum("btn,ne->bte",[(y[...,0]>0.01).type(th.float32),th.clip(self.node_edge,0,1)])
                 fl *= (self.norm_e[0,:,1]>1e-3).type(th.float32)/self.norm_e[0,:,1]
                 fl = (ey[...,-1] * (fl==0).type(th.float32) + fl)*ae[...,0]
@@ -484,12 +484,13 @@ class Emulator:
     def save(self,epoch=None):
         if not os.path.exists(self.model_dir):
             os.mkdir(self.model_dir)
+        name = epoch if epoch is not None else 'model'
         th.save({
             'optimizer_state': self.optimizer.state_dict(),
             'alpha_optimizer_state': self.alpha_optimizer.state_dict() if hasattr(self,'alpha_optimizer') else None,
             'model_state': self.model.state_dict(),
             'epoch': epoch,
-            }, os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth'))
+            }, os.path.join(self.model_dir,f'{name}.pth'))
         for item in 'xbyre':
             norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
             if hasattr(self,'norm_%s'%item) and not os.path.exists(norm_path):
@@ -500,14 +501,16 @@ class Emulator:
             path = self.model_dir
             self.model_dir = os.path.dirname(self.model_dir)
         else:
-            path = os.path.join(self.model_dir,f'{epoch if epoch is not None else 'model'}.pth')
+            name = epoch if epoch is not None else 'model'
+            path = os.path.join(self.model_dir,f'{name}.pth')
         checkpoint = th.load(path, weights_only=True)
         self.model.load_state_dict(checkpoint['model_state'])
         if retrain:
             self.optimizer.load_state_dict(checkpoint['optimizer_state'])
             if hasattr(self,'alpha_optimizer') and checkpoint.get('alpha_optimizer_state') is not None:
                 self.alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state'])
-            print(f'Load model at {checkpoint['epoch']}')
+            epoch = checkpoint['epoch']
+            print(f'Load model at {epoch}')
         for item in 'xbyre':
             norm_path = os.path.join(self.model_dir,'norm_%s.npy'%item)
             if os.path.exists(norm_path):
