@@ -500,7 +500,7 @@ class AgentSAC(Agent):
         agent_dir = os.path.join(self.agent_dir, f'{epoch}')
         if epoch is None or not os.path.exists(agent_dir):
             agent_dir = self.agent_dir
-        if os.path.exists(os.path.join(agent_dir,'actor.pth')):
+        if os.path.exists(os.path.join(agent_dir,'actor.pt')):
             self.actor.load(agent_dir)
         elif epoch is not None:
             self.actor.load(name=epoch)

@@ -130,6 +130,21 @@ class mpc_problem(Problem):
 if __name__ == '__main__':
     args,config = parser(os.path.join(HERE,'utils','mpc.yaml'))
     mp.set_start_method('spawn', force=True)    # use gpu in multiprocessing
+    # de = {
+    #     'env':'chaohu',
+    #     'act':'rand',
+    #     'ctrl_step':10,
+    #     'processes':1,
+    #     'pop_size':128,
+    #     'termination':['or','n_gen',100,'soo'],
+    #     'rain_dir':'./envs/config/sh_test2021_events.csv',
+    #     'swmm_step':10,
+    #     'initial_dir':'./results/chaohu/rand_mbrl_seed42',
+    #     'result_dir':'./results/chaohu/maxed2021_rand_200gen',
+    #     }
+    # for k,v in de.items():
+    #     setattr(args,k,v)
+    #     config[k] = v
 
     env = get_env(args.env)(initialize=False)
     env_args = env.get_args(args.directed,args.length,args.order,act=args.act)
@@ -172,13 +187,22 @@ if __name__ == '__main__':
         if args.act.startswith('conti'):
             sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu)
         else:
-            sampling = np.random.randint(prob.xl,prob.xu+1,size=(args.pop_size,prob.n_var))
+            sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl-0.5,prob.xu+0.5).round(0).astype(int)
         if os.path.exists(os.path.join(args.initial_dir,name + '_settings.npy')):
             print('Load initial settings')
-            settings = np.load(os.path.join(args.initial_dir,name + '_settings.npy'))[1::prob.r_step]
+            settings = np.load(os.path.join(args.initial_dir,name + '_settings.npy'))[::prob.r_step]
+            if settings.shape[0] < prob.n_step:
+                settings = np.concatenate([settings,np.repeat(settings[-1:],prob.n_step-settings.shape[0],axis=0)],axis=0)
+            settings = settings[:prob.n_step]
             if not args.act.startswith('conti'):
-                settings = np.stack([np.argmin(np.abs(settings[:,i:i+1] - np.tile(space,(settings.shape[0],1))),axis=-1)
-                            for i,space in enumerate(args.action_space.values())],axis=-1)
+                spdim = [len(space[0]) if isinstance(space[0],(tuple,list)) else 1 for space in args.action_space.values()]
+                if max(spdim) > 1:
+                    settings = np.stack([np.abs(settings[:,None,sum(spdim[:i]):sum(spdim[:i+1])] -\
+                                        np.array([space])).sum(axis=-1).argmin(axis=-1)
+                                        for i,space in enumerate(args.action_space.values())],axis=-1)
+                else:
+                    settings = np.stack([np.argmin(np.abs(settings[:,i:i+1] - np.tile(space,(settings.shape[0],1))),axis=-1)
+                                         for i,space in enumerate(args.action_space.values())],axis=-1)
             sampling = np.concatenate([settings.reshape(1,-1),sampling[:args.pop_size-int(args.pop_size>1)]],axis=0)
         crossover = SBX(*args.crossover,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
         mutation = PM(*args.mutation,vtype=float if args.act.startswith('conti') else int,repair=None if args.act.startswith('conti') else RoundingRepair())
@@ -217,8 +241,7 @@ if __name__ == '__main__':
         ctrls = res.X
         ctrls = ctrls.reshape((prob.n_step,prob.n_act))
         if not args.act.startswith('conti'):
-            # ctrls = np.stack([np.vectorize(prob.actions[i].get)(ctrls[...,i]) for i in range(prob.n_act)],axis=-1)
-            ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls)
+            ctrls = np.apply_along_axis(lambda x:prob.actions.get(tuple(x)),-1,ctrls.astype(int))
         ctrls = np.repeat(ctrls,prob.r_step,axis=0)
 
         state = env.reset(event)

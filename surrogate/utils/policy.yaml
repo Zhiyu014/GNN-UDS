@@ -15,7 +15,7 @@ astlingen:
   train: False
   seed: 42
   episodes: 5000
-  batch_size: 128 # batch size of the branch rollout
+  batch_size: 64 # batch size of the branch rollout
   update_batch: 64 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
   tune_gap: 0 # finetune the model per tune_gap
@@ -82,7 +82,7 @@ chaohu:
   train: False
   seed: 42
   episodes: 5000
-  batch_size: 128 # batch size of the branch rollout
+  batch_size: 64 # batch size of the branch rollout
   update_batch: 64 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
   tune_gap: 0 # finetune the model per tune_gap
@@ -149,7 +149,7 @@ hague:
   train: False
   seed: 42
   episodes: 5000
-  batch_size: 128 # batch size of the branch rollout
+  batch_size: 64 # batch size of the branch rollout
   update_batch: 64 # batch size of the training data
   limit: 22 # maximum capacity of the replay buffer
   tune_gap: 0 # finetune the model per tune_gap

@@ -155,7 +155,7 @@ cython_debug/
 # Envs
 *.sif
 *.def
-
+*.slurm
 # surrogate
 *.npy
 *.npz

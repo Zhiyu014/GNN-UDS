@@ -604,11 +604,11 @@ if __name__ == '__main__':
                 # res = [interact_steps(args,mfbr_events[i] if args.branch else events[idx],
                 #                       mfbr_runoffs[i] if args.branch else runoffs[idx],True, params,True,'cpu',)
                 #                       for i,idx in enumerate(train_id)]
+                if not args.branch:
+                    trajs = [[r[i][args.horizon:] for r in res] for i in range(5)]
                 trajs = [[r[i] if r[i].shape[0] % ctrl.r_step == 0 else \
                           np.concatenate([r[i],np.repeat(r[i][-1:],ctrl.r_step - r[i].shape[0] % ctrl.r_step,axis=0)],axis=0)
                            for r in res] for i in range(5)]
-                if not args.branch:
-                    trajs = [[r[i][args.horizon:-args.horizon] for r in res] for i in range(5)]
                 returns,n_trans = [],0
                 for traj in zip(*trajs):
                     states,perfs,settings,rx,ry,edge_states = ctrl.state_split_trajs(traj)
@@ -630,7 +630,7 @@ if __name__ == '__main__':
                 dmts.append(np.array([np.sum(r[-1]) for r in res]))
                 sec.append(time.perf_counter()-t)
                 t = time.perf_counter()
-                print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])))
+                print("{}/{} Finish model-free sampling: {:.2f}s Mean objs: {:.2f}".format(episode,args.episodes,sec[-1],np.mean(train_objss[-1])),flush=True)
                 writer.add_scalar('Model-free training objectives', np.mean(train_objss[-1]), episode)
                 writer.add_scalar('Model-free training return', np.mean(returns), episode)
                 train_returns.append(np.mean(returns))
@@ -656,7 +656,7 @@ if __name__ == '__main__':
                 num_trans.append(trans[0].shape[0])
                 sec.append(time.perf_counter()-t)
                 t = time.perf_counter()
-                print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]))
+                print("{}/{} Finish model-based sampling: {:.2f}s".format(episode,args.episodes,sec[-1]),flush=True)
                 writer.add_scalar('Rollout return', returns, episode)
                 train_returns.append(returns)
 
@@ -674,21 +674,21 @@ if __name__ == '__main__':
                 t = time.perf_counter()
                 train_loss = np.mean(train_loss,axis=0)
                 if isinstance(train_loss,np.ndarray):
-                    print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(train_loss)*" {:.2f}").format(*train_loss))
+                    print("{}/{} Finish model-free update: {:.2f}s Mean loss:".format(episode,args.episodes,sec[-1])+ (len(train_loss)*" {:.2f}").format(*train_loss),flush=True)
                     writer.add_scalar('Value loss', train_loss[0], episode)
                     writer.add_scalar('Policy loss', train_loss[1], episode)
                     writer.add_scalar('Entropy', train_loss[2], episode)
                     if args.agent.upper() == 'SAC':
                         writer.add_scalar('Alpha', train_loss[-1], episode)
                 else:
-                    print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(episode,args.episodes,sec[-1],train_loss))
+                    print("{}/{} Finish model-free update: {:.2f}s Mean loss: {:.2f}".format(episode,args.episodes,sec[-1],train_loss),flush=True)
                     writer.add_scalar('Value loss', train_loss, episode)
                     writer.add_scalar('Epsilon', max(0.1,getattr(args,"epsilon_decay",0.9996)**episode), episode)
                 train_losses.append(train_loss)
 
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
-                if args.model_based and args.skip_eval:
+                if args.skip_eval:
                     ctrl.agent.actor.save(os.path.join(ctrl.agent_dir,'actors'),name=episode)
                 else:
                     print(f"{episode}/{args.episodes} Start model-free interaction")
@@ -722,7 +722,7 @@ if __name__ == '__main__':
                 if not os.path.exists(cwd):
                     os.mkdir(cwd)
                 ctrl.save('retrain-%s'%episode if args.load_agent else episode)
-                if args.model_based and args.skip_eval:
+                if args.skip_eval:
                     ctrl.agent.save_norm(os.path.join(ctrl.agent_dir,'actors'))
                 if args.model_based and args.tune_gap > 0:
                     np.save(os.path.join(cwd,'model_loss.npy'),np.array(model_losses))
@@ -730,14 +730,15 @@ if __name__ == '__main__':
                     np.save(os.path.join(cwd,'train_objs.npy'),np.array(train_objss))
                 np.save(os.path.join(cwd,'train_returns.npy'),np.array(train_returns))
                 np.save(os.path.join(cwd,'train_loss.npy'),train_losses)
-                np.save(os.path.join(cwd,'test_objs.npy'),np.array(test_objss))
+                if not args.skip_eval:
+                    np.save(os.path.join(cwd,'test_objs.npy'),np.array(test_objss))
                 if len(dmts) > 0: np.savez(os.path.join(cwd,'decision-making_time.npz'),*dmts)
                 np.savez(os.path.join(cwd,'time.npz'),*[np.array(sec) for sec in secs])
                 np.save(os.path.join(cwd,'num_trans.npy'),np.array(num_trans))
                 if not ctrl.agent.on_policy:
                     dGv.save(cwd)
         ctrl.save('retrain' if args.load_agent else None)
-        if args.model_based and args.skip_eval:
+        if args.skip_eval:
             ctrl.agent.save_norm(os.path.join(ctrl.agent_dir,'actors'))
         cwd = os.path.join(ctrl.agent_dir, 'retrain') if args.load_agent else ctrl.agent_dir
         if not os.path.exists(cwd):
@@ -762,7 +763,7 @@ if __name__ == '__main__':
         if args.sample_gap > 0:
             ax1.plot(np.mean(train_objss,axis=-1),label='train_objs')
             np.save(os.path.join(cwd,'train_objs.npy'),np.array(train_objss))
-        if not (args.model_based and args.skip_eval):
+        if not args.skip_eval:
             ax2.plot(np.mean(test_objss,axis=-1),label='test_objs')
             np.save(os.path.join(cwd,'test_objs.npy'),np.array(test_objss))
         ax3.plot(train_returns,label='sample returns')
@@ -778,7 +779,7 @@ if __name__ == '__main__':
     if args.test:
         known_hyps = yaml.load(open(os.path.join(args.agent_dir,'parser.yaml'),'r'),yaml.FullLoader)
         for k,v in known_hyps.items():
-            if k in config:
+            if k in config or k == 'skip_eval':
                 continue
             elif k.endswith('_dir'):
                 v = os.path.join(getattr(args,k),v)
@@ -838,13 +839,15 @@ if __name__ == '__main__':
             epochs = [None]
         ress = []
         for epoch in epochs:
+            # res = [interact_steps(args,event,runoffs[idx],True,epoch,False,'cpu',) for epoch in epochs for idx,event in enumerate(events)]
+            t = time.perf_counter()
             with mp.Pool(args.processes) as pool:
                 res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,epoch,False,'cpu',))
                        for idx,event in enumerate(events)]
                 pool.close()
                 pool.join()
                 ress.append([r.get() for r in res])
-            # res = [interact_steps(args,event,runoffs[idx],True,epoch,False,'cpu',) for epoch in epochs for idx,event in enumerate(events)]
+            print("Finish testing epoch {}: {:.2f}s".format(epoch if epoch is not None else 'final',time.perf_counter()-t),flush=True)
         if args.skip_eval:
             np.save(os.path.join(cwd,'test_objs.npy'),np.array(ress))
         else:
