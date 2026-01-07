@@ -1,5 +1,5 @@
 # GNN-UDS
-A hydraulic surrogate model and real-time control methods (mpc & rl) of urban drainage networks.
+A hydraulic surrogate model and real-time control methods of urban drainage networks.
  
  Please feel free to read or cite our paper below.
 
