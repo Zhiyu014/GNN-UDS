@@ -237,6 +237,7 @@ if __name__ == '__main__':
                     verbose = True)
         print("Best solution found: %s" % res.X)
         print("Function value: %s" % res.F)
+        print('Optimization time: {} s'.format(time.perf_counter()-t1))
 
         ctrls = res.X
         ctrls = ctrls.reshape((prob.n_step,prob.n_act))
@@ -266,6 +267,7 @@ if __name__ == '__main__':
             settings.append(setting)
             idx += 1
 
+        print('Simulation done for event {}.'.format(name))
         np.save(os.path.join(args.result_dir,name + '_state.npy'),np.stack(states))
         np.save(os.path.join(args.result_dir,name + '_perf.npy'),np.stack(perfs))
         np.save(os.path.join(args.result_dir,name + '_object.npy'),np.array(objects))
