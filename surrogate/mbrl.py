@@ -287,8 +287,7 @@ class rl_ctrl:
         r = - self.env.norm_obj(obj,states) * self.args.scale if self.args.norm else - obj * self.args.scale
         return s,a,r,s_
 
-    # TODO: calculate rollout return and derive gradients for policy/value, refer to MAAC/SVG/Dreamer paper
-    # TODO: update rollout return during each online control step? But may lose batch-mean gradient
+    # TODO: calculate rollout return and derive gradients for policy/value, refer to MAAC/SVG/Dreamer paper; update rollout return during each online control step? But may lose batch-mean gradient
     def rollout_return(self,data):
         traj = self.rollout(data)
         # get preds,states,settings from trajs
@@ -302,7 +301,6 @@ class rl_ctrl:
         return th.index_select(a, -1, self.sett).unsqueeze(dim=-1)
         
     def get_observ(self,x,e,b):
-        # TODO: calculate mean instead of sum for vol or cum to avoid step-accum
         if self.conv:
             x,e = [th.stack([dat[...,i].mean(dim=1) if 'cum' in attr or '_vol' in attr else dat[:,-1,:,i]
                                     for i,attr in enumerate(self.attrs[items])],dim=-1)
@@ -561,7 +559,6 @@ if __name__ == '__main__':
             if args.sample_gap > 0 and episode % args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-free sampling")
                 params['actor'] = {k:v.cpu() for k,v in ctrl.agent.actor.state_dict().items()}
-                # TODO: Branched model-free RL
                 if args.branch:
                     train_idxs = dG.get_data_idxs(train_ids,args.ctrl_step*2,args.horizon)
                     idxs = np.arange(0,train_idxs.shape[0],args.ctrl_step)
@@ -591,7 +588,7 @@ if __name__ == '__main__':
                         tss.index = pd.to_datetime(tss.index)
                         mfbr_runoffs.append((tss,ri))
                 else:
-                    train_id = np.random.choice(train_ids,args.rain_num,replace=False)
+                    train_id = np.random.choice(train_ids,args.rain_num,replace=False) if args.sample_gap == 1 else train_ids
                 with mp.Pool(args.processes) as pool:
                     res = [pool.apply_async(func=interact_steps,
                                             args=(args,mfbr_events[i] if args.branch else events[idx],
@@ -689,7 +686,7 @@ if __name__ == '__main__':
             # Evaluate the model in several episodes
             if episode > args.start_gap and args.eval_gap > 0 and episode % args.eval_gap == 0:
                 if args.skip_eval:
-                    ctrl.agent.actor.save(os.path.join(ctrl.agent_dir,'actors'),name=episode)
+                    ctrl.agent.actor.save(os.path.join(ctrl.agent_dir,'actors'),name='retrain-%s'%episode if args.load_agent else episode)
                 else:
                     print(f"{episode}/{args.episodes} Start model-free interaction")
                     # ctrl.save()
