@@ -172,6 +172,7 @@ def interact_steps(args,event,runoff,ctrl=True,params=None,train=False,device='c
         rains.append(env.rainfall())
         i += 1
     env.initialize_logger()
+    env.env.terminate()
     if train or not args.skip_eval:
         return [np.array(dat) for dat in [states,perfs,settings,rains,edge_states,objects,times]]
     else:
@@ -636,7 +637,7 @@ if __name__ == '__main__':
             if args.model_based or args.sample_gap == 0:
                 print(f"{episode}/{args.episodes} Start model-based sampling")
                 train_idxs = dG.get_data_idxs(train_ids,args.horizon)
-                train_dats = dG.prepare_batch(train_idxs,args.horizon,args.batch_size,args.ctrl_step,weight=True,trim=True)
+                train_dats = dG.prepare_batch(train_idxs,args.horizon,args.batch_size,args.ctrl_step,weight=False,trim=True)
                 with th.no_grad():
                     trajs_v = ctrl.rollout([ctrl.to_tensor(dat) if dat is not None else dat for dat in train_dats[:-2]],ctrl=True)
                 # convert trajectories to dG dats and to transitions
@@ -803,12 +804,15 @@ if __name__ == '__main__':
                    np.load(os.path.join(cwd,'train_runoff.npz'),allow_pickle=True)]
             res = [(ts,runoff) for ts,runoff in zip(res[0].values(),res[1].values())]
         else:
-            with mp.Pool(args.processes) as pool:
-                res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
-                    for event in events]
-                pool.close()
-                pool.join()
-                res = [r.get() for r in res]
+            if args.processes > 1:
+                with mp.Pool(args.processes) as pool:
+                    res = [pool.apply_async(func=get_runoff,args=(env,event,False,args.tide and args.is_outfall,))
+                        for event in events]
+                    pool.close()
+                    pool.join()
+                    res = [r.get() for r in res]
+            else:
+                res = [get_runoff(env,event,False,args.tide and args.is_outfall,) for event in events]
             np.savez(os.path.join(cwd,'train_runoff_ts.npz'),*[np.array(r[0]) for r in res])
             np.savez(os.path.join(cwd,'train_runoff.npz'),*[np.array(r[1]) for r in res])
         runoffs = []
@@ -838,12 +842,15 @@ if __name__ == '__main__':
         for epoch in epochs:
             # res = [interact_steps(args,event,runoffs[idx],True,epoch,False,'cpu',) for epoch in epochs for idx,event in enumerate(events)]
             t = time.perf_counter()
-            with mp.Pool(args.processes) as pool:
-                res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,epoch,False,'cpu',))
-                       for idx,event in enumerate(events)]
-                pool.close()
-                pool.join()
-                ress.append([r.get() for r in res])
+            if args.processes > 1:
+                with mp.Pool(args.processes) as pool:
+                    res = [pool.apply_async(func=interact_steps,args=(args,event,runoffs[idx],True,epoch,False,'cpu',))
+                        for idx,event in enumerate(events)]
+                    pool.close()
+                    pool.join()
+                    ress.append([r.get() for r in res])
+            else:
+                ress.append([interact_steps(args,event,runoffs[idx],True,epoch,False,'cpu',) for idx,event in enumerate(events)])
             print("Finish testing epoch {}: {:.2f}s".format(epoch if epoch is not None else 'final',time.perf_counter()-t),flush=True)
         if args.skip_eval:
             np.save(os.path.join(cwd,'test_objs.npy'),np.array(ress))
