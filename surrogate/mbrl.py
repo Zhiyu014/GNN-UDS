@@ -8,6 +8,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import warnings
 warnings.filterwarnings("ignore")
 import torch as th
+import torch.nn.functional as F
+from torch.distributions import Normal
+from utils.reinmax import reinmax
 from torch.utils.tensorboard import SummaryWriter
 from emulator import Emulator
 from dataloader import DataGenerator
@@ -288,14 +291,105 @@ class rl_ctrl:
         r = - self.env.norm_obj(obj,states) * self.args.scale if self.args.norm else - obj * self.args.scale
         return s,a,r,s_
 
-    # TODO: calculate rollout return and derive gradients for policy/value, refer to MAAC/SVG/Dreamer paper; update rollout return during each online control step? But may lose batch-mean gradient
-    def rollout_return(self,data):
-        traj = self.rollout(data)
-        # get preds,states,settings from trajs
-        # obj = self.env.objective_pred_th(preds,states,settings)
-        # r = - self.env.norm_obj(obj,states,g=True) * self.args.scale if self.args.norm else - obj * self.args.scale
-        # Use Straight-Through Estimator for random action distribution
-        pass
+    def rollout_return(self, data):
+        """SVG(0) analytic policy gradient: 1-step model gradient + critic bootstrap.
+        For each rollout step, compute R_t = r_t + gamma * V(s_{t+1}) with gradient
+        flowing through r_t -> action -> policy theta via the differentiable world model.
+        Returns (policy_loss, value_loss) tensors for caller to backprop."""
+        agent = self.agent
+        x, _, b, _ = data[:4]
+        r_data = th.concat(data[4:6], dim=1)
+        ex = data[6]
+        if not x.requires_grad:
+            x = x.detach().requires_grad_(True)
+        if not ex.requires_grad:
+            ex = ex.detach().requires_grad_(True)
+
+        policy_returns, value_targets, states_obs, actions_out = [], [], [], []
+
+        for i in range(self.n_step):
+            bi = b[:, i * self.r_step:(i + 1) * self.r_step, :]
+            ri = r_data[:, i * self.r_step:(i + 1) * self.r_step, :]
+            x_norm = self.normalize(x, 'x')
+            e_norm = self.normalize(ex, 'e')
+            b_norm_obs = self.normalize(bi, 'b') if self.conv else self.normalize(ri, 'r')
+            s_norm = self.get_observ(x_norm, e_norm, b_norm_obs)
+
+            # Differentiable action -> setting (refer to mpc.py gradient_fn + ste)
+            if agent.conti:
+                mu, sigma = agent.actor(s_norm, batch=True)
+                action = Normal(mu, sigma).rsample().tanh()
+                setting = (action + 1.0) / 2.0
+            elif isinstance(agent.action_shape, (list, np.ndarray)) and agent.mac:
+                probs = agent.actor(s_norm, batch=True)
+                action, _ = zip(*[reinmax(p, 1.0) for p in probs])
+                setting = th.stack([(ys * ap).sum(dim=-1)
+                                    for ys, ap in zip(action, agent.action_space)], dim=-1)
+            else:
+                probs = agent.actor(s_norm, batch=True)
+                action, _ = reinmax(probs, 1.0)
+                setting = (action * agent.action_table).sum(dim=-1)
+            setting_rep = setting[:, th.newaxis, :].repeat(1, self.r_step, 1)
+
+            # Model prediction (gradient flows through emul.predict)
+            preds = self.emul.predict(x, ex, bi, setting_rep, constr=False)
+            y_pred, ey_pred = preds
+            if self.emul.if_flood:
+                x_next = th.concat([y_pred[..., :-1], (y_pred[..., -1:] > 0).float(), bi], dim=-1)
+            else:
+                x_next = th.concat([y_pred, bi], dim=-1)
+            ex_next = th.concat([ey_pred, self.get_edge_action(setting_rep)], dim=-1)
+
+            # Reward via analytic gradient through model
+            obj = self.env.objective_pred_th((y_pred, ey_pred), (x, ex), setting_rep).sum(dim=-1)
+            reward = -self.env.norm_obj(obj, (x, ex)) * self.args.scale if self.args.norm else -obj * self.args.scale
+
+            # Critic bootstrap V(s_{t+1}), detached
+            with th.no_grad():
+                x_next_norm = self.normalize(x_next, 'x')
+                ex_next_norm = self.normalize(ex_next, 'e')
+                b_next = b[:, (i + 1) * self.r_step:(i + 2) * self.r_step, :] if i + 1 < self.n_step else bi
+                r_next = r_data[:, (i + 1) * self.r_step:(i + 2) * self.r_step, :] if i + 1 < self.n_step else ri
+                b_next_obs = self.normalize(b_next, 'b') if self.conv else self.normalize(r_next, 'r')
+                s_next = self.get_observ(x_next_norm, ex_next_norm, b_next_obs)
+                a_next, _ = agent.actor.get_action_probs(s_next)
+                if agent.conti:
+                    v_next = th.min(agent.q1_target(s_next, a_next), agent.q2_target(s_next, a_next))
+                elif isinstance(agent.action_shape, (list, np.ndarray)) and agent.mac:
+                    qs = [th.min(q1_, q2_) for q1_, q2_ in zip(agent.q1_target(s_next), agent.q2_target(s_next))]
+                    v_next = th.stack([(qi * ai).sum(dim=-1) for qi, ai in zip(qs, a_next)], dim=-1).mean(dim=-1)
+                else:
+                    next_q = th.min(agent.q1_target(s_next), agent.q2_target(s_next))
+                    v_next = (next_q * a_next).sum(dim=-1)
+
+            ret = reward + agent.gamma * v_next
+            policy_returns.append(ret)
+            value_targets.append(ret.detach())
+            states_obs.append(s_norm)
+            actions_out.append(action)
+            x, ex = x_next, ex_next
+
+        # Policy loss: -mean of returns (gradient: reward -> action -> policy theta)
+        policy_loss = -th.stack(policy_returns).mean()
+
+        # Value loss: MSE between critic and detached targets
+        value_loss = th.tensor(0.0, device=x.device)
+        for s, a, vt in zip(states_obs, actions_out, value_targets):
+            if agent.conti:
+                q1 = agent.q1(s, a)
+                q2 = agent.q2(s, a)
+            elif isinstance(agent.action_shape, (list, np.ndarray)) and agent.mac:
+                q1, q2 = agent.q1(s), agent.q2(s)
+                q1 = th.stack([(qi * ai).sum(dim=-1) for qi, ai in zip(q1, a)], dim=-1).mean(dim=-1)
+                q2 = th.stack([(qi * ai).sum(dim=-1) for qi, ai in zip(q2, a)], dim=-1).mean(dim=-1)
+            else:
+                q1, q2 = agent.q1(s), agent.q2(s)
+                q1 = (q1 * a).sum(dim=-1)
+                q2 = (q2 * a).sum(dim=-1)
+            value_loss = value_loss + F.mse_loss(q1, vt) + F.mse_loss(q2, vt)
+        value_loss = value_loss / len(value_targets)
+
+        return policy_loss, value_loss
 
     def get_edge_action(self,a):
         a = th.concat([th.ones_like(a[...,:1]),a],dim=-1)

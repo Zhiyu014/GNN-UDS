@@ -1,0 +1,5 @@
+act: bc
+data_dir: 1s_bc_rain50
+processes: 4
+rain_dir: ast_train50_events.csv
+simulate: true
