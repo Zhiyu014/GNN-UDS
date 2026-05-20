@@ -67,6 +67,9 @@ def parser(config=None):
     parser.add_argument('--batch_size',type=int,default=32,help='number of batch size')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--method',type=str,default='descent',help='optimizer: descent lbfgs trust-constr')
+    parser.add_argument('--tau',type=float,default=1.0,help='softmax temperature for discrete gradient optimization')
+    parser.add_argument('--warm_eps',type=float,default=0.01,help='extra probability above uniform for current discrete warm-start action')
+    parser.add_argument('--logit_bound',type=float,default=1.0,help='bound for discrete logits in scipy optimization')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -402,18 +405,21 @@ class mpc_gr:
                                 for v in self.asp])
             self.xu = np.array([max(v) for _ in range(self.n_step)
                                 for v in self.asp])
+            self.bounds = list(zip(self.xl,self.xu))
         else:
             '''
             TODO: gradient optim for discrete. set probs and use softmax to enable gradient when discretized
             beta: hyperparameter determining the smoothness of discrete-to-continuous transition
             a large beta lead to sharp landscape with closer value to the one-hot argmax, but may cause gradient diminishing
             '''
-            self.tau = 0.1
-            self.hard = False
+            self.eps = getattr(args,'warm_eps',0.01)
+            self.tau = getattr(args,'tau',1.0)
             self.opts = [len(ap) for ap in self.asp] * self.n_step
             self.n_var = sum(self.opts)
             self.asp *= self.n_step
             self.asp_th = [th.tensor(ap,device=self.device,dtype=th.float32) for ap in self.asp]
+            self.logit_bound = getattr(args,'logit_bound',1.0)
+            self.bounds = [(-self.logit_bound,self.logit_bound)]*self.n_var
 
     def load_model(self,margs,predict=False):
         self.emul = Emulator(margs)
@@ -515,6 +521,27 @@ class mpc_gr:
         else:
             return th.sigmoid(y)*(self.xu-self.xl)+self.xl
 
+    def initial_guess(self,setting):
+        if self.conti:
+            return np.reshape(setting,-1)
+        setting = np.asarray(setting,dtype=np.float32)
+        if setting.size == self.n_var:
+            return setting.reshape(-1)
+        setting = setting.reshape(self.n_step,self.n_act,-1)
+        logits = np.empty((self.n_step,sum(self.opts[:self.n_act])),dtype=np.float32)
+        start = 0
+        for act,(ap,opt) in enumerate(zip(self.asp[:self.n_act],self.opts[:self.n_act])):
+            ap = np.asarray(ap,dtype=np.float32).reshape(opt,-1)
+            dist = np.linalg.norm(setting[:,act,None,:]-ap[None,:,:],axis=-1)
+            idx = np.argmin(dist,axis=-1)
+            prob = np.full((self.n_step,opt),1.0/opt,dtype=np.float32)
+            eps = np.clip(self.eps,0.0,1.0-1.0/opt) if opt > 1 else 0.0
+            prob[np.arange(self.n_step),idx] += eps
+            prob += (1.0-prob.sum(axis=-1,keepdims=True))/opt
+            logits[:,start:start+opt] = np.log(prob) - np.log(prob).mean(axis=-1,keepdims=True)
+            start += opt
+        return logits.reshape(-1).clip(-self.logit_bound,self.logit_bound)
+
     def ste(self,y):
         '''
         Straight through estimator (STE) for discrete variables
@@ -542,32 +569,25 @@ class mpc_gr:
     def calls(self):
         return self.gradient.calls + self.hessp.calls
 
+def sample_initials(prob,args,setting=None):
+    if prob.conti:
+        sampling = np.asarray(sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu),
+                              dtype=np.float32)
+    else:
+        sampling = np.random.uniform(-prob.logit_bound,prob.logit_bound,
+                                     size=(args.pop_size,prob.n_var)).astype(np.float32)
+
+    if args.use_current and setting is not None:
+        x0 = np.asarray(prob.initial_guess(setting),dtype=np.float32)
+        sampling = np.array([x0] + sampling[:args.pop_size-int(args.pop_size>1)])
+    return sampling
+
 def run_gr(prob,args,setting=None):
     '''
     TODO:
     First-order gradient-based optimization using Pytorch
     '''
-    if prob.conti:
-        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
-    else:
-        sampling = np.random.normal(size=(args.pop_size,prob.n_var)).tolist()
-    if args.use_current and setting is not None:
-        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1 or not prob.conti)])
-
-    def if_terminate(item,vm,rec):
-        if item == 'n_gen':
-            return rec[0] >= vm
-        # elif item == 'grad':
-        #     return rec[2] <= vm
-        elif item == 'time':
-            return rec[2] >= vm
-        elif item == 'obj':
-            return rec[3] <= vm # TODO
-
-    fun,recs,sols = 1e6,[[0,prob.calls,time.perf_counter(),1e6]],[sampling[0]]
-    print('===============================================')
-    print(' n_gen | n_fun |     time      |       f       ')
-    print('===============================================')
+    sampling = sample_initials(prob,args,setting)
     y = prob.project(sampling,True) if prob.conti and not prob.bounded else sampling
     y = th.tensor(y, requires_grad=True, dtype=th.float32, device = prob.device)
     optim = th.optim.SGD([y],lr=getattr(args,"learning_rate",1e-3))
@@ -606,12 +626,7 @@ def run_ntopt(prob,args,setting=None):
     l-bfgs-b or trust-constr via scipy.optimize.minimize
     '''
     print(f'Running {args.method} optimization')
-    if prob.conti:
-        sampling = sampling_lhs(args.pop_size,prob.n_var,prob.xl,prob.xu).tolist()
-    else:
-        sampling = np.random.normal(size=(args.pop_size,prob.n_var)).tolist()
-    if args.use_current and setting is not None:
-        sampling = np.array([np.reshape(setting,-1)] + sampling[:args.pop_size-int(args.pop_size>1 or not prob.conti)])
+    sampling = sample_initials(prob,args,setting)
 
     recs,sols = [[0,prob.calls,time.perf_counter(),1e6]],[sampling[0]]
     print('===============================================')
@@ -627,15 +642,15 @@ def run_ntopt(prob,args,setting=None):
         rec[1],rec[2] = nfev,time.perf_counter()
         recs.append(rec)
     if args.processes > 1:
-        #TODO: split prob & model into different processes
         pool = mp.Pool(args.processes)
         res = [pool.apply_async(func=scioptminimize,args=(prob.gradient,
-                                                          x0 if prob.bounded else prob.project(x0,True),
+                                                          prob.project(x0,True) if prob.conti and not prob.bounded else x0,
                                                           prob.get_state(),
                                                           args.method,
                                                           True,None,
                                                           prob.hessp,
-                                                          list(zip(prob.xl,prob.xu)),(),None,
+                                                          prob.bounds,
+                                                          (),None,
                                                         #   mycallback,
                                                           ))
                                                           for x0 in sampling]
@@ -651,7 +666,7 @@ def run_ntopt(prob,args,setting=None):
                                      method=args.method,
                                      jac=True,
                                      hessp=prob.hessp,
-                                     bounds=list(zip(prob.xl,prob.xu)) if prob.conti else None,
+                                     bounds=prob.bounds,
                                      callback=mycallback,
                                      options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
                                      )
@@ -813,7 +828,7 @@ if __name__ == '__main__':
                     # margs.runoff = r
                     prob.load_state(state,r,edge_state)
                     if args.gradient:
-                        if not prob.conti:
+                        if not prob.conti: # Warm start with logits of previous horizon for discrete action space
                             setting = np.concatenate([sols[-1][j+1:], sols[-1][-1:]*(j+1)],axis=0) if i>0 else None
                             setting,vals,nfuns,times,sols = run_gr(prob,args,setting=setting)
                         else:
@@ -841,7 +856,6 @@ if __name__ == '__main__':
             elif i*args.interval % args.ctrl_step == 0:
                 j += 1
                 sett = env.controller('safe',state[-1] if args.surrogate else state,setting[j]) if args.keep == 'False' else settings[0]
-                # sett = env.controller('safe',state[-1] if args.surrogate else state,setting[0]) if args.keep == 'False' else settings[0]
             real_sett = prev_sett if args.lag and i*args.interval % args.sample_interval < int(lag) else sett
             done = env.step(real_sett,
                             lag_seconds = (lag%1)*args.interval*60 if args.lag and i*args.interval % args.sample_interval == int(lag) else None)
@@ -869,4 +883,3 @@ if __name__ == '__main__':
 
         results.loc[name] = [t1-t0,np.mean(opt_times),np.stack(perfs).sum(),np.stack(objects).sum()]
     results.to_csv(os.path.join(args.result_dir,'results.csv'))
-
