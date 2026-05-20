@@ -67,6 +67,7 @@ def parser(config=None):
     parser.add_argument('--batch_size',type=int,default=32,help='number of batch size')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
     parser.add_argument('--method',type=str,default='descent',help='optimizer: descent lbfgs trust-constr')
+    parser.add_argument('--lr',type=float,default=1e-3,help='learning rate for gradient-based optimization')
     parser.add_argument('--tau',type=float,default=1.0,help='softmax temperature for discrete gradient optimization')
     parser.add_argument('--warm_eps',type=float,default=0.01,help='extra probability above uniform for current discrete warm-start action')
     parser.add_argument('--logit_bound',type=float,default=1.0,help='bound for discrete logits in scipy optimization')
@@ -383,14 +384,9 @@ class mpc_gr:
         self.args = args
         self.margs = margs
         self.device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
+        self.pop_size = getattr(args,'pop_size',1)
         if load_model:
-            # if args.processes > 1:
-            #     tf.config.experimental.set_virtual_device_configuration(
-            #         gpus[0],
-            #         [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)
-            #         for _ in range(args.processes)])
-            self.load_model(margs,args.predict)
-        self.stochastic = getattr(args,"stochastic",False)
+            self.load_model(margs,self.pop_size if args.method == 'gr' else 1)
         self.asp = [np.array(ap) for ap in args.action_space.values()]
         self.n_act = len(self.asp)
         self.horizon = getattr(args,'horizon',60)
@@ -421,10 +417,10 @@ class mpc_gr:
             self.logit_bound = getattr(args,'logit_bound',1.0)
             self.bounds = [(-self.logit_bound,self.logit_bound)]*self.n_var
 
-    def load_model(self,margs,predict=False):
+    def load_model(self,margs,batch=1):
         self.emul = Emulator(margs)
         self.emul.load()
-        self.emul.set_indices(1)
+        self.emul.set_indices(batch)
 
     def load_state(self,state,runoff,edge_state):
         self.state,self.runoff,self.edge_state = [th.tensor(x,dtype=th.float32,device=self.device) for x in [state,runoff,edge_state]]
@@ -438,8 +434,8 @@ class mpc_gr:
         state,edge_state = state.unsqueeze(0),edge_state.unsqueeze(0)
         if self.stochastic:
             settings = settings.tile(self.stochastic,1,1)
-        else:
-            runoff = runoff.unsqueeze(0)
+        if self.args.method == 'gr': # multi-start in run_gr
+            state,edge_state,runoff = [dat.tile(self.pop_size,1,1,1) for dat in [state,edge_state,runoff]]
         return settings,state,runoff,edge_state
 
     @th.compile(fullgraph=True)
@@ -582,31 +578,94 @@ def sample_initials(prob,args,setting=None):
         sampling = np.array([x0] + sampling[:args.pop_size-int(args.pop_size>1)])
     return sampling
 
+def parse_time_limit(value):
+    if value is None:
+        return None
+    if isinstance(value,(int,float)):
+        return float(value)
+    value = str(value)
+    if ':' not in value:
+        return float(value)
+    vals = [float(v) for v in value.split(':')]
+    if len(vals) == 3:
+        return vals[0]*3600 + vals[1]*60 + vals[2]
+    if len(vals) == 2:
+        return vals[0]*60 + vals[1]
+    return vals[0]
+
+def parse_gr_termination(args):
+    term = {
+        'min_gen':20,
+        'max_gen':100,
+        'max_time':None,
+        'patience':20,
+        'ftol':1e-3,
+    }
+    vals = list(getattr(args,'termination',[]))
+    for key,value in zip(vals[0::2],vals[1::2]):
+        key = str(key)
+        if key in ['n_gen','max_gen','n_eval']:
+            term['max_gen'] = int(value)
+        elif key in ['time','max_time']:
+            term['max_time'] = parse_time_limit(value)
+        elif key in ['min_gen','patience']:
+            term[key] = int(value)
+        elif key in ['ftol']:
+            term[key] = float(value)
+    term['min_gen'] = max(0,term['min_gen'])
+    term['max_gen'] = max(1,term['max_gen'])
+    term['min_gen'] = min(term['min_gen'],term['max_gen'])
+    term['patience'] = max(1,term['patience'])
+    return term
+
 def run_gr(prob,args,setting=None):
     '''
     TODO:
     First-order gradient-based optimization using Pytorch
     '''
     sampling = sample_initials(prob,args,setting)
+    term = parse_gr_termination(args)
+
+    fun,idx,ini = np.inf,0,0
+    sol = sampling[0]
+    stale = 0
+    start_time = time.perf_counter()
+    recs,sols = [[0,prob.calls,0.0,1e6,1e6,np.nan,0]],[sampling[0]]
+    print('====================================================================================')
+    print(' n_gen | n_fun |     time      |       f       |     best      |    |g|     | stale ')
+    print('====================================================================================')
     y = prob.project(sampling,True) if prob.conti and not prob.bounded else sampling
     y = th.tensor(y, requires_grad=True, dtype=th.float32, device = prob.device)
-    optim = th.optim.SGD([y],lr=getattr(args,"learning_rate",1e-3))
-    while not if_terminate(*args.termination,recs[-1]):
+    optim = th.optim.SGD([y],lr=getattr(args,"lr",1e-3))
+    while True:
         prob.emul.model.zero_grad()
-        obj = prob.objective_fn(y if prob.conti else prob.ste(y), *prob.get_state())
+        obj = prob.objective_fn(y if prob.conti else prob.ste(y), *prob.get_state()).reshape(-1)
         optim.zero_grad()
-        obj.backward()
-        optim.step()
-        # obj,grads = prob.pred_fit()
+        obj.sum().backward()
         obj = obj.detach().cpu().numpy()
-        rec = [recs[-1][0]+1, recs[-1][1]+1, time.perf_counter()-recs[-1][2], obj.min()]
+        obj_min = float(obj.min())
+        gen = recs[-1][0] + 1
+        elapsed = time.perf_counter() - start_time
+        if obj_min < fun - term['ftol']:
+            idx,ini,fun = gen,int(obj.argmin()),obj_min
+            sol = y.detach().cpu().numpy()[ini]
+            sols.append(sol)
+            stale = 0
+        else:
+            stale += 1
+        grad_norms = y.grad.detach().reshape(y.shape[0],-1).norm(dim=-1)
+        grad_norm = grad_norms[int(obj.argmin())].item()
+        optim.step()
+        # if not prob.conti:
+        #     y.data.clamp_(-prob.logit_bound,prob.logit_bound)
+        rec = [gen, prob.calls, elapsed, obj_min, fun, grad_norm, stale]
         log = ''.join([str(round(r,4)).center(7 if i < 2 else 15) + '|' for i,r in enumerate(rec)])
         print(log)
-        if obj.min() < fun:
-            idx,ini,fun = rec[0],obj.argmin(),obj.min()
-            sol = y[ini].detach().cpu().numpy()
-        rec[2] = time.perf_counter()
         recs.append(rec)
+        stop_patience = gen >= term['min_gen'] and stale >= term['patience']
+        stop_time = term['max_time'] is not None and elapsed >= term['max_time']
+        if gen >= term['max_gen'] or stop_time or stop_patience:
+            break
     print("Best iter {} initial {} Objective {}".format(idx,ini,fun))
     if prob.conti:
         ctrls = prob.project(sol).numpy() if not prob.bounded else sol
@@ -614,10 +673,10 @@ def run_gr(prob,args,setting=None):
         ctrls = prob.ste(sol)
     ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
-    vals = np.array(recs)[1:,-1]
-    nfuns = np.array(recs)[1:,1]-recs[0][1]
-    times = np.array(recs)[1:,2]-recs[0][2]
-    sols.append(sol)
+    recs = np.array(recs)
+    vals = recs[1:,3]
+    nfuns = recs[1:,1]-recs[0,1]
+    times = recs[1:,2]
     sols = np.array(sols,dtype=np.float32).reshape((len(sols),prob.n_step,-1))
     return ctrls,vals,nfuns,times,sols
 
@@ -830,6 +889,7 @@ if __name__ == '__main__':
                     if args.gradient:
                         if not prob.conti: # Warm start with logits of previous horizon for discrete action space
                             setting = np.concatenate([sols[-1][j+1:], sols[-1][-1:]*(j+1)],axis=0) if i>0 else None
+                        if args.method == 'gr':
                             setting,vals,nfuns,times,sols = run_gr(prob,args,setting=setting)
                         else:
                             setting,vals,nfuns,times,sols = run_ntopt(prob,args,setting=setting)
