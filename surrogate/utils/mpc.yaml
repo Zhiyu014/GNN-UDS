@@ -37,7 +37,11 @@ astlingen:
   batch_size: 32
   epsilon: -1.0
   gradient: False
-  method: descent
+  method: gr
+  lr: 0.01
+  tau: 1.0
+  warm_eps: 0.01
+  logit_bound: 0.1
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -83,7 +87,11 @@ hague:
   batch_size: 32
   epsilon: -1.0
   gradient: False
-  method: descent
+  method: gr
+  lr: 0.01
+  tau: 1.0
+  warm_eps: 0.01
+  logit_bound: 0.1
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -129,7 +137,11 @@ chaohu:
   batch_size: 32
   epsilon: -1.0
   gradient: False
-  method: descent
+  method: gr
+  lr: 0.01
+  tau: 1.0
+  warm_eps: 0.01
+  logit_bound: 0.1
   stochastic: 0
   error: 0.0
   result_dir: ./results/chaohu/

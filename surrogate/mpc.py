@@ -7,8 +7,8 @@ from emulator import Emulator # Emulator should be imported before env
 from utils.utilities import get_inp_files
 import pandas as pd
 import torch.multiprocessing as mp
-from utils.reinmax import reinmax
-# from reinmax import reinmax
+from utils.reinmax import reinmax as reinmax_determ
+from reinmax import reinmax
 import numpy as np
 from scipy.stats import truncnorm
 from scipy.optimize import minimize as scioptminimize
@@ -66,11 +66,11 @@ def parser(config=None):
     parser.add_argument('--predict',action='store_true',help='if use predictor for emulation')
     parser.add_argument('--batch_size',type=int,default=32,help='number of batch size')
     parser.add_argument('--gradient',action='store_true',help='if use gradient-based optimization')
-    parser.add_argument('--method',type=str,default='descent',help='optimizer: descent lbfgs trust-constr')
-    parser.add_argument('--lr',type=float,default=1e-3,help='learning rate for gradient-based optimization')
+    parser.add_argument('--method',type=str,default='gr',help='optimizer: gr l-bfgs-b trust-constr')
+    parser.add_argument('--lr',type=float,default=0.01,help='learning rate for gradient-based optimization')
     parser.add_argument('--tau',type=float,default=1.0,help='softmax temperature for discrete gradient optimization')
     parser.add_argument('--warm_eps',type=float,default=0.01,help='extra probability above uniform for current discrete warm-start action')
-    parser.add_argument('--logit_bound',type=float,default=1.0,help='bound for discrete logits in scipy optimization')
+    parser.add_argument('--logit_bound',type=float,default=0.1,help='bound for discrete logits in scipy optimization')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -402,11 +402,18 @@ class mpc_gr:
             self.xu = np.array([max(v) for _ in range(self.n_step)
                                 for v in self.asp])
             self.bounds = list(zip(self.xl,self.xu))
+            self.stochastic = False
         else:
             '''
-            TODO: gradient optim for discrete. set probs and use softmax to enable gradient when discretized
-            beta: hyperparameter determining the smoothness of discrete-to-continuous transition
-            a large beta lead to sharp landscape with closer value to the one-hot argmax, but may cause gradient diminishing
+            Discrete gradient optimization uses logits over each actuator's
+            action options. The forward pass is hard argmax through ReinMax,
+            matching the deterministic controls applied by MPC, while the
+            backward pass uses ReinMax's surrogate gradient. warm_eps controls
+            the initial preference for the current action above uniform, tau
+            controls backward smoothness, and logit_bound keeps logits near
+            argmax boundaries so line-search steps can flip discrete actions.
+            stochastic mode samples multiple rollouts in forward passes,
+            and is recommended in gr (first-order), not lbfgsb (second-order).
             '''
             self.eps = getattr(args,'warm_eps',0.01)
             self.tau = getattr(args,'tau',1.0)
@@ -414,8 +421,9 @@ class mpc_gr:
             self.n_var = sum(self.opts)
             self.asp *= self.n_step
             self.asp_th = [th.tensor(ap,device=self.device,dtype=th.float32) for ap in self.asp]
-            self.logit_bound = getattr(args,'logit_bound',1.0)
+            self.logit_bound = getattr(args,'logit_bound',0.1)
             self.bounds = [(-self.logit_bound,self.logit_bound)]*self.n_var
+            self.stochastic = getattr(args,"stochastic",False) # Used for stochastic discrete sampling
 
     def load_model(self,margs,batch=1):
         self.emul = Emulator(margs)
@@ -429,11 +437,17 @@ class mpc_gr:
         return tuple([getattr(self,item,None) for item in ['state','runoff','edge_state']])
 
     def pre_state(self,y: th.Tensor, state: th.Tensor, runoff: th.Tensor,edge_state: th.Tensor):
+        if self.conti and not self.bounded:
+            y = self.project(y)
+        if not self.conti:
+            if self.stochastic:
+                y = y.tile(self.stochastic,1)
+            y = self.ste(y)
         settings = y.reshape(-1,self.n_step,self.n_act)
         settings = settings.tile(1,self.r_step,1)
-        state,edge_state = state.unsqueeze(0),edge_state.unsqueeze(0)
+        state,edge_state,runoff = state.unsqueeze(0),edge_state.unsqueeze(0),runoff.unsqueeze(0)
         if self.stochastic:
-            settings = settings.tile(self.stochastic,1,1)
+            state,edge_state,runoff = [dat.tile(self.stochastic,1,1,1) for dat in [state,edge_state,runoff]]
         if self.args.method == 'gr': # multi-start in run_gr
             state,edge_state,runoff = [dat.tile(self.pop_size,1,1,1) for dat in [state,edge_state,runoff]]
         return settings,state,runoff,edge_state
@@ -475,15 +489,13 @@ class mpc_gr:
         else:
             obj = self.env.objective_pred_th(preds,[state,edge_state],settings).sum(dim=-1)
         if self.stochastic:
-            obj = th.stack([obj[i*self.stochastic:(i+1)*self.stochastic].mean()
-                              for i in range(y.shape[0])],dim=0)
+            obj = obj.reshape(-1,self.stochastic).mean(dim=1)
         return obj
 
     @th.compile(dynamic=False)
     def gradient_fn(self,y,state,runoff,edge_state):
         self.emul.model.zero_grad()
-        obj = self.objective_fn(y if self.conti else self.ste(y),
-                                state,runoff,edge_state).squeeze()
+        obj = self.objective_fn(y[None,:],state,runoff,edge_state).squeeze()
         grads = th.autograd.grad(obj,y,retain_graph=True)[0]
         return obj,grads
 
@@ -491,8 +503,6 @@ class mpc_gr:
     def gradient(self,y,*args):
         if not isinstance(y,th.Tensor):
             y = th.tensor(y,requires_grad=True,dtype=th.float32,device=self.device)
-        if self.conti and not self.bounded:
-            y = self.project(y)
         objs,grads = self.gradient_fn(y,*args)
         return objs.detach().cpu().numpy(),grads.detach().cpu().numpy()
     
@@ -550,13 +560,12 @@ class mpc_gr:
             return np.stack(yhard,axis=-1)
         else:
             y = th.split(y,self.opts,dim=-1)
-            yste = [reinmax(yi,self.tau)[0] for yi in y]
+            yste = [reinmax(yi,self.tau)[0] if self.stochastic else reinmax_determ(yi,self.tau)[0] for yi in y]
             # yste = [th.softmax(yi/self.tau, dim=-1) for yi in y]
-            # if self.hard:
-            #     yhard = [F.one_hot(yi.argmax(dim=-1),opt)
-            #              for yi,opt in zip(y,self.opts)]
-            #     yste = [ys - ys.detach() + yh # constant
-            #              for ys,yh in zip(yste,yhard)]
+            # yhard = [F.one_hot(yi.argmax(dim=-1),opt)
+            #             for yi,opt in zip(y,self.opts)]
+            # yste = [ys - ys.detach() + yh # constant
+            #             for ys,yh in zip(yste,yhard)]
             yste = [(ys * ap).sum(dim=-1)
                      for ys,ap in zip(yste,self.asp_th)]
             return th.stack(yste,dim=-1)
@@ -575,7 +584,7 @@ def sample_initials(prob,args,setting=None):
 
     if args.use_current and setting is not None:
         x0 = np.asarray(prob.initial_guess(setting),dtype=np.float32)
-        sampling = np.array([x0] + sampling[:args.pop_size-int(args.pop_size>1)])
+        sampling = np.concatenate([x0[None, :], sampling[:args.pop_size-int(args.pop_size>1)]],axis=0)
     return sampling
 
 def parse_time_limit(value):
@@ -598,7 +607,7 @@ def parse_gr_termination(args):
         'min_gen':20,
         'max_gen':100,
         'max_time':None,
-        'patience':20,
+        'patience':10,
         'ftol':1e-3,
     }
     vals = list(getattr(args,'termination',[]))
@@ -634,12 +643,12 @@ def run_gr(prob,args,setting=None):
     print('====================================================================================')
     print(' n_gen | n_fun |     time      |       f       |     best      |    |g|     | stale ')
     print('====================================================================================')
-    y = prob.project(sampling,True) if prob.conti and not prob.bounded else sampling
+    y = prob.project(sampling[:args.pop_size],True) if prob.conti and not prob.bounded else sampling[:args.pop_size]
     y = th.tensor(y, requires_grad=True, dtype=th.float32, device = prob.device)
-    optim = th.optim.SGD([y],lr=getattr(args,"lr",1e-3))
+    optim = th.optim.Adam([y],lr=getattr(args,"lr",0.01))
     while True:
         prob.emul.model.zero_grad()
-        obj = prob.objective_fn(y if prob.conti else prob.ste(y), *prob.get_state()).reshape(-1)
+        obj = prob.objective_fn(y, *prob.get_state()).reshape(-1)
         optim.zero_grad()
         obj.sum().backward()
         obj = obj.detach().cpu().numpy()
@@ -718,7 +727,7 @@ def run_ntopt(prob,args,setting=None):
         res = [r.get() for r in res]
     else:
         res = []
-        for i,x0 in enumerate(sampling):
+        for _,x0 in enumerate(sampling):
             results = scioptminimize(prob.gradient,
                                      x0 = prob.project(x0,True) if prob.conti and not prob.bounded else x0,
                                      args=prob.get_state(),
@@ -757,7 +766,6 @@ if __name__ == '__main__':
         # 'processes':1,
         # 'pop_size':1,
         # # 'sampling':0.4,
-        # # 'learning_rate':0.1,
         # # 'termination':['or','time','00:05:00','soo','ftol-0.001'],
         # # 'termination':['ftol',1e-3,'maxls',30],
         # 'termination':['n_gen',100],
@@ -765,15 +773,17 @@ if __name__ == '__main__':
         # 'batch_size':1,
         # 'gradient': True,
         # 'predict':False,
-        # 'method':'l-bfgs-b',
+        # 'method':'gr',
+        # 'lr':0.01,
         # 'use_current':True,
+        # 'stochastic':8,
         # 'rain_dir':'./envs/config/ast_test2007_events.csv',
         # # 'rain_suffix':'chaohu_testall',
         # # 'rain_num':100,
         # 'swmm_step':1,
         # 'lag':True,
-        # 'horizon':60,
-        # 'model_dir':'./model/astlingen/60s_gat_5ly_floodwei_gradnorm',
+        # 'horizon':120,
+        # 'model_dir':'./model/astlingen/120s_gat_5ly_floodwei_gradnorm',
         # 'result_dir':'./results/astlingen/test',
         }
     for k,v in de.items():
