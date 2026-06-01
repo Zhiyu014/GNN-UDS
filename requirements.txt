@@ -8,3 +8,4 @@ scipy == 1.15.0
 pymoo == 0.6.0
 tensorboard
 matplotlib
+reinmax

@@ -80,3 +80,4 @@ A hydraulic surrogate model and real-time control methods of urban drainage netw
 - pymoo == 0.6.0
 - matplotlib
 - tensorboard
+- reinmax
