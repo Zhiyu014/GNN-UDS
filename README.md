@@ -7,7 +7,7 @@
 
 **GNN-based model**: Zhang, Z., Tian, W., Lu, C., Liao, Z. and Yuan, Z. 2024. Graph neural network-based surrogate modelling for real-time hydraulic prediction of urban drainage networks. Water Research, 263, 122142. https://doi.org/10.1016/j.watres.2024.122142
 
-**Gradient-based MPC**: Zhang, Z., Tian, W., Liao, Z. and Yuan, Z. 2026. Differentiable neural network-based models enable gradient-based optimization for model predictive control of urban drainage networks. Water Research, 291, 125188. https://authors.elsevier.com/a/1mKOH9pi-huFn
+**Gradient-based MPC**: Zhang, Z., Tian, W., Liao, Z. and Yuan, Z. 2026. Differentiable neural network-based models enable gradient-based optimization for model predictive control of urban drainage networks. Water Research, 291, 125188. https://doi.org/10.1016/j.watres.2025.125188
 
 ## How-to
 1. generate labels
