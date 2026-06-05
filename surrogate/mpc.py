@@ -124,7 +124,7 @@ def get_runoff(env,event,rate=False,tide=False):
     runoff = np.array(runoffs)
     return ts,runoff
 
-def pred_simu(y,file,args,r=None,act=True):
+def pred_simu(y,file,args,r=None,act=True,keepdim=False):
     env = get_env(args.env_name)(swmm_file = file)
     done,idx = False,0
     if getattr(args,'log') is not None:
@@ -139,7 +139,7 @@ def pred_simu(y,file,args,r=None,act=True):
         # perf.append(env.flood())
         idx += 1
     # return np.array(perf)
-    return env.objective(idx)
+    return env.objective(idx,keepdim=keepdim)
 
 class mpc_ga(Problem):
     def __init__(self,args,margs=None):

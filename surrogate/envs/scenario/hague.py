@@ -42,7 +42,7 @@ class hague(basescenario):
         super().__init__(config_file,swmm_file,global_state,initialize)
 
         
-    def objective(self, seq = False):
+    def objective(self, seq = False, keepdim = False):
         # __object = np.zeros(seq) if seq else 0.0
         # __object += self.flood(seq).squeeze().sum(axis=-1)
         __object = []
@@ -58,7 +58,10 @@ class hague(basescenario):
             else:
                 __object += [(perfs[1:,i] - target)*weight]
         # return __object
-        return np.array(__object).sum(axis=-1) if seq else np.array(__object).squeeze()
+        if seq:
+            return np.array(__object).sum(axis=-1) if not keepdim else np.array(__object).T
+        else:
+            return np.array(__object)
      
     def objective_pred(self,preds,states,settings,gamma=None,keepdim=False):
         preds,edge_preds = preds

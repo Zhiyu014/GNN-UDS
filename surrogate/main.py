@@ -119,17 +119,13 @@ if __name__ == "__main__":
     #     setattr(args,k,v)
 
     # test_de = {'test':True,
-    #            'env':'hague',
-    #            'act':False,
-    #            'model_dir':'./model/hague/12s_20k_res_norm_flood_gcn/',
-    #            'resnet':True,
-    #            'seq':12,
-    #            'if_flood':True,
-    #            'balance':False,
-    #            'conv':'GCN',
-    #            'recurrent':'Conv1D',
-    #            'result_dir':'./results/hague/12s_20k_res_norm_flood_gcn/',
-    #            'rain_dir':'./envs/config/hg_test_events.csv'}
+    #            'env':'central',
+    #            'act':'conti',
+    #            'model_dir':'./model/central/120s_gat_5ly/',
+    #            'if_flood':False,
+    #            'horizon':120,
+    #            'result_dir':'./results/central/120s_25k/',
+    #            'rain_dir':'./envs/config/central_events.csv'}
     # for k,v in test_de.items():
     #     setattr(args,k,v)
 
@@ -202,7 +198,7 @@ if __name__ == "__main__":
         os.makedirs(log_dir,exist_ok=True)
         writer = SummaryWriter(log_dir)
         for epoch in range(args.epochs):
-            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=True)
+            train_dats = dG.prepare_batch(train_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=False)
             x,a,b,y = [emul.to_tensor(dat) for dat in train_dats[:4]]
             ex,ey = [emul.to_tensor(dat) for dat in train_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
@@ -211,7 +207,7 @@ if __name__ == "__main__":
             train_loss = [los.detach().cpu().numpy() for los in train_loss]
             train_losses.append(train_loss)
 
-            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=True)
+            test_dats = dG.prepare_batch(test_idxs,seq,args.batch_size,interval=args.ctrl_step,weight=False)
             x,a,b,y = [emul.to_tensor(dat) for dat in test_dats[:4]]
             ex,ey = [emul.to_tensor(dat) for dat in test_dats[6:8]]
             x,b,y,ex,ey = [emul.normalize(dat,item) for dat,item in zip([x,b,y,ex,ey],list('xbye')+['ey'])]
@@ -266,8 +262,9 @@ if __name__ == "__main__":
             if k == 'act':
                 v = v and args.act != 'False' and args.act
             setattr(args,k,v)
-        emul = Emulator(args.conv,args.resnet,args.recurrent,args)
-        emul.load(args.model_dir)
+        emul = Emulator(args,act_only=True)
+        emul.load()
+        emul.set_indices(args.pop_size)
         if not os.path.exists(args.result_dir):
             os.mkdir(args.result_dir)
         yaml.dump(data=config,stream=open(os.path.join(args.result_dir,'parser.yaml'),'w'))
@@ -300,9 +297,9 @@ if __name__ == "__main__":
                                                         np.tile(np.zeros_like(s),(max(idx+args.horizon-runoff_rate.shape[0],0),)+tuple(1 for _ in s.shape))],axis=0)
                                     for idx,s in enumerate(runoff_rate)])
 
-            state = env.reset(event,global_state=True,seq=args.seq_in)
-            perf = env.flood(seq=args.seq_in)
-            edge_state = env.state_full(typ='links',seq=args.seq_in)
+            state = env.reset(event,global_state=True,seq=args.seq)
+            perf = env.flood(seq=args.seq)
+            edge_state = env.state_full(typ='links',seq=args.seq)
             y = np.array([[env.controller(mode='conti')
                         for _ in range(runoff.shape[0]//args.ctrl_step+args.n_step+1)]
                             for _ in range(args.pop_size)])
@@ -318,13 +315,7 @@ if __name__ == "__main__":
                         setting = np.concatenate([setting,np.repeat(setting[:,-1:,:],args.horizon // args.interval - setting.shape[1],axis=1)],axis=1)
                     settings.append(setting)
                     t0 = time.perf_counter()
-                    if args.error > 0:
-                        r = runoff[int(tss.asof(t)['Index'])]
-                        std = np.array([ri*args.error*i/r.shape[0] for i,ri in enumerate(r)])
-                        r += np.random.uniform(-std,std)
-                        r = np.repeat(np.expand_dims(r,0),args.pop_size,axis=0)
-                    else:
-                        r = np.repeat(np.expand_dims(runoff[int(tss.asof(t)['Index'])],0),args.pop_size,axis=0)
+                    r = np.repeat(np.expand_dims(runoff[int(tss.asof(t)['Index'])],0),args.pop_size,axis=0)
 
                     state[...,1] = state[...,1] - state[...,-1]
                     state = np.repeat(np.expand_dims(state,0),args.pop_size,axis=0)
@@ -336,7 +327,7 @@ if __name__ == "__main__":
                     if args.horizon > args.seq * args.interval:
                         predss,edge_predss = [],[]
                         s0,e0 = state.copy(),edge_state.copy()
-                        for idx in range(args.horizon//args.seq_in):
+                        for idx in range(args.horizon//args.seq):
                             ri = r[:,idx*args.seq:(idx+1)*args.seq,...]
                             sett = setting[:,idx*args.seq:(idx+1)*args.seq,:]
                             preds = emul.predict(*[emul.to_tensor(dat)
@@ -370,7 +361,7 @@ if __name__ == "__main__":
                         r = [None for _ in range(len(y))]
                     args.log = env.data_log.copy()
                     pool = mp.Pool(args.processes)
-                    res = [pool.apply_async(func=pred_simu,args=(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,))
+                    res = [pool.apply_async(func=pred_simu,args=(sett,eval_file,args,ri[...,0] if args.prediction['no_runoff'] else None,True,True,))
                             for sett,ri in zip(setting,r)]
                     pool.close()
                     pool.join()
@@ -378,21 +369,21 @@ if __name__ == "__main__":
                     print('hsf simu time: %s'%(time.perf_counter()-t1))
                     simu_objs.append(simu_obj.squeeze())
 
-                    objs.append(env.objective(args.horizon))
+                    objs.append(env.objective(args.horizon,keepdim=True))
                 done = env.step(setting[0,0,:])
-                state = env.state_full(seq=args.seq_in)
-                perf = env.flood(seq=args.seq_in)
-                edge_state = env.state_full(args.seq_in,'links')
+                state = env.state_full(seq=args.seq)
+                perf = env.flood(seq=args.seq)
+                edge_state = env.state_full(args.seq,'links')
                 i += 1
-            emu_objss.append(np.stack(emu_objs,axis=0))
-            simu_objss.append(np.stack(simu_objs,axis=0))
-            objss.append(np.stack(objs))
-            settingss.append(settings)
+            emu_objss.append(np.stack(emu_objs[:-args.n_step],axis=0))
+            simu_objss.append(np.stack(simu_objs[:-args.n_step],axis=0))
+            objss.append(np.stack(objs[args.n_step:],axis=0))
+            settingss.append(np.concatenate(settings,axis=0))
         
-        emu_objss = np.concatenate([obj[:-args.n_step] for obj in emu_objss],axis=0)
-        simu_objss = np.concatenate([obj[:-args.n_step] for obj in simu_objss],axis=0)
-        objss = np.concatenate([obj[args.n_step:] for obj in objss],axis=0)
+        emu_objss = np.concatenate(emu_objss,axis=0)
+        simu_objss = np.concatenate(simu_objss,axis=0)
+        objss = np.concatenate(objss,axis=0)
         np.save(os.path.join(args.result_dir,'emu_objs.npy'),emu_objss)
         np.save(os.path.join(args.result_dir,'simu_objs.npy'),simu_objss)
         np.save(os.path.join(args.result_dir,'objs.npy'),objss)
-        np.save(os.path.join(args.result_dir,'settings.npy'),np.array(settingss))
+        np.save(os.path.join(args.result_dir,'settings.npy'),np.concatenate(settingss,axis=0))
