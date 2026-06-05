@@ -1,0 +1,21 @@
+act: conti
+ctrl_step: 15
+du: 0.2
+epsilon: 0.1
+gradient: true
+horizon: 120
+lag: true
+method: l-bfgs-b
+model_dir: 120s_3ori_gat_5ly
+rain_dir: central_events.csv
+result_dir: 120s_15m_3ori_lbfgsb_du_flat
+sample_interval: 15
+surrogate: true
+termination:
+- maxls
+- 30
+- ftol
+- 0.0001
+- gtol
+- 0.001
+use_current: true

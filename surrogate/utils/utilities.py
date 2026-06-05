@@ -171,8 +171,12 @@ def generate_split_file(base_inp_file,
     if timeseries_file is None:
         timeseries_file = arg['rainfall_timeseries']
     tsf = pd.read_csv(timeseries_file,index_col=0)
-    if 'datetime' not in tsf.columns:
+    if 'datetime' in tsf.columns:
+        pass
+    elif 'date' in tsf.columns and 'time' in tsf.columns:
         tsf['datetime'] = tsf['date']+' '+tsf['time']
+    else:
+        tsf['datetime'] = tsf.index
     # tsf['datetime'] = tsf['datetime'].apply(lambda dti:datetime.strptime(dti, '%m/%d/%Y %H:%M:%S'))
     tsf.index = pd.to_datetime(tsf['datetime'])
     if arg.get('tide',False):
@@ -238,11 +242,14 @@ def generate_split_file(base_inp_file,
         raindata = {col:[(dt,vol)
          for dt,vol in zip(rain.index,rain[col])]
           for col in rain.columns if col not in ['date','time','datetime']}
+        
+        if gage != '':
+            inp.RAINGAGES[gage].Timeseries = gage
+            raindata = {gage:raindata[gage]}
 
         inp['TIMESERIES'] = Timeseries.create_section()
-        for rg in inp.RAINGAGES.values():
-            ts = rg.timeseries = gage if gage != '' else rg.timeseries
-            inp.TIMESERIES[ts] = TimeseriesData(ts,raindata[ts])
+        for ts,data in raindata.items():
+            inp.TIMESERIES[ts] = TimeseriesData(ts,data)
 
         if arg.get('tide',False):
             tide = tidets[start_time-dt.timedelta(hours=1):end_time+dt.timedelta(hours=1)]

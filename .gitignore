@@ -195,3 +195,4 @@ surrogate/results/shunqing/**/
 surrogate/results/shunqing/*.csv
 surrogate/results/chaohu/**/
 !surrogate/results/**/.gitkeep
+surrogate/envs/config/central_inflow.csv

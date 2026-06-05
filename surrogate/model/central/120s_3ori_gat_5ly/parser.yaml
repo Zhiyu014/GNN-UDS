@@ -1,0 +1,10 @@
+act: conti
+ctrl_step: 15
+data_dir: 1s_ori3conti_15m_rain10
+epochs: 200000
+mixed_precision: true
+model_dir: 120s_3ori_gat_5ly
+nly: 5
+save_gap: 10000
+seq: 120
+train: true

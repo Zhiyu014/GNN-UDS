@@ -267,3 +267,57 @@ chaohu:
   horizon: 60
   pop_size: 1
   result_dir: ./results/chaohu/
+
+central:
+  # env args
+  env: central
+  directed: False
+  length: 0
+  order: 1
+  graph_base: False
+  rain_dir: ./envs/config/
+  rain_suffix:
+  rain_num: 10
+  swmm_step: 1
+
+  # simulate args
+  simulate: False
+  data_dir: ./envs/data/central/
+  train_event_id: train_id.npy
+  act: 'False'
+  ctrl_step: 5
+  processes: 5
+  repeats: 1
+  hotstart: False
+
+  # train args
+  train: False
+  seed: 42
+  load_model: False
+  model_dir: ./model/central/
+  ratio: 0.6
+  learning_rate: 0.001
+  epochs: 500
+  save_gap: 500
+  batch_size: 128
+  roll: 0
+  mixed_precision: False
+  gradnorm: False
+
+  # network args
+  dim: 128
+  nly: 2
+  kernel: 3
+  activation: relu
+  seq: 6
+  if_flood: False
+  epsilon: -1.0
+
+  # predictor benchmark
+  norm: False
+
+  # test args
+  test: False
+  horizon: 60
+  pop_size: 1
+  result_dir: ./results/central/

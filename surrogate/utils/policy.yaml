@@ -198,3 +198,70 @@ hague:
   swmm_step: 1
   processes: 1
   result_dir: ./results/hague/ # the result directory
+
+central:
+  env: central
+  directed: False
+  length: 0
+  order: 1
+  graph_base: 0
+  ctrl_step: 5
+  act: 'False'
+  mac: False
+  dec: False
+
+  # Arguments for RL process
+  pretrain: False # if pretrain the agent
+  expert_dir: ./envs/data/central/ # expert dataset
+  train: False
+  seed: 42
+  episodes: 5000
+  batch_size: 64 # batch size of the branch rollout
+  update_batch: 64 # batch size of the training data
+  limit: 22 # maximum capacity of the replay buffer
+  tune_gap: 0 # finetune the model per tune_gap
+  sample_gap: 0 # sample data with swmm per sample gap
+  start_gap: 100 # start updating agent after start gap
+  eval_gap: 10 # evaluate the agent per eval_gap
+  save_gap: 1000 # save the agent & state_norm per save_gap
+
+  # Arguments for the model rollout
+  data_dir: ./envs/data/central/
+  branch: False # if use branched model-free sampling
+  model_based: False # if use model-based sampling
+  horizon: 60 # horizon length
+  model_dir: ./model/central/
+  epsilon: -1.0
+  epochs: 100 # model update times per episode
+
+  # Arguments for the agent
+  agent: SAC  # agent name
+  conv: False # if use full state
+  dim: 128 # dimension of hidden layers
+  nly: 3 # number of network layers
+  agent_dir: ./agent/central/ # the working directory
+  load_agent: False # if load the current model
+
+  # Arguments for the agent update
+  repeats: 1
+  norm: False # normalize the reward
+  scale: 1.0 # scale the reward
+  gamma: 0.98 # discouted rate
+  act_lr: 0.0001 # learning rate for actor
+  cri_lr: 0.001 # learning rate for critic
+  tau: 0.005 # update the target network per update_interval
+  en_disc: 1.0 # target entropy discouted factor
+  log_alpha: -1.0 # start log alpha for SAC
+  epsilon_decay: 0.9996 # epsilon decay rate for deterministic q learning
+  noise_std: 0.05 # std of the exploration noise
+  value_tau: 0.0 # value running average tau
+
+  # Arguments for the testing
+  test: False
+  skip_eval: False
+  rain_dir: ./envs/config/  # rainfall info dir
+  rain_suffix:  # rain_suffix
+  rain_num: 10 # exploration events
+  swmm_step: 20
+  processes: 1
+  result_dir: ./results/central/ # the result directory

@@ -148,3 +148,53 @@ chaohu:
   stochastic: 0
   error: 0.0
   result_dir: ./results/chaohu/
+
+central:
+  # env args
+  env: central
+  directed: False
+  length: 0
+  order: 1
+  rain_dir: ./envs/config/
+  rain_suffix:
+  rain_num: 10
+  swmm_step: 1
+
+  # MPC args
+  sample_interval: 5
+  ctrl_step: 5
+  act: 'False'
+  lag: False
+
+  processes: 1
+  seed: 42
+  horizon: 60
+  pop_size: 1
+  use_current: False
+  initial_dir: ./results/central/
+  sampling: 0.4
+  crossover:
+    - 1.0
+    - 3.0
+  mutation:
+    - 1.0
+    - 3.0
+  termination:
+    - n_eval
+    - '256'
+  keep: 'False'
+  surrogate: False
+  predict: False
+  model_dir: ./model/central/
+  batch_size: 32
+  epsilon: -1.0
+  gradient: False
+  method: gr
+  lr: 0.01
+  tau: 1.0
+  warm_eps: 0.01
+  logit_bound: 0.1
+  du: 0.0
+  stochastic: 0
+  error: 0.0
+  result_dir: ./results/central/

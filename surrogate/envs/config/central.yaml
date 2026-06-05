@@ -1,0 +1,122 @@
+# Configuration file for scenario central
+env_name: central
+act: True
+interval: 1
+
+states:
+  - !!python/tuple
+    - "FMH7052022"
+    - totalinflow
+  - !!python/tuple
+    - "FSH7000383"
+    - depthN
+  - !!python/tuple
+    - "FSH7000382"
+    - depthN
+  - !!python/tuple
+    - "FSH7000700"
+    - depthN
+  - !!python/tuple
+    - "FSH7000720"
+    - depthN
+  - !!python/tuple
+    - "FSH7001780"
+    - depthN
+  - !!python/tuple
+    - "RTCO_FWD7054604"
+    - setting
+  - !!python/tuple
+    - "RTCO_FWD7054594"
+    - setting
+  - !!python/tuple
+    - "RTCO_FWD7054607"
+    - setting
+
+global_state:
+  - !!python/tuple
+    - nodes
+    - depthN
+  - !!python/tuple
+    - nodes
+    - cuminflow
+  - !!python/tuple
+    - nodes
+    - totaloutflow_vol
+  - !!python/tuple
+    - nodes
+    - cumlateralinflow
+  - !!python/tuple
+    - links
+    - depthL
+  - !!python/tuple
+    - links
+    - flow_vol
+  - !!python/tuple
+    - links
+    - setting
+
+loss_weight:
+
+action_space:
+  RTCO_FWD7054604:
+    !!python/tuple
+    - 0.0
+    - 1.0
+  RTCO_FWD7054594:
+    !!python/tuple
+    - 0.0
+    - 1.0
+  RTCO_FWD7054607:
+    !!python/tuple
+    - 0.0
+    - 1.0
+
+performance_targets:
+  - !!python/tuple
+    - "FMH7046640"
+    - cuminflow
+
+flood:
+  - !!python/tuple
+    - nodes
+    - cumflooding
+
+objective:
+  ptw_outfall: FMH7046640
+  depth_threshold: 8.0
+  # peak_smooth: 10.0
+  weights:
+    # cap: 1.0
+    # track: 0.1
+    flat: 1.0
+    # peak: 0.5
+    smooth: 1.0
+    flood: 100.0
+    # depth: 0.0
+
+rainfall:
+  func: generate_split_file
+  filedir: ./envs/network/central/central
+  rainfall_timeseries: ./envs/config/central_inflow.csv
+  rainfall_events: ./envs/config/central_events.csv
+  pre_time: 0
+  MIET: 0
+  duration_range:
+    - 0
+    - 100000
+  precipitation_range:
+    - 0
+    - 100000
+  date_range:
+    - 01/01/2023
+    - 12/31/2024
+  replace_rain: False
+  tide: False
+
+tide: False
+
+prediction:
+  no_runoff: False
+  hsf_dir: hsf
+  eval_dir: eval
+  suffix: mpc_eval_
