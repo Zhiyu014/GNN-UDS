@@ -24,9 +24,9 @@ class BatchGATConv(GATConv):
         out = super().forward(rearrange(x, 'b t n d -> (b t n) d'),edge_index,edge_attr,*args,**kwargs)
         return rearrange(out,'(b t n) d -> b t n d',b=bat,t=seq)
     
-def get_batch_index(edge_index: th.Tensor,batch: th.Tensor):
-    edge_index = repeat(edge_index, 'p e -> p e b', b=batch)
-    edge_index = edge_index + th.Tensor(th.arange(batch)*(edge_index.max().item()+1)).to(device)
+def get_batch_index(edge_index: th.Tensor,batch: int, num_nodes: int):
+    offsets = th.arange(batch, device=device, dtype=edge_index.dtype)
+    edge_index = edge_index.unsqueeze(-1) + offsets * num_nodes
     edge_index = rearrange(edge_index,'p e b -> p (e b)')
     return edge_index
 
@@ -230,11 +230,12 @@ class Emulator:
 
     def set_indices(self,batch_size):
         if not hasattr(self,"indices") or batch_size != self.batch_size:
+            batch = batch_size * self.seq
             if self.graph_base:
-                indices = [get_batch_index(self.node_edge_index,batch_size*self.seq)]
+                indices = [get_batch_index(self.node_edge_index, batch, self.n_node+self.n_edge)]
             else:
-                indices = [get_batch_index(self.edges,batch_size*self.seq),
-                           get_batch_index(self.node_index,batch_size*self.seq)]
+                indices = [get_batch_index(self.edges, batch, self.n_node),
+                           get_batch_index(self.node_index, batch, self.n_edge)]
             setattr(self,"indices",indices)
     
     def get_edge_action(self,a,g=False):
