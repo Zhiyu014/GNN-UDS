@@ -42,6 +42,7 @@ astlingen:
   tau: 1.0
   warm_eps: 0.01
   logit_bound: 0.1
+  du: 0.0
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -92,6 +93,7 @@ hague:
   tau: 1.0
   warm_eps: 0.01
   logit_bound: 0.1
+  du: 0.0
   keep: 'False'
   stochastic: 0
   error: 0.0
@@ -142,6 +144,7 @@ chaohu:
   tau: 1.0
   warm_eps: 0.01
   logit_bound: 0.1
+  du: 0.0
   stochastic: 0
   error: 0.0
   result_dir: ./results/chaohu/

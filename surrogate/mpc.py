@@ -71,6 +71,7 @@ def parser(config=None):
     parser.add_argument('--tau',type=float,default=1.0,help='softmax temperature for discrete gradient optimization')
     parser.add_argument('--warm_eps',type=float,default=0.01,help='extra probability above uniform for current discrete warm-start action')
     parser.add_argument('--logit_bound',type=float,default=0.1,help='bound for discrete logits in scipy optimization')
+    parser.add_argument('--du',type=float,default=0.0,help='bound for continuous control increments in gradient MPC')
     parser.add_argument('--model_dir',type=str,default='./model/',help='path of the surrogate model')
     parser.add_argument('--epsilon',type=float,default=-1.0,help='the depth threshold of flooding')
     parser.add_argument('--result_dir',type=str,default='./result/',help='path of the control results')
@@ -394,14 +395,19 @@ class mpc_gr:
         self.r_step = args.ctrl_step//args.interval
         self.env = get_env(args.env)(initialize=False)
         self.conti = args.act.startswith('conti')
+        self.du = max(float(getattr(args,'du',0.0)),0.0)
+        self.delta_control = self.conti and self.du > 0
         if self.conti:
             self.n_var = self.n_act*self.n_step
             self.bounded = args.method in ['l-bfgs-b','trust-constr']
-            self.xl = np.array([min(v) for _ in range(self.n_step)
-                                for v in self.asp])
-            self.xu = np.array([max(v) for _ in range(self.n_step)
-                                for v in self.asp])
+            self.u_min = np.array([min(v) for _ in range(self.n_step)
+                                   for v in self.asp],dtype=np.float32)
+            self.u_max = np.array([max(v) for _ in range(self.n_step)
+                                   for v in self.asp],dtype=np.float32)
+            self.xl = np.full(self.n_var,-self.du,dtype=np.float32) if self.delta_control else self.u_min.copy()
+            self.xu = np.full(self.n_var,self.du,dtype=np.float32) if self.delta_control else self.u_max.copy()
             self.bounds = list(zip(self.xl,self.xu))
+            self.ctrl_base = th.zeros(self.n_var,dtype=th.float32,device=self.device)
             self.stochastic = False
         else:
             '''
@@ -433,11 +439,28 @@ class mpc_gr:
     def load_state(self,state,runoff,edge_state):
         self.state,self.runoff,self.edge_state = [th.tensor(x,dtype=th.float32,device=self.device) for x in [state,runoff,edge_state]]
 
-    def get_state(self):
-        return tuple([getattr(self,item,None) for item in ['state','runoff','edge_state']])
 
-    def pre_state(self,y: th.Tensor, state: th.Tensor, runoff: th.Tensor,edge_state: th.Tensor):
-        if self.conti and not self.bounded:
+    def set_delta_base(self,setting=None):
+        if setting is None:
+            first = self.u_max.reshape(self.n_step,self.n_act)[0]
+        else:
+            setting = np.asarray(setting,dtype=np.float32)
+            first = setting.reshape(self.n_step,self.n_act)[0] if setting.size != self.n_act else setting.reshape(self.n_act)
+        base = np.tile(first,(self.n_step,1)).reshape(-1)
+        base = np.clip(base,self.u_min,self.u_max).astype(np.float32)
+        self.ctrl_base = th.tensor(base,dtype=th.float32,device=self.device)
+        self.xl = np.maximum(-self.du,self.u_min-base).astype(np.float32)
+        self.xu = np.minimum(self.du,self.u_max-base).astype(np.float32)
+        self.bounds = list(zip(self.xl,self.xu))
+
+    def get_state(self):
+        return tuple([getattr(self,item,None) for item in ['state','runoff','edge_state','ctrl_base']])
+
+    def pre_state(self,y: th.Tensor, state: th.Tensor, runoff: th.Tensor,edge_state: th.Tensor,
+                  ctrl_base: th.Tensor):
+        if self.delta_control:
+            y = y + ctrl_base
+        elif self.conti and not self.bounded:
             y = self.project(y)
         if not self.conti:
             if self.stochastic:
@@ -479,8 +502,8 @@ class mpc_gr:
             return self.emul.predict(state,edge_state,runoff,settings,constr=True)
 
     @th.compile(fullgraph=True)
-    def objective_fn(self,y,state,runoff,edge_state):
-        settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state)
+    def objective_fn(self,y,state,runoff,edge_state,ctrl_base=None):
+        settings,state,runoff,edge_state = self.pre_state(y,state,runoff,edge_state,ctrl_base)
         preds = self.predict(settings,state,runoff,edge_state)
         if self.args.predict:
             obj = preds.sum(dim=-1).sum(dim=-1)
@@ -493,9 +516,9 @@ class mpc_gr:
         return obj
 
     @th.compile(dynamic=False)
-    def gradient_fn(self,y,state,runoff,edge_state):
+    def gradient_fn(self,y,*args):
         self.emul.model.zero_grad()
-        obj = self.objective_fn(y[None,:],state,runoff,edge_state).squeeze()
+        obj = self.objective_fn(y[None,:],*args).squeeze()
         grads = th.autograd.grad(obj,y,retain_graph=True)[0]
         return obj,grads
 
@@ -507,16 +530,16 @@ class mpc_gr:
         return objs.detach().cpu().numpy(),grads.detach().cpu().numpy()
     
     @th.compile(dynamic=False)
-    def hessp_fn(self,y,p,state,runoff,edge_state):
+    def hessp_fn(self,y,p,*args):
         self.emul.model.zero_grad()
-        _,grads = self.gradient_fn(y,state,runoff,edge_state)
+        _,grads = self.gradient_fn(y,*args)
         hvp = th.autograd.grad(grads,y,grad_outputs=p.detach())[0]
         return hvp
 
     @call_counter
     def hessp(self,y,p,*args):
         y,p = th.tensor(y).type(th.float32).to(self.device),th.tensor(p).type(th.float32).to(self.device)
-        if self.conti and not self.bounded:
+        if self.conti and not self.bounded and not self.delta_control:
             y = self.project(y)
         return self.hessp_fn(y,p,*args).detach().cpu().numpy()
 
@@ -527,8 +550,25 @@ class mpc_gr:
         else:
             return th.sigmoid(y)*(self.xu-self.xl)+self.xl
 
+    def control_from_var(self,y):
+        if self.conti:
+            if self.delta_control:
+                y = np.clip(np.asarray(y,dtype=np.float32),self.xl,self.xu)
+                return y + self.ctrl_base.detach().cpu().numpy()
+            elif self.bounded:
+                return np.asarray(y,dtype=np.float32)
+            else:
+                return self.project(y).detach().cpu().numpy()
+        else:
+            return self.ste(y)
+
     def initial_guess(self,setting):
         if self.conti:
+            if self.delta_control:
+                setting = np.asarray(setting,dtype=np.float32).reshape(self.n_step,self.n_act)
+                setting = np.concatenate([setting[1:],setting[-1:]],axis=0) # repeat last step for the whole horizon
+                du = setting.reshape(-1) - self.ctrl_base.detach().cpu().numpy()
+                return np.clip(du,self.xl,self.xu).astype(np.float32)
             return np.reshape(setting,-1)
         setting = np.asarray(setting,dtype=np.float32)
         if setting.size == self.n_var:
@@ -632,6 +672,8 @@ def run_gr(prob,args,setting=None):
     TODO:
     First-order gradient-based optimization using Pytorch
     '''
+    if prob.delta_control:
+        prob.set_delta_base(setting)
     sampling = sample_initials(prob,args,setting)
     term = parse_gr_termination(args)
 
@@ -643,11 +685,15 @@ def run_gr(prob,args,setting=None):
     print('====================================================================================')
     print(' n_gen | n_fun |     time      |       f       |     best      |    |g|     | stale ')
     print('====================================================================================')
-    y = prob.project(sampling[:args.pop_size],True) if prob.conti and not prob.bounded else sampling[:args.pop_size]
+    y = prob.project(sampling[:args.pop_size],True) if prob.conti and not prob.bounded and not prob.delta_control else sampling[:args.pop_size]
     y = th.tensor(y, requires_grad=True, dtype=th.float32, device = prob.device)
     optim = th.optim.Adam([y],lr=getattr(args,"lr",0.01))
     while True:
         prob.emul.model.zero_grad()
+        if prob.delta_control:
+            with th.no_grad():
+                y.clamp_(th.tensor(prob.xl,dtype=th.float32,device=prob.device),
+                         th.tensor(prob.xu,dtype=th.float32,device=prob.device))
         obj = prob.objective_fn(y, *prob.get_state()).reshape(-1)
         optim.zero_grad()
         obj.sum().backward()
@@ -665,6 +711,10 @@ def run_gr(prob,args,setting=None):
         grad_norms = y.grad.detach().reshape(y.shape[0],-1).norm(dim=-1)
         grad_norm = grad_norms[int(obj.argmin())].item()
         optim.step()
+        if prob.delta_control:
+            with th.no_grad():
+                y.clamp_(th.tensor(prob.xl,dtype=th.float32,device=prob.device),
+                         th.tensor(prob.xu,dtype=th.float32,device=prob.device))
         # if not prob.conti:
         #     y.data.clamp_(-prob.logit_bound,prob.logit_bound)
         rec = [gen, prob.calls, elapsed, obj_min, fun, grad_norm, stale]
@@ -676,10 +726,7 @@ def run_gr(prob,args,setting=None):
         if gen >= term['max_gen'] or stop_time or stop_patience:
             break
     print("Best iter {} initial {} Objective {}".format(idx,ini,fun))
-    if prob.conti:
-        ctrls = prob.project(sol).numpy() if not prob.bounded else sol
-    else:
-        ctrls = prob.ste(sol)
+    ctrls = prob.control_from_var(sol)
     ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
     recs = np.array(recs)
@@ -694,6 +741,8 @@ def run_ntopt(prob,args,setting=None):
     l-bfgs-b or trust-constr via scipy.optimize.minimize
     '''
     print(f'Running {args.method} optimization')
+    if prob.delta_control:
+        prob.set_delta_base(setting)
     sampling = sample_initials(prob,args,setting)
 
     recs,sols = [[0,prob.calls,time.perf_counter(),1e6]],[sampling[0]]
@@ -709,45 +758,27 @@ def run_ntopt(prob,args,setting=None):
         print(log[:-1])
         rec[1],rec[2] = nfev,time.perf_counter()
         recs.append(rec)
-    if args.processes > 1:
-        pool = mp.Pool(args.processes)
-        res = [pool.apply_async(func=scioptminimize,args=(prob.gradient,
-                                                          prob.project(x0,True) if prob.conti and not prob.bounded else x0,
-                                                          prob.get_state(),
-                                                          args.method,
-                                                          True,None,
-                                                          prob.hessp,
-                                                          prob.bounds,
-                                                          (),None,
-                                                        #   mycallback,
-                                                          ))
-                                                          for x0 in sampling]
-        pool.close()
-        pool.join()
-        res = [r.get() for r in res]
-    else:
-        res = []
-        for _,x0 in enumerate(sampling):
-            results = scioptminimize(prob.gradient,
-                                     x0 = prob.project(x0,True) if prob.conti and not prob.bounded else x0,
-                                     args=prob.get_state(),
-                                     method=args.method,
-                                     jac=True,
-                                     hessp=prob.hessp,
-                                     bounds=prob.bounds,
-                                     callback=mycallback,
-                                     options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
-                                     )
-            res.append(results)
-            if args.pop_size == 1 and (results.success and len(recs) > 1):
-                break
+    res = []
+    for _,x0 in enumerate(sampling):
+        if prob.conti and not prob.bounded and not prob.delta_control:
+            x0 = prob.project(x0,True).numpy()
+        results = scioptminimize(prob.gradient,
+                                 x0 = x0,
+                                 args=prob.get_state(),
+                                 method=args.method,
+                                 jac=True,
+                                 hessp=prob.hessp,
+                                 bounds=prob.bounds,
+                                 callback=mycallback,
+                                 options={k:v for k,v in zip(args.termination[0::2],args.termination[1::2])},
+                                 )
+        res.append(results)
+        if args.pop_size == 1 and (results.success and len(recs) > 1):
+            break
     idx = np.argmin([r.fun for r in res])
     results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
-    if prob.conti:
-        ctrls = prob.project(results.x).numpy() if not prob.bounded else results.x
-    else:
-        ctrls = prob.ste(results.x)
+    ctrls = prob.control_from_var(results.x)
     ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
     print('Best solution: ',ctrls)
     vals = np.array(recs)[1:,-1]
@@ -878,7 +909,6 @@ if __name__ == '__main__':
         while not done:
             if i*args.interval % args.sample_interval == 0:
                 t2 = time.perf_counter()
-                setting = setting[j+1:] + setting[-1:] * (j+1)
                 if args.surrogate:
                     state[...,1] = state[...,1] - state[...,-1]
                     if margs.if_flood:
@@ -893,9 +923,9 @@ if __name__ == '__main__':
                             r = np.abs(np.tile(r,(args.stochastic,)+tuple([1 for _ in range(r.ndim)])) + err)
                         else:
                             r += np.random.uniform(-std,std)
-                    # margs.state = state
-                    # margs.runoff = r
                     prob.load_state(state,r,edge_state)
+                    carry_over = j if hasattr(prob,'delta_control') and prob.delta_control else j+1
+                    setting = setting[carry_over:] + setting[-1:] * carry_over
                     if args.gradient:
                         if not prob.conti: # Warm start with logits of previous horizon for discrete action space
                             setting = np.concatenate([sols[-1][j+1:], sols[-1][-1:]*(j+1)],axis=0) if i>0 else None
