@@ -7,6 +7,8 @@ A hydraulic surrogate model and real-time control methods of urban drainage netw
 
  **Gradient-based MPC**: Zhang, Z., Tian, W., Liao, Z. and Yuan, Z. 2026. Differentiable neural network-based models enable gradient-based optimization for model predictive control of urban drainage networks. Water Research, 291, 125188. https://doi.org/10.1016/j.watres.2025.125188
 
+ **Neural network model-based RL**: Zhang, Z., Tian, W., Liao, Z. and Yuan, Z. 2026. Efficient reinforcement learning for urban drainage control via a neural network-based model using truncated and parallel rollouts. Water Research, 305, 126458. https://doi.org/10.1016/j.watres.2026.126458
+
 ## How-to
 1. generate labels
 
