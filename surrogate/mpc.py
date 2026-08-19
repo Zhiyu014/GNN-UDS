@@ -399,6 +399,7 @@ class mpc_gr:
         self.delta_control = self.conti and self.du > 0
         if self.conti:
             self.n_var = self.n_act*self.n_step
+            self.setting_dim = self.n_act
             self.bounded = args.method in ['l-bfgs-b','trust-constr']
             self.u_min = np.array([min(v) for _ in range(self.n_step)
                                    for v in self.asp],dtype=np.float32)
@@ -423,6 +424,10 @@ class mpc_gr:
             '''
             self.eps = getattr(args,'warm_eps',0.01)
             self.tau = getattr(args,'tau',1.0)
+            self.asp = [np.asarray(ap,dtype=np.float32).reshape(len(ap),-1)
+                        for ap in self.asp]
+            self.act_dims = [ap.shape[-1] for ap in self.asp]
+            self.setting_dim = sum(self.act_dims)
             self.opts = [len(ap) for ap in self.asp] * self.n_step
             self.n_var = sum(self.opts)
             self.asp *= self.n_step
@@ -466,7 +471,7 @@ class mpc_gr:
             if self.stochastic:
                 y = y.tile(self.stochastic,1)
             y = self.ste(y)
-        settings = y.reshape(-1,self.n_step,self.n_act)
+        settings = y.reshape(-1,self.n_step,self.setting_dim)
         settings = settings.tile(1,self.r_step,1)
         state,edge_state,runoff = state.unsqueeze(0),edge_state.unsqueeze(0),runoff.unsqueeze(0)
         if self.stochastic:
@@ -573,12 +578,12 @@ class mpc_gr:
         setting = np.asarray(setting,dtype=np.float32)
         if setting.size == self.n_var:
             return setting.reshape(-1)
-        setting = setting.reshape(self.n_step,self.n_act,-1)
+        setting = setting.reshape(self.n_step,self.setting_dim)
+        setting = np.split(setting,np.cumsum(self.act_dims)[:-1],axis=-1)
         logits = np.empty((self.n_step,sum(self.opts[:self.n_act])),dtype=np.float32)
         start = 0
-        for act,(ap,opt) in enumerate(zip(self.asp[:self.n_act],self.opts[:self.n_act])):
-            ap = np.asarray(ap,dtype=np.float32).reshape(opt,-1)
-            dist = np.linalg.norm(setting[:,act,None,:]-ap[None,:,:],axis=-1)
+        for sett,ap,opt in zip(setting,self.asp[:self.n_act],self.opts[:self.n_act]):
+            dist = np.linalg.norm(sett[:,None,:]-ap[None,:,:],axis=-1)
             idx = np.argmin(dist,axis=-1)
             prob = np.full((self.n_step,opt),1.0/opt,dtype=np.float32)
             eps = np.clip(self.eps,0.0,1.0-1.0/opt) if opt > 1 else 0.0
@@ -594,10 +599,10 @@ class mpc_gr:
         TODO: need to consider temperature tau for the gradient scale
         '''
         if isinstance(y,np.ndarray):
-            y = np.split(y,np.cumsum(self.opts)[:-1])
-            yhard = [np.take(ap,np.argmax(yi,axis=-1),-1)
+            y = np.split(y,np.cumsum(self.opts)[:-1],axis=-1)
+            yhard = [ap[np.argmax(yi,axis=-1)]
                      for yi,ap in zip(y,self.asp)]
-            return np.stack(yhard,axis=-1)
+            return np.concatenate(yhard,axis=-1)
         else:
             y = th.split(y,self.opts,dim=-1)
             yste = [reinmax(yi,self.tau)[0] if self.stochastic else reinmax_determ(yi,self.tau)[0] for yi in y]
@@ -606,9 +611,9 @@ class mpc_gr:
             #             for yi,opt in zip(y,self.opts)]
             # yste = [ys - ys.detach() + yh # constant
             #             for ys,yh in zip(yste,yhard)]
-            yste = [(ys * ap).sum(dim=-1)
+            yste = [ys @ ap
                      for ys,ap in zip(yste,self.asp_th)]
-            return th.stack(yste,dim=-1)
+            return th.concat(yste,dim=-1)
 
     @property
     def calls(self):
@@ -727,7 +732,7 @@ def run_gr(prob,args,setting=None):
             break
     print("Best iter {} initial {} Objective {}".format(idx,ini,fun))
     ctrls = prob.control_from_var(sol)
-    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.setting_dim)).tolist()
     print('Best solution: ',ctrls)
     recs = np.array(recs)
     vals = recs[1:,3]
@@ -779,7 +784,7 @@ def run_ntopt(prob,args,setting=None):
     results = res[idx]
     print("Optimization {}, Best run {} Objective {}".format("successful" if results.success else "failed",idx,results.fun))
     ctrls = prob.control_from_var(results.x)
-    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.n_act)).tolist()
+    ctrls = ctrls.astype(np.float32).reshape((prob.n_step,prob.setting_dim)).tolist()
     print('Best solution: ',ctrls)
     vals = np.array(recs)[1:,-1]
     nfuns = np.array(recs)[1:,1]-recs[0][1]
