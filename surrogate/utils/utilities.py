@@ -244,7 +244,7 @@ def generate_split_file(base_inp_file,
           for col in rain.columns if col not in ['date','time','datetime']}
         
         if gage != '':
-            inp.RAINGAGES[gage].Timeseries = gage
+            inp.RAINGAGES['RG'].Timeseries = gage
             raindata = {gage:raindata[gage]}
 
         inp['TIMESERIES'] = Timeseries.create_section()
